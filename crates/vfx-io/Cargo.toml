@@ -20,20 +20,20 @@ vfx-core.workspace = true
 thiserror.workspace = true
 
 # EXR support
-exr = { version = "1.73", optional = true }
+exr = { version = "1.74", optional = true }
 
 # PNG support
-png = { version = "0.17", optional = true }
+png = { version = "0.18", optional = true }
 
 # JPEG support
 jpeg-decoder = { version = "0.3", optional = true }
 
 # TIFF support
-tiff = { version = "0.9", optional = true }
+tiff = { version = "0.10", optional = true }
 
 # For DPX (manual implementation)
 byteorder = "1.5"
 
 [dev-dependencies]
 approx.workspace = true
-tempfile = "3.14"
+tempfile = "3.24"
