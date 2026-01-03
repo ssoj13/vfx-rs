@@ -1,0 +1,21 @@
+[package]
+name = "vfx-ocio"
+description = "OpenColorIO-compatible color management for VFX"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vfx-core = { workspace = true }
+vfx-math = { workspace = true }
+vfx-lut = { workspace = true }
+vfx-transfer = { workspace = true }
+vfx-primaries = { workspace = true }
+
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

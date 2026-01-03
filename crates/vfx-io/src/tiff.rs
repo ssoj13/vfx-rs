@@ -124,11 +124,11 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
 /// tiff::write("output.tiff", &image)?;
 /// ```
 pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
-    use tiff::encoder::{colortype, compression, TiffEncoder};
+    use tiff::encoder::{colortype, Compression, TiffEncoder};
 
     let file = File::create(path.as_ref())?;
 
-    let mut encoder = TiffEncoder::new(file)
+    let encoder = TiffEncoder::new(file)
         .map_err(|e: tiff::TiffError| IoError::EncodeError(e.to_string()))?;
 
     let f32_data = image.to_f32();
@@ -144,32 +144,20 @@ pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
     match image.channels {
         3 => {
             encoder
-                .write_image_with_compression::<colortype::RGB16, compression::Lzw>(
-                    width,
-                    height,
-                    compression::Lzw,
-                    &u16_data,
-                )
+                .with_compression(Compression::Lzw)
+                .write_image::<colortype::RGB16>(width, height, &u16_data)
                 .map_err(|e: tiff::TiffError| IoError::EncodeError(e.to_string()))?;
         }
         4 => {
             encoder
-                .write_image_with_compression::<colortype::RGBA16, compression::Lzw>(
-                    width,
-                    height,
-                    compression::Lzw,
-                    &u16_data,
-                )
+                .with_compression(Compression::Lzw)
+                .write_image::<colortype::RGBA16>(width, height, &u16_data)
                 .map_err(|e: tiff::TiffError| IoError::EncodeError(e.to_string()))?;
         }
         1 => {
             encoder
-                .write_image_with_compression::<colortype::Gray16, compression::Lzw>(
-                    width,
-                    height,
-                    compression::Lzw,
-                    &u16_data,
-                )
+                .with_compression(Compression::Lzw)
+                .write_image::<colortype::Gray16>(width, height, &u16_data)
                 .map_err(|e: tiff::TiffError| IoError::EncodeError(e.to_string()))?;
         }
         _ => {

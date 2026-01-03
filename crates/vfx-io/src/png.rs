@@ -35,13 +35,15 @@ use std::path::Path;
 /// ```
 pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
     let file = File::open(path.as_ref())?;
-    let decoder = png::Decoder::new(file);
+    let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let mut reader = decoder.read_info()
-        .map_err(|e| IoError::DecodeError(e.to_string()))?;
+        .map_err(|e: png::DecodingError| IoError::DecodeError(e.to_string()))?;
     
-    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let buf_size = reader.output_buffer_size()
+        .ok_or_else(|| IoError::DecodeError("cannot determine output buffer size".into()))?;
+    let mut buf = vec![0u8; buf_size];
     let info = reader.next_frame(&mut buf)
-        .map_err(|e| IoError::DecodeError(e.to_string()))?;
+        .map_err(|e: png::DecodingError| IoError::DecodeError(e.to_string()))?;
     
     let width = info.width;
     let height = info.height;
@@ -123,7 +125,7 @@ pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
     let mut encoder = png::Encoder::new(writer, image.width, image.height);
     encoder.set_color(color_type);
     encoder.set_depth(png::BitDepth::Eight);
-    encoder.set_compression(png::Compression::Default);
+    encoder.set_compression(png::Compression::default());
     
     // Add sRGB chunk
     encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);

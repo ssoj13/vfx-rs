@@ -700,8 +700,8 @@ pub fn parse_clf<R: BufRead>(reader: R) -> LutResult<ProcessList> {
                     _ => {}
                 }
             }
-            Ok(Event::Text(ref e)) => {
-                let text = e.unescape().unwrap_or_default();
+            Ok(Event::Text(e)) => {
+                let text = e.decode().unwrap_or_default();
                 if in_array {
                     array_data.push_str(&text);
                 } else {
