@@ -79,6 +79,7 @@ mod role;
 mod context;
 
 pub mod builtin;
+pub mod validate;
 
 // Re-exports
 pub use error::{OcioError, OcioResult};
@@ -102,6 +103,7 @@ pub use display::{Display, View, ViewTransform, DisplayManager};
 pub use look::{Look, LookManager, parse_looks};
 pub use role::{Roles, names as role_names};
 pub use context::Context;
+pub use validate::{check as validate_config, Issue, Severity, IssueCategory, has_errors, has_warnings};
 
 #[cfg(test)]
 mod tests {

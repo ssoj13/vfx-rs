@@ -20,6 +20,7 @@ use crate::error::OcioResult;
 use crate::transform::*;
 
 /// Applies a transfer function to a single value.
+#[allow(clippy::excessive_precision)] // Standard color science constants
 fn apply_transfer(v: f32, style: TransferStyle, forward: bool) -> f32 {
     match style {
         TransferStyle::Linear => v,
@@ -173,12 +174,10 @@ fn apply_transfer(v: f32, style: TransferStyle, forward: bool) -> f32 {
                 } else {
                     E * v + F
                 }
+            } else if v > E * CUT + F {
+                (10.0_f32.powf((v - D) / C) - B) / A
             } else {
-                if v > E * CUT + F {
-                    (10.0_f32.powf((v - D) / C) - B) / A
-                } else {
-                    (v - F) / E
-                }
+                (v - F) / E
             }
         }
         
@@ -231,12 +230,10 @@ fn apply_transfer(v: f32, style: TransferStyle, forward: bool) -> f32 {
                 } else {
                     C * (v + B).log10() + D
                 }
+            } else if v < 0.181 {
+                (v - 0.125) / 5.6
             } else {
-                if v < 0.181 {
-                    (v - 0.125) / 5.6
-                } else {
-                    10.0_f32.powf((v - D) / C) - B
-                }
+                10.0_f32.powf((v - D) / C) - B
             }
         }
         
@@ -269,12 +266,10 @@ fn apply_transfer(v: f32, style: TransferStyle, forward: bool) -> f32 {
                 } else {
                     B * (v + C).ln() + 0.5
                 }
+            } else if v < 0.09292915127 {
+                (v - 0.09246575342) / A
             } else {
-                if v < 0.09292915127 {
-                    (v - 0.09246575342) / A
-                } else {
-                    ((v - 0.5) / B).exp() - C
-                }
+                ((v - 0.5) / B).exp() - C
             }
         }
     }
@@ -1321,7 +1316,7 @@ impl Processor {
                         FixedFunctionStyle::AcesGamutComp13 => {
                             // ACES 1.3 gamut compression
                             // Simplified implementation - full version uses LMT
-                            let threshold = params.get(0).copied().unwrap_or(0.815);
+                            let threshold = params.first().copied().unwrap_or(0.815);
                             let limit = params.get(1).copied().unwrap_or(1.2);
                             
                             if *forward {
@@ -1349,7 +1344,7 @@ impl Processor {
                 }
 
                 Op::Allocation { allocation, vars, forward } => {
-                    let min_val = vars.get(0).copied().unwrap_or(0.0);
+                    let min_val = vars.first().copied().unwrap_or(0.0);
                     let max_val = vars.get(1).copied().unwrap_or(1.0);
                     
                     match allocation {

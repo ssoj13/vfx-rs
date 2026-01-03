@@ -46,7 +46,7 @@ pub enum Encoding {
 
 impl Encoding {
     /// Parses encoding from OCIO config string.
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "scene-linear" | "scene_linear" | "linear" => Self::SceneLinear,
             "display-linear" | "display_linear" => Self::DisplayLinear,
@@ -102,7 +102,7 @@ pub enum Family {
 
 impl Family {
     /// Parses family from config string.
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "scene" | "scene-referred" => Self::Scene,
             "display" | "display-referred" => Self::Display,
@@ -382,9 +382,9 @@ mod tests {
 
     #[test]
     fn encoding_parse() {
-        assert_eq!(Encoding::from_str("scene-linear"), Encoding::SceneLinear);
-        assert_eq!(Encoding::from_str("log"), Encoding::Log);
-        assert_eq!(Encoding::from_str("data"), Encoding::Data);
+        assert_eq!(Encoding::parse("scene-linear"), Encoding::SceneLinear);
+        assert_eq!(Encoding::parse("log"), Encoding::Log);
+        assert_eq!(Encoding::parse("data"), Encoding::Data);
     }
 
     #[test]

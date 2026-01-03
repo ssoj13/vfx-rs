@@ -256,11 +256,11 @@ impl Config {
         }
 
         if let Some(family) = raw.family {
-            builder = builder.family(Family::from_str(&family));
+            builder = builder.family(Family::parse(&family));
         }
 
         if let Some(encoding) = raw.encoding {
-            builder = builder.encoding(Encoding::from_str(&encoding));
+            builder = builder.encoding(Encoding::parse(&encoding));
         }
 
         if raw.isdata == Some(true) {
@@ -273,9 +273,140 @@ impl Config {
             }
         }
 
-        // TODO: Parse transforms (to_reference, from_reference)
+        // Parse transforms (to_reference, from_reference)
+        // OCIO v1 uses to_reference/from_reference
+        // OCIO v2 adds to_scene_reference/from_scene_reference and display variants
+        if let Some(raw_t) = raw.to_reference {
+            if let Ok(t) = self.parse_raw_transform(&raw_t) {
+                builder = builder.to_reference(t);
+            }
+        } else if let Some(raw_t) = raw.to_scene_reference {
+            if let Ok(t) = self.parse_raw_transform(&raw_t) {
+                builder = builder.to_reference(t);
+            }
+        }
+
+        if let Some(raw_t) = raw.from_reference {
+            if let Ok(t) = self.parse_raw_transform(&raw_t) {
+                builder = builder.from_reference(t);
+            }
+        } else if let Some(raw_t) = raw.from_scene_reference {
+            if let Ok(t) = self.parse_raw_transform(&raw_t) {
+                builder = builder.from_reference(t);
+            }
+        }
 
         Ok(builder.build())
+    }
+
+    /// Parses a RawTransform into a Transform.
+    fn parse_raw_transform(&self, raw: &RawTransform) -> OcioResult<Transform> {
+        match raw {
+            RawTransform::Single(def) => self.parse_raw_transform_def(def.as_ref()),
+            RawTransform::Group(defs) => {
+                let transforms: Vec<Transform> = defs
+                    .iter()
+                    .filter_map(|d| self.parse_raw_transform_def(d).ok())
+                    .collect();
+                if transforms.is_empty() {
+                    return Err(OcioError::Validation(
+                        "empty transform group".into(),
+                    ));
+                }
+                Ok(Transform::group(transforms))
+            }
+        }
+    }
+
+    /// Parses a single transform definition.
+    fn parse_raw_transform_def(&self, def: &RawTransformDef) -> OcioResult<Transform> {
+        // MatrixTransform
+        if let Some(m) = &def.matrix {
+            return Ok(Transform::Matrix(MatrixTransform {
+                matrix: parse_matrix_16(&m.matrix),
+                offset: parse_offset_4(&m.offset),
+                direction: parse_direction(&m.direction),
+            }));
+        }
+
+        // FileTransform (LUT files)
+        if let Some(f) = &def.file {
+            return Ok(Transform::FileTransform(FileTransform {
+                src: self.working_dir.join(&f.src),
+                ccc_id: f.cccid.clone(),
+                interpolation: parse_interpolation(&f.interpolation),
+                direction: parse_direction(&f.direction),
+            }));
+        }
+
+        // ExponentTransform
+        if let Some(e) = &def.exponent {
+            let val = &e.value;
+            let value = match val.len() {
+                4 => [val[0], val[1], val[2], val[3]],
+                3 => [val[0], val[1], val[2], 1.0],
+                1 => [val[0], val[0], val[0], 1.0],
+                _ => [1.0, 1.0, 1.0, 1.0],
+            };
+            return Ok(Transform::Exponent(ExponentTransform {
+                value,
+                negative_style: NegativeStyle::Clamp,
+                direction: parse_direction(&e.direction),
+            }));
+        }
+
+        // LogTransform
+        if let Some(l) = &def.log {
+            return Ok(Transform::Log(LogTransform {
+                base: l.base.unwrap_or(2.0),
+                direction: parse_direction(&l.direction),
+            }));
+        }
+
+        // CDLTransform
+        if let Some(c) = &def.cdl {
+            return Ok(Transform::Cdl(CdlTransform {
+                slope: parse_rgb(&c.slope, 1.0),
+                offset: parse_rgb(&c.offset, 0.0),
+                power: parse_rgb(&c.power, 1.0),
+                saturation: c.saturation.unwrap_or(1.0),
+                style: CdlStyle::AscCdl,
+                direction: parse_direction(&c.direction),
+            }));
+        }
+
+        // ColorSpaceTransform
+        if let Some(cs) = &def.colorspace {
+            return Ok(Transform::ColorSpace(ColorSpaceTransform {
+                src: cs.src.clone(),
+                dst: cs.dst.clone(),
+                direction: parse_direction(&cs.direction),
+            }));
+        }
+
+        // BuiltinTransform
+        if let Some(b) = &def.builtin {
+            return Ok(Transform::Builtin(BuiltinTransform {
+                style: b.style.clone(),
+                direction: parse_direction(&b.direction),
+            }));
+        }
+
+        // RangeTransform
+        if let Some(r) = &def.range {
+            return Ok(Transform::Range(RangeTransform {
+                min_in: r.min_in_value,
+                max_in: r.max_in_value,
+                min_out: r.min_out_value,
+                max_out: r.max_out_value,
+                style: RangeStyle::Clamp,
+                direction: parse_direction(&r.direction),
+            }));
+        }
+
+        Err(OcioError::Validation(
+            "unknown transform type".into(),
+        ))
     }
 
     /// Returns config name.
@@ -677,15 +808,13 @@ struct RawFileRule {
     colorspace: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum RawTransform {
-    Single(RawTransformDef),
+    Single(Box<RawTransformDef>),
     Group(Vec<RawTransformDef>),
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawTransformDef {
     #[serde(rename = "!<MatrixTransform>")]
@@ -706,7 +835,6 @@ struct RawTransformDef {
     range: Option<RawRangeTransform>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawMatrixTransform {
     matrix: Option<Vec<f64>>,
@@ -714,7 +842,6 @@ struct RawMatrixTransform {
     direction: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawFileTransform {
     src: String,
@@ -723,21 +850,18 @@ struct RawFileTransform {
     direction: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawExponentTransform {
     value: Vec<f64>,
     direction: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawLogTransform {
     base: Option<f64>,
     direction: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawCdlTransform {
     slope: Option<Vec<f64>>,
@@ -747,7 +871,6 @@ struct RawCdlTransform {
     direction: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawColorSpaceTransform {
     src: String,
@@ -755,14 +878,12 @@ struct RawColorSpaceTransform {
     direction: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawBuiltinTransform {
     style: String,
     direction: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawRangeTransform {
     min_in_value: Option<f64>,
@@ -770,6 +891,74 @@ struct RawRangeTransform {
     min_out_value: Option<f64>,
     max_out_value: Option<f64>,
     direction: Option<String>,
+}
+
+// ============================================================================
+// Helper functions for parsing raw transform data
+// ============================================================================
+
+/// Parses direction string to TransformDirection.
+fn parse_direction(dir: &Option<String>) -> TransformDirection {
+    match dir.as_deref() {
+        Some("inverse") | Some("Inverse") | Some("INVERSE") => TransformDirection::Inverse,
+        _ => TransformDirection::Forward,
+    }
+}
+
+/// Parses interpolation string.
+fn parse_interpolation(interp: &Option<String>) -> Interpolation {
+    match interp.as_deref() {
+        Some("nearest") | Some("Nearest") | Some("NEAREST") => Interpolation::Nearest,
+        Some("tetrahedral") | Some("Tetrahedral") | Some("TETRAHEDRAL") => Interpolation::Tetrahedral,
+        Some("best") | Some("Best") | Some("BEST") => Interpolation::Best,
+        _ => Interpolation::Linear,
+    }
+}
+
+/// Parses 16-element matrix, pads with identity if needed.
+fn parse_matrix_16(m: &Option<Vec<f64>>) -> [f64; 16] {
+    let identity = MatrixTransform::IDENTITY;
+    match m {
+        Some(v) if v.len() >= 16 => [
+            v[0], v[1], v[2], v[3],
+            v[4], v[5], v[6], v[7],
+            v[8], v[9], v[10], v[11],
+            v[12], v[13], v[14], v[15],
+        ],
+        Some(v) if v.len() >= 12 => [
+            // 3x4 matrix (common in OCIO)
+            v[0], v[1], v[2], 0.0,
+            v[3], v[4], v[5], 0.0,
+            v[6], v[7], v[8], 0.0,
+            v[9], v[10], v[11], 1.0,
+        ],
+        Some(v) if v.len() >= 9 => [
+            // 3x3 matrix
+            v[0], v[1], v[2], 0.0,
+            v[3], v[4], v[5], 0.0,
+            v[6], v[7], v[8], 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ],
+        _ => identity,
+    }
+}
+
+/// Parses 4-element offset.
+fn parse_offset_4(o: &Option<Vec<f64>>) -> [f64; 4] {
+    match o {
+        Some(v) if v.len() >= 4 => [v[0], v[1], v[2], v[3]],
+        Some(v) if v.len() >= 3 => [v[0], v[1], v[2], 0.0],
+        _ => [0.0, 0.0, 0.0, 0.0],
+    }
+}
+
+/// Parses RGB values with default.
+fn parse_rgb(v: &Option<Vec<f64>>, default: f64) -> [f64; 3] {
+    match v {
+        Some(vec) if vec.len() >= 3 => [vec[0], vec[1], vec[2]],
+        Some(vec) if vec.len() == 1 => [vec[0], vec[0], vec[0]],
+        _ => [default, default, default],
+    }
 }
 
 #[cfg(test)]
