@@ -1,0 +1,20 @@
+[package]
+name = "vfx-tests"
+description = "Integration tests for VFX-RS crates"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+vfx-core = { workspace = true }
+vfx-math = { workspace = true }
+vfx-lut = { workspace = true }
+vfx-transfer = { workspace = true }
+vfx-primaries = { workspace = true }
+vfx-color = { workspace = true }
+vfx-io = { workspace = true }
+vfx-ops = { workspace = true }
+tempfile = { workspace = true }

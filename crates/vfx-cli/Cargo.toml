@@ -1,0 +1,24 @@
+[package]
+name = "vfx-cli"
+description = "Unified VFX image processing CLI (oiiotool-like)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "vfx"
+path = "src/main.rs"
+
+[dependencies]
+vfx-core = { workspace = true }
+vfx-io = { workspace = true }
+vfx-ops = { workspace = true }
+vfx-color = { workspace = true }
+vfx-lut = { workspace = true }
+
+clap = { workspace = true }
+anyhow = { workspace = true }
+glob = { workspace = true }
+rayon = { workspace = true }

@@ -1,0 +1,76 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "crates/vfx-core",
+    "crates/vfx-math",
+    "crates/vfx-lut",
+    "crates/vfx-transfer",
+    "crates/vfx-primaries",
+    "crates/vfx-color",
+    "crates/vfx-io",
+    "crates/vfx-ops",
+    "crates/vfx-icc",
+    "crates/vfx-cli",
+    "crates/vfx-tests",
+    "crates/vfx-bench",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/vfx-rs/vfx-rs"
+rust-version = "1.85"
+
+[workspace.dependencies]
+# Internal crates
+vfx-core = { path = "crates/vfx-core" }
+vfx-math = { path = "crates/vfx-math" }
+vfx-lut = { path = "crates/vfx-lut" }
+vfx-transfer = { path = "crates/vfx-transfer" }
+vfx-primaries = { path = "crates/vfx-primaries" }
+vfx-color = { path = "crates/vfx-color" }
+vfx-io = { path = "crates/vfx-io" }
+vfx-ops = { path = "crates/vfx-ops" }
+vfx-icc = { path = "crates/vfx-icc" }
+
+# Math & SIMD
+glam = "0.29"
+half = "2.4"
+wide = "0.7"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+
+# Parallelism
+rayon = "1.10"
+
+# CLI
+clap = { version = "4.5", features = ["derive", "cargo"] }
+anyhow = "1.0"
+glob = "0.3"
+
+# XML
+quick-xml = "0.37"
+
+# ICC profiles
+lcms2 = "6.1"
+
+# Utilities
+thiserror = "2.0"
+parking_lot = "0.12"
+
+# Testing
+approx = "0.5"
+tempfile = "3.24"
+criterion = "0.5"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+opt-level = 1
+

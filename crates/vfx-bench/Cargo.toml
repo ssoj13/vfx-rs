@@ -1,0 +1,22 @@
+[package]
+name = "vfx-bench"
+description = "Benchmarks for VFX-RS"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+vfx-core = { workspace = true }
+vfx-math = { workspace = true }
+vfx-lut = { workspace = true }
+vfx-transfer = { workspace = true }
+vfx-color = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "vfx_bench"
+harness = false

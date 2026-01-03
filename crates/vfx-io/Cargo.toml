@@ -1,0 +1,39 @@
+[package]
+name = "vfx-io"
+description = "Image I/O for VFX pipelines - EXR, PNG, JPEG, TIFF, DPX support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["exr", "png", "jpeg", "tiff", "dpx"]
+exr = ["dep:exr"]
+png = ["dep:png"]
+jpeg = ["dep:jpeg-decoder"]
+tiff = ["dep:tiff"]
+dpx = []
+
+[dependencies]
+vfx-core.workspace = true
+thiserror.workspace = true
+
+# EXR support
+exr = { version = "1.73", optional = true }
+
+# PNG support
+png = { version = "0.17", optional = true }
+
+# JPEG support
+jpeg-decoder = { version = "0.3", optional = true }
+
+# TIFF support
+tiff = { version = "0.9", optional = true }
+
+# For DPX (manual implementation)
+byteorder = "1.5"
+
+[dev-dependencies]
+approx.workspace = true
+tempfile = "3.14"

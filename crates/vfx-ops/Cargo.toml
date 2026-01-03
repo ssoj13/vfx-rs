@@ -1,0 +1,22 @@
+[package]
+name = "vfx-ops"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Image processing operations for VFX pipelines"
+keywords = ["vfx", "image", "processing", "composite", "filter"]
+categories = ["graphics", "multimedia::images"]
+
+[features]
+default = ["parallel"]
+parallel = ["rayon"]
+
+[dependencies]
+vfx-core.workspace = true
+vfx-math.workspace = true
+thiserror.workspace = true
+rayon = { workspace = true, optional = true }
+
+[dev-dependencies]

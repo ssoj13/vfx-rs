@@ -1,0 +1,12 @@
+[package]
+name = "vfx-icc"
+description = "ICC color profile support for VFX pipelines"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vfx-core = { workspace = true }
+lcms2 = { workspace = true }
+thiserror = { workspace = true }

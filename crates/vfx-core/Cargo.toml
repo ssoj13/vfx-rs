@@ -1,0 +1,18 @@
+[package]
+name = "vfx-core"
+description = "Core types for VFX image and color processing: Image, Pixel, ColorSpace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+keywords = ["vfx", "image", "color", "aces", "openexr"]
+categories = ["graphics", "multimedia::images"]
+
+[dependencies]
+half = { workspace = true }
+thiserror = { workspace = true }
+rayon = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true }

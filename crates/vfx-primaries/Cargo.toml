@@ -1,0 +1,12 @@
+[package]
+name = "vfx-primaries"
+description = "Color primaries and white points for VFX color spaces"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vfx-core = { workspace = true }
+vfx-math = { path = "../vfx-math" }
+glam = { workspace = true }
