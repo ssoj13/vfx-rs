@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::colorspace::{ColorSpace, Encoding, Family};
 use crate::context::Context;
@@ -63,12 +63,14 @@ pub struct Config {
     /// Active views (subset to show in UI).
     active_views: Vec<String>,
     /// Inactive color spaces (hidden from UI).
+    #[allow(dead_code)]
     inactive_colorspaces: Vec<String>,
     /// File rules for automatic color space detection.
     file_rules: Vec<FileRule>,
     /// Environment/context.
     context: Context,
     /// Strict parsing mode.
+    #[allow(dead_code)]
     strict_parsing: bool,
 }
 
@@ -443,6 +445,100 @@ impl Config {
         self.processor(src, dst)
     }
 
+    /// Creates a processor with looks applied.
+    ///
+    /// Looks are applied in the look's process space between src and dst.
+    /// Multiple looks can be specified as comma-separated string.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let proc = config.processor_with_looks("ACEScg", "sRGB", "ShowLUT, ShotGrade")?;
+    /// ```
+    pub fn processor_with_looks(
+        &self,
+        src: &str,
+        dst: &str,
+        looks: &str,
+    ) -> OcioResult<Processor> {
+        use crate::look::parse_looks;
+        
+        let look_specs = parse_looks(looks);
+        if look_specs.is_empty() {
+            return self.processor(src, dst);
+        }
+        
+        let mut transforms = Vec::new();
+        
+        // Source to reference
+        let src_cs = self
+            .colorspace(src)
+            .ok_or_else(|| OcioError::ColorSpaceNotFound { name: src.into() })?;
+        if let Some(t) = src_cs.to_reference() {
+            transforms.push(t.clone());
+        }
+        
+        // Apply each look
+        for (look_name, forward) in look_specs {
+            let look = self
+                .looks
+                .get(look_name)
+                .ok_or_else(|| OcioError::LookNotFound { name: look_name.into() })?;
+            
+            // Convert to process space if specified
+            if let Some(ps_name) = look.get_process_space() {
+                if let Some(ps) = self.colorspace(ps_name) {
+                    if let Some(t) = ps.from_reference() {
+                        transforms.push(t.clone());
+                    }
+                }
+            }
+            
+            // Apply look transform
+            let look_transform = if forward {
+                look.get_transform()
+            } else {
+                look.get_inverse_transform().or_else(|| look.get_transform())
+            };
+            
+            if let Some(t) = look_transform {
+                if forward {
+                    transforms.push(t.clone());
+                } else {
+                    // Wrap in group with inverse direction
+                    transforms.push(Transform::Group(GroupTransform {
+                        transforms: vec![t.clone()],
+                        direction: TransformDirection::Inverse,
+                    }));
+                }
+            }
+            
+            // Return from process space
+            if let Some(ps_name) = look.get_process_space() {
+                if let Some(ps) = self.colorspace(ps_name) {
+                    if let Some(t) = ps.to_reference() {
+                        transforms.push(t.clone());
+                    }
+                }
+            }
+        }
+        
+        // Reference to destination
+        let dst_cs = self
+            .colorspace(dst)
+            .ok_or_else(|| OcioError::ColorSpaceNotFound { name: dst.into() })?;
+        if let Some(t) = dst_cs.from_reference() {
+            transforms.push(t.clone());
+        }
+        
+        if transforms.is_empty() {
+            return Ok(Processor::new());
+        }
+        
+        let group = Transform::group(transforms);
+        Processor::from_transform(&group, TransformDirection::Forward)
+    }
+
     /// Resolves a file path using search paths.
     pub fn resolve_file(&self, filename: &str) -> Option<PathBuf> {
         // Try as absolute path first
@@ -501,9 +597,10 @@ impl Config {
 }
 
 // ============================================================================
-// Raw YAML structures for serde
+// Raw YAML structures for serde (WIP - for full OCIO config parsing)
 // ============================================================================
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawConfig {
     ocio_profile_version: String,
@@ -522,6 +619,7 @@ struct RawConfig {
     file_rules: Option<Vec<RawFileRule>>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawColorSpace {
     name: String,
@@ -539,6 +637,7 @@ struct RawColorSpace {
     from_display_reference: Option<RawTransform>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawView {
     name: String,
@@ -548,6 +647,7 @@ struct RawView {
     rule: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawLook {
     name: String,
@@ -557,6 +657,7 @@ struct RawLook {
     inverse_transform: Option<RawTransform>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawViewTransform {
     name: String,
@@ -576,6 +677,7 @@ struct RawFileRule {
     colorspace: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum RawTransform {
@@ -583,6 +685,7 @@ enum RawTransform {
     Group(Vec<RawTransformDef>),
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawTransformDef {
     #[serde(rename = "!<MatrixTransform>")]
@@ -603,6 +706,7 @@ struct RawTransformDef {
     range: Option<RawRangeTransform>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawMatrixTransform {
     matrix: Option<Vec<f64>>,
@@ -610,6 +714,7 @@ struct RawMatrixTransform {
     direction: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawFileTransform {
     src: String,
@@ -618,18 +723,21 @@ struct RawFileTransform {
     direction: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawExponentTransform {
     value: Vec<f64>,
     direction: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawLogTransform {
     base: Option<f64>,
     direction: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawCdlTransform {
     slope: Option<Vec<f64>>,
@@ -639,6 +747,7 @@ struct RawCdlTransform {
     direction: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawColorSpaceTransform {
     src: String,
@@ -646,12 +755,14 @@ struct RawColorSpaceTransform {
     direction: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawBuiltinTransform {
     style: String,
     direction: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawRangeTransform {
     min_in_value: Option<f64>,

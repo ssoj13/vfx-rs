@@ -18,8 +18,7 @@
 //! ```
 
 use crate::colorspace::{AllocationInfo, AllocationType, BitDepth, ColorSpace, Encoding, Family};
-use crate::config::{Config, ConfigVersion};
-use crate::display::{Display, View};
+use crate::config::Config;
 use crate::role;
 use crate::transform::*;
 
