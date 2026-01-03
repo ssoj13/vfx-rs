@@ -18,7 +18,35 @@ pub fn run(args: InfoArgs, verbose: bool) -> Result<()> {
             println!("  \"width\": {},", image.width);
             println!("  \"height\": {},", image.height);
             println!("  \"channels\": {},", image.channels);
-            println!("  \"size_bytes\": {}", file_size);
+            println!("  \"size_bytes\": {},", file_size);
+            println!("  \"metadata\": {{");
+            if let Some(colorspace) = &image.metadata.colorspace {
+                println!(
+                    "    \"colorspace\": \"{}\",",
+                    json_escape(colorspace)
+                );
+            }
+            if let Some(gamma) = image.metadata.gamma {
+                println!("    \"gamma\": \"{}\",", gamma);
+            }
+            if let Some(dpi) = image.metadata.dpi {
+                println!("    \"dpi\": \"{}\",", dpi);
+            }
+            println!("    \"attrs\": {{");
+            let mut keys: Vec<_> = image.metadata.attrs.iter().collect();
+            keys.sort_by(|a, b| a.0.cmp(b.0));
+            for (idx, (key, value)) in keys.iter().enumerate() {
+                let value = attr_to_string(value);
+                let trailing = if idx + 1 == keys.len() { "" } else { "," };
+                println!(
+                    "      \"{}\": \"{}\"{}",
+                    json_escape(key),
+                    json_escape(&value),
+                    trailing
+                );
+            }
+            println!("    }}");
+            println!("  }}");
             println!("}}");
         } else {
             println!("{}", path.display());
@@ -39,6 +67,27 @@ pub fn run(args: InfoArgs, verbose: bool) -> Result<()> {
                 let format = Format::detect(path).unwrap_or(Format::Unknown);
                 println!("  Format:     {:?}", format);
             }
+
+            if args.all {
+                if let Some(colorspace) = &image.metadata.colorspace {
+                    println!("  Colorspace: {}", colorspace);
+                }
+                if let Some(gamma) = image.metadata.gamma {
+                    println!("  Gamma:      {}", gamma);
+                }
+                if let Some(dpi) = image.metadata.dpi {
+                    println!("  DPI:        {}", dpi);
+                }
+
+                let mut attrs: Vec<_> = image.metadata.attrs.iter().collect();
+                attrs.sort_by(|a, b| a.0.cmp(b.0));
+                if !attrs.is_empty() {
+                    println!("  Metadata:");
+                    for (key, value) in attrs {
+                        println!("    {}: {}", key, attr_to_string(value));
+                    }
+                }
+            }
         }
 
         if args.input.len() > 1 {
@@ -47,6 +96,37 @@ pub fn run(args: InfoArgs, verbose: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn attr_to_string(value: &vfx_io::AttrValue) -> String {
+    match value {
+        vfx_io::AttrValue::Bool(v) => v.to_string(),
+        vfx_io::AttrValue::Str(v) => v.clone(),
+        vfx_io::AttrValue::Int(v) => v.to_string(),
+        vfx_io::AttrValue::UInt(v) => v.to_string(),
+        vfx_io::AttrValue::Int64(v) => v.to_string(),
+        vfx_io::AttrValue::UInt64(v) => v.to_string(),
+        vfx_io::AttrValue::Float(v) => v.to_string(),
+        vfx_io::AttrValue::Double(v) => v.to_string(),
+        vfx_io::AttrValue::Bytes(v) => format!("{} bytes", v.len()),
+        vfx_io::AttrValue::List(v) => format!("list({})", v.len()),
+        vfx_io::AttrValue::Map(v) => format!("map({})", v.len()),
+    }
+}
+
+fn json_escape(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 fn compute_stats(data: &[f32]) -> (f32, f32, f32) {

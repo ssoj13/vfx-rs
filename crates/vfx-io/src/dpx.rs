@@ -18,7 +18,7 @@
 //! dpx::write("output.0001.dpx", &image)?;
 //! ```
 
-use crate::{ImageData, IoError, IoResult, Metadata, PixelData, PixelFormat};
+use crate::{AttrValue, ImageData, IoError, IoResult, Metadata, PixelData, PixelFormat};
 use byteorder::{BigEndian, ByteOrder, LittleEndian, ReadBytesExt};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -139,6 +139,29 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
 
     let mut metadata = Metadata::default();
     metadata.colorspace = Some("log".to_string());
+    metadata
+        .attrs
+        .set("ImageWidth", AttrValue::UInt(header.width));
+    metadata
+        .attrs
+        .set("ImageHeight", AttrValue::UInt(header.height));
+    metadata
+        .attrs
+        .set("BitDepth", AttrValue::UInt(header.bit_depth as u32));
+    metadata.attrs.set(
+        "Endian",
+        AttrValue::Str(if header.is_big_endian {
+            "BE".to_string()
+        } else {
+            "LE".to_string()
+        }),
+    );
+    metadata
+        .attrs
+        .set("ImageOffset", AttrValue::UInt(header.image_offset));
+    metadata
+        .attrs
+        .set("FileSize", AttrValue::UInt(header.file_size));
 
     Ok(ImageData {
         width: header.width,
@@ -215,7 +238,10 @@ fn read_8bit<R: Read>(reader: &mut R, pixel_count: usize) -> IoResult<Vec<f32>> 
     Ok(buf.iter().map(|&v| v as f32 / 255.0).collect())
 }
 
-/// Writes an image to a DPX file (10-bit RGB).
+/// Writes an image to a DPX file.
+///
+/// Bit depth is taken from `metadata.attrs["BitDepth"]` when present (8 or 10),
+/// otherwise defaults to 10-bit.
 pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
     let file = File::create(path.as_ref())?;
     let mut writer = BufWriter::new(file);
@@ -224,9 +250,37 @@ pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
     let height = image.height;
     let f32_data = image.to_f32();
 
+    let channels = image.channels as usize;
+    if channels < 3 {
+        return Err(IoError::EncodeError(
+            "DPX requires at least 3 channels".to_string(),
+        ));
+    }
+
+    let requested = image
+        .metadata
+        .attrs
+        .get("BitDepth")
+        .and_then(|v| v.as_u32());
+    let bit_depth = match requested {
+        Some(8) => BitDepth::Bit8,
+        Some(10) => BitDepth::Bit10,
+        Some(other) => {
+            return Err(IoError::UnsupportedBitDepth(format!("{}", other)));
+        }
+        None => BitDepth::Bit10,
+    };
+
     let image_offset: u32 = 2048;
     let pixel_count = (width * height) as usize;
-    let image_size = (pixel_count * 4) as u32;
+    let (image_size, bit_depth_u8, packing) = match bit_depth {
+        BitDepth::Bit8 => (pixel_count * 3, 8u8, 0u16),
+        BitDepth::Bit10 => (pixel_count * 4, 10u8, 1u16),
+        BitDepth::Bit12 | BitDepth::Bit16 => {
+            return Err(IoError::UnsupportedBitDepth(format!("{:?}", bit_depth)));
+        }
+    };
+    let image_size = image_size as u32;
     let file_size = image_offset + image_size;
 
     // File header
@@ -240,7 +294,8 @@ pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
     write_bytes(&mut writer, &0u32.to_be_bytes())?; // User data
 
     // Filename (100 bytes)
-    let filename = path.as_ref()
+    let filename = path
+        .as_ref()
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("output.dpx");
@@ -268,8 +323,8 @@ pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
     write_bytes(&mut writer, &[50u8])?; // RGB descriptor
     write_bytes(&mut writer, &[1u8])?; // Transfer
     write_bytes(&mut writer, &[1u8])?; // Colorimetric
-    write_bytes(&mut writer, &[10u8])?; // Bit depth
-    write_bytes(&mut writer, &1u16.to_be_bytes())?; // Packing
+    write_bytes(&mut writer, &[bit_depth_u8])?; // Bit depth
+    write_bytes(&mut writer, &packing.to_be_bytes())?; // Packing
     write_bytes(&mut writer, &0u16.to_be_bytes())?; // Encoding
     write_bytes(&mut writer, &image_offset.to_be_bytes())?;
     write_bytes(&mut writer, &0u32.to_be_bytes())?; // EOL padding
@@ -279,15 +334,28 @@ pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
     let padding = vec![0u8; (image_offset - 800) as usize];
     write_bytes(&mut writer, &padding)?;
 
-    // Write 10-bit packed pixels
-    let channels = image.channels as usize;
-    for i in 0..pixel_count {
-        let base = i * channels;
-        let r = (f32_data.get(base).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 1023.0) as u32;
-        let g = (f32_data.get(base + 1).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 1023.0) as u32;
-        let b = (f32_data.get(base + 2).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 1023.0) as u32;
-        let word = (r << 22) | (g << 12) | (b << 2);
-        write_bytes(&mut writer, &word.to_be_bytes())?;
+    // Write pixels
+    match bit_depth {
+        BitDepth::Bit8 => {
+            for i in 0..pixel_count {
+                let base = i * channels;
+                let r = (f32_data.get(base).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 255.0) as u8;
+                let g = (f32_data.get(base + 1).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 255.0) as u8;
+                let b = (f32_data.get(base + 2).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 255.0) as u8;
+                write_bytes(&mut writer, &[r, g, b])?;
+            }
+        }
+        BitDepth::Bit10 => {
+            for i in 0..pixel_count {
+                let base = i * channels;
+                let r = (f32_data.get(base).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 1023.0) as u32;
+                let g = (f32_data.get(base + 1).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 1023.0) as u32;
+                let b = (f32_data.get(base + 2).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 1023.0) as u32;
+                let word = (r << 22) | (g << 12) | (b << 2);
+                write_bytes(&mut writer, &word.to_be_bytes())?;
+            }
+        }
+        BitDepth::Bit12 | BitDepth::Bit16 => {}
     }
 
     writer.flush().map_err(|e| IoError::EncodeError(e.to_string()))?;
@@ -317,7 +385,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_roundtrip() {
+    fn test_roundtrip_10bit() {
         let width = 64;
         let height = 64;
         let mut data = Vec::with_capacity((width * height * 3) as usize);
@@ -331,6 +399,11 @@ mod tests {
         }
 
         let image = ImageData::from_f32(width, height, 3, data);
+        let mut image = image;
+        image
+            .metadata
+            .attrs
+            .set("BitDepth", AttrValue::UInt(10));
 
         let temp_dir = std::env::temp_dir();
         let temp_path = temp_dir.join("vfx_io_test.dpx");
@@ -348,6 +421,51 @@ mod tests {
         for i in 0..10 {
             let diff = (loaded_data[i] - orig_data[i]).abs();
             assert!(diff < 0.002, "Value mismatch at {}", i);
+        }
+
+        let _ = std::fs::remove_file(&temp_path);
+    }
+
+    #[test]
+    fn test_roundtrip_8bit() {
+        let width = 16;
+        let height = 16;
+        let mut data = Vec::with_capacity((width * height * 3) as usize);
+
+        for y in 0..height {
+            for x in 0..width {
+                data.push(x as f32 / width as f32);
+                data.push(y as f32 / height as f32);
+                data.push(0.25);
+            }
+        }
+
+        let image = ImageData::from_f32(width, height, 3, data);
+        let mut image = image;
+        image
+            .metadata
+            .attrs
+            .set("BitDepth", AttrValue::UInt(8));
+
+        let temp_dir = std::env::temp_dir();
+        let temp_path = temp_dir.join("vfx_io_test_8bit.dpx");
+
+        write(&temp_path, &image).expect("Failed to write DPX 8-bit");
+        let loaded = read(&temp_path).expect("Failed to read DPX");
+
+        assert_eq!(loaded.width, width);
+        assert_eq!(loaded.height, height);
+        assert_eq!(loaded.channels, 3);
+        assert_eq!(
+            loaded.metadata.attrs.get("BitDepth").and_then(|v| v.as_u32()),
+            Some(8)
+        );
+
+        let loaded_data = loaded.to_f32();
+        let orig_data = image.to_f32();
+        for i in 0..10 {
+            let diff = (loaded_data[i] - orig_data[i]).abs();
+            assert!(diff < 0.01, "Value mismatch at {}", i);
         }
 
         let _ = std::fs::remove_file(&temp_path);

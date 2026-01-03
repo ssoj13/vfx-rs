@@ -16,7 +16,7 @@
 //! let image = jpeg::read("reference.jpg")?;
 //! ```
 
-use crate::{ImageData, IoError, IoResult, Metadata, PixelData, PixelFormat};
+use crate::{AttrValue, ImageData, IoError, IoResult, Metadata, PixelData, PixelFormat};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
@@ -89,6 +89,18 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
     
     let mut metadata = Metadata::default();
     metadata.colorspace = Some("sRGB".to_string());
+    metadata
+        .attrs
+        .set("ImageWidth", AttrValue::UInt(width));
+    metadata
+        .attrs
+        .set("ImageHeight", AttrValue::UInt(height));
+    metadata.attrs.set(
+        "PixelFormat",
+        AttrValue::Str(format!("{:?}", info.pixel_format)),
+    );
+    metadata.attrs.set("BitDepth", AttrValue::UInt(8));
+    read_metadata(path.as_ref(), &mut metadata)?;
     
     Ok(ImageData {
         width,
@@ -98,6 +110,191 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
         data: PixelData::U8(data),
         metadata,
     })
+}
+
+fn read_metadata(path: &Path, metadata: &mut Metadata) -> IoResult<()> {
+    let data = std::fs::read(path)?;
+    if data.len() < 2 || data[0] != 0xFF || data[1] != 0xD8 {
+        return Ok(());
+    }
+
+    let mut icc_chunks: Vec<(u8, u8, Vec<u8>)> = Vec::new();
+    let mut pos = 2usize;
+
+    while pos + 1 < data.len() {
+        if data[pos] != 0xFF {
+            pos += 1;
+            continue;
+        }
+        while pos < data.len() && data[pos] == 0xFF {
+            pos += 1;
+        }
+        if pos >= data.len() {
+            break;
+        }
+
+        let marker = data[pos];
+        pos += 1;
+
+        if marker == 0xD9 || marker == 0xDA {
+            break;
+        }
+
+        if (0xD0..=0xD7).contains(&marker) || marker == 0x01 {
+            continue;
+        }
+
+        if pos + 2 > data.len() {
+            break;
+        }
+        let seg_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
+        pos += 2;
+        if seg_len < 2 || pos + seg_len - 2 > data.len() {
+            break;
+        }
+        let segment = &data[pos..pos + seg_len - 2];
+        match marker {
+            0xE0 => parse_jfif(segment, metadata),
+            0xE1 => {
+                if segment.starts_with(b"Exif\0\0") && segment.len() > 6 {
+                    metadata
+                        .attrs
+                        .set("ExifSize", AttrValue::UInt((segment.len() - 6) as u32));
+                } else if segment.starts_with(b"http://ns.adobe.com/xap/1.0/\0") {
+                    let len = segment.len().saturating_sub(29);
+                    metadata
+                        .attrs
+                        .set("XMPSize", AttrValue::UInt(len as u32));
+                }
+            }
+            0xE2 => {
+                if segment.starts_with(b"ICC_PROFILE\0") && segment.len() > 14 {
+                    let chunk_num = segment[12];
+                    let total_chunks = segment[13];
+                    icc_chunks.push((chunk_num, total_chunks, segment[14..].to_vec()));
+                }
+            }
+            0xC0 | 0xC1 | 0xC2 | 0xC3 | 0xC5 | 0xC6 | 0xC7 | 0xC9 | 0xCA | 0xCB | 0xCD
+            | 0xCE | 0xCF => parse_sof(marker, segment, metadata),
+            _ => {}
+        }
+        pos += seg_len - 2;
+    }
+
+    if !icc_chunks.is_empty() {
+        parse_icc_profile(&mut icc_chunks, metadata);
+    }
+
+    Ok(())
+}
+
+fn parse_jfif(data: &[u8], metadata: &mut Metadata) {
+    if data.starts_with(b"JFIF\0") && data.len() >= 14 {
+        let version_major = data[5];
+        let version_minor = data[6];
+        metadata
+            .attrs
+            .set("JFIFVersion", AttrValue::Str(format!("{}.{:02}", version_major, version_minor)));
+
+        let units = data[7];
+        let x_density = u16::from_be_bytes([data[8], data[9]]);
+        let y_density = u16::from_be_bytes([data[10], data[11]]);
+        let unit_str = match units {
+            0 => "aspect ratio",
+            1 => "dpi",
+            2 => "dpcm",
+            _ => "unknown",
+        };
+
+        if x_density > 0 && y_density > 0 {
+            metadata
+                .attrs
+                .set("XResolution", AttrValue::UInt(x_density as u32));
+            metadata
+                .attrs
+                .set("YResolution", AttrValue::UInt(y_density as u32));
+            metadata
+                .attrs
+                .set("ResolutionUnit", AttrValue::Str(unit_str.to_string()));
+            if units == 1 && x_density == y_density {
+                metadata.dpi = Some(x_density as f32);
+            }
+        }
+    }
+}
+
+fn parse_sof(marker: u8, data: &[u8], metadata: &mut Metadata) {
+    if data.len() < 6 {
+        return;
+    }
+    let precision = data[0];
+    let height = u16::from_be_bytes([data[1], data[2]]);
+    let width = u16::from_be_bytes([data[3], data[4]]);
+    let components = data[5];
+
+    metadata
+        .attrs
+        .set("ImageWidth", AttrValue::UInt(width as u32));
+    metadata
+        .attrs
+        .set("ImageHeight", AttrValue::UInt(height as u32));
+    metadata
+        .attrs
+        .set("BitsPerSample", AttrValue::UInt(precision as u32));
+    metadata
+        .attrs
+        .set("ColorComponents", AttrValue::UInt(components as u32));
+
+    let compression = match marker {
+        0xC0 => "Baseline DCT",
+        0xC1 => "Extended Sequential DCT",
+        0xC2 => "Progressive DCT",
+        0xC3 => "Lossless",
+        0xC5 => "Differential Sequential DCT",
+        0xC6 => "Differential Progressive DCT",
+        0xC7 => "Differential Lossless",
+        0xC9 => "Extended Sequential DCT (Arithmetic)",
+        0xCA => "Progressive DCT (Arithmetic)",
+        0xCB => "Lossless (Arithmetic)",
+        0xCD => "Differential Sequential (Arithmetic)",
+        0xCE => "Differential Progressive (Arithmetic)",
+        0xCF => "Differential Lossless (Arithmetic)",
+        _ => "Unknown",
+    };
+    metadata
+        .attrs
+        .set("Compression", AttrValue::Str(compression.to_string()));
+}
+
+fn parse_icc_profile(chunks: &mut [(u8, u8, Vec<u8>)], metadata: &mut Metadata) {
+    chunks.sort_by_key(|(num, _, _)| *num);
+    let mut profile_data = Vec::new();
+    for (_, _, data) in chunks.iter() {
+        profile_data.extend_from_slice(data);
+    }
+
+    if profile_data.len() < 20 {
+        metadata
+            .attrs
+            .set("ICCProfileSize", AttrValue::UInt(profile_data.len() as u32));
+        return;
+    }
+
+    let profile_size = u32::from_be_bytes([
+        profile_data[0],
+        profile_data[1],
+        profile_data[2],
+        profile_data[3],
+    ]);
+    metadata
+        .attrs
+        .set("ICCProfileSize", AttrValue::UInt(profile_size));
+
+    if let Ok(space) = std::str::from_utf8(&profile_data[16..20]) {
+        metadata
+            .attrs
+            .set("ICCColorSpace", AttrValue::Str(space.trim().to_string()));
+    }
 }
 
 /// Writes an image to a JPEG file.

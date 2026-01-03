@@ -8,12 +8,13 @@ repository.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["exr", "png", "jpeg", "tiff", "dpx"]
+default = ["exr", "png", "jpeg", "tiff", "dpx", "hdr"]
 exr = ["dep:exr"]
 png = ["dep:png"]
 jpeg = ["dep:jpeg-decoder"]
 tiff = ["dep:tiff"]
 dpx = []
+hdr = []
 
 [dependencies]
 vfx-core.workspace = true

@@ -53,6 +53,7 @@ rayon = "1.11"
 clap = { version = "4.5", features = ["derive", "cargo"] }
 anyhow = "1.0"
 glob = "0.3"
+regex = "1.11"
 
 # XML
 quick-xml = "0.38"
@@ -75,4 +76,3 @@ codegen-units = 1
 
 [profile.dev]
 opt-level = 1
-

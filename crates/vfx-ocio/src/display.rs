@@ -259,6 +259,18 @@ impl ViewTransform {
         self
     }
 
+    /// Sets transform from display reference.
+    pub fn with_from_display_reference(mut self, t: Transform) -> Self {
+        self.from_display_reference = Some(t);
+        self
+    }
+
+    /// Sets transform to display reference.
+    pub fn with_to_display_reference(mut self, t: Transform) -> Self {
+        self.to_display_reference = Some(t);
+        self
+    }
+
     /// Gets transform from scene reference.
     #[inline]
     pub fn from_scene_reference(&self) -> Option<&Transform> {

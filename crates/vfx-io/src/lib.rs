@@ -6,6 +6,7 @@
 //! visual effects and film production:
 //!
 //! - **EXR** - OpenEXR for HDR/linear workflow
+//! - **HDR** - Radiance RGBE format
 //! - **PNG** - Lossless with alpha support
 //! - **JPEG** - Lossy compression for previews
 //! - **TIFF** - Print/archival with LZW compression
@@ -52,6 +53,7 @@
 //! | Format | Read | Write | Bit Depths | Features |
 //! |--------|------|-------|------------|----------|
 //! | EXR | Yes | Yes | 16f, 32f | Layers, compression, metadata |
+//! | HDR | Yes | Yes | 32f | RGBE, header metadata |
 //! | PNG | Yes | Yes | 8, 16 | Alpha, gamma |
 //! | JPEG | Yes | Yes | 8 | Quality setting |
 //! | TIFF | Yes | Yes | 8, 16, 32f | LZW, Deflate compression |
@@ -71,6 +73,7 @@
 //! - `jpeg` - JPEG support (default)
 //! - `tiff` - TIFF support (default)
 //! - `dpx` - DPX support (default)
+//! - `hdr` - Radiance HDR support (default)
 
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
@@ -78,6 +81,7 @@
 mod error;
 mod traits;
 mod detect;
+pub mod metadata;
 
 #[cfg(feature = "exr")]
 pub mod exr;
@@ -94,11 +98,15 @@ pub mod tiff;
 #[cfg(feature = "dpx")]
 pub mod dpx;
 
+#[cfg(feature = "hdr")]
+pub mod hdr;
+
 pub mod sequence;
 
 pub use error::{IoError, IoResult};
 pub use traits::{ImageReader, ImageWriter};
 pub use detect::Format;
+pub use metadata::{Attrs, AttrValue};
 
 use std::path::Path;
 
@@ -140,6 +148,9 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
         
         #[cfg(feature = "dpx")]
         Format::Dpx => dpx::read(path),
+
+        #[cfg(feature = "hdr")]
+        Format::Hdr => hdr::read(path),
         
         Format::Unknown => Err(IoError::UnsupportedFormat(
             path.extension()
@@ -186,6 +197,9 @@ pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
         
         #[cfg(feature = "dpx")]
         Format::Dpx => dpx::write(path, image),
+
+        #[cfg(feature = "hdr")]
+        Format::Hdr => hdr::write(path, image),
         
         Format::Unknown => Err(IoError::UnsupportedFormat(
             path.extension()
@@ -250,8 +264,8 @@ pub struct Metadata {
     pub gamma: Option<f32>,
     /// DPI/PPI for print.
     pub dpi: Option<f32>,
-    /// Custom attributes.
-    pub attributes: std::collections::HashMap<String, String>,
+    /// Typed attributes (format-specific).
+    pub attrs: Attrs,
 }
 
 impl ImageData {

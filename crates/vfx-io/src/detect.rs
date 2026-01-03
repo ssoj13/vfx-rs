@@ -20,6 +20,8 @@ pub enum Format {
     Tiff,
     /// DPX format.
     Dpx,
+    /// Radiance HDR format.
+    Hdr,
     /// Unknown/unsupported format.
     Unknown,
 }
@@ -56,6 +58,7 @@ impl Format {
             Some("jpg") | Some("jpeg") => Format::Jpeg,
             Some("tif") | Some("tiff") => Format::Tiff,
             Some("dpx") => Format::Dpx,
+            Some("hdr") | Some("pic") | Some("rgbe") => Format::Hdr,
             _ => Format::Unknown,
         }
     }
@@ -113,7 +116,12 @@ impl Format {
                 return Format::Dpx;
             }
         }
-        
+
+        // HDR: "#?"
+        if bytes.len() >= 2 && bytes[0..2] == [b'#', b'?'] {
+            return Format::Hdr;
+        }
+
         Format::Unknown
     }
     
@@ -125,6 +133,7 @@ impl Format {
             Format::Jpeg => "jpg",
             Format::Tiff => "tif",
             Format::Dpx => "dpx",
+            Format::Hdr => "hdr",
             Format::Unknown => "",
         }
     }
@@ -137,13 +146,14 @@ impl Format {
             Format::Jpeg => "image/jpeg",
             Format::Tiff => "image/tiff",
             Format::Dpx => "image/x-dpx",
+            Format::Hdr => "image/vnd.radiance",
             Format::Unknown => "application/octet-stream",
         }
     }
     
     /// Returns true if this format supports HDR/float data.
     pub fn supports_hdr(&self) -> bool {
-        matches!(self, Format::Exr | Format::Tiff)
+        matches!(self, Format::Exr | Format::Tiff | Format::Hdr)
     }
     
     /// Returns true if this format supports alpha channel.
@@ -166,6 +176,8 @@ mod tests {
         assert_eq!(Format::from_extension("test.tif"), Format::Tiff);
         assert_eq!(Format::from_extension("test.tiff"), Format::Tiff);
         assert_eq!(Format::from_extension("test.dpx"), Format::Dpx);
+        assert_eq!(Format::from_extension("test.hdr"), Format::Hdr);
+        assert_eq!(Format::from_extension("test.pic"), Format::Hdr);
         assert_eq!(Format::from_extension("test.unknown"), Format::Unknown);
     }
 
@@ -194,6 +206,10 @@ mod tests {
         // DPX big-endian
         let dpx_be = [0x53, 0x44, 0x50, 0x58, 0x00, 0x00, 0x00, 0x00];
         assert_eq!(Format::from_bytes(&dpx_be), Format::Dpx);
+
+        // HDR magic
+        let hdr = [b'#', b'?', b'R', b'A', b'D', b'I', b'A', b'N'];
+        assert_eq!(Format::from_bytes(&hdr), Format::Hdr);
         
         // Unknown
         let unknown = [0x00, 0x00, 0x00, 0x00];

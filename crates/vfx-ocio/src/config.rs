@@ -23,6 +23,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use serde::Deserialize;
+use glob::Pattern;
+use regex::Regex;
 
 use crate::colorspace::{ColorSpace, Encoding, Family};
 use crate::context::Context;
@@ -89,12 +91,26 @@ pub enum ConfigVersion {
 pub struct FileRule {
     /// Rule name.
     pub name: String,
-    /// File pattern (glob or regex).
-    pub pattern: String,
-    /// Extension filter.
-    pub extension: Option<String>,
     /// Assigned color space.
     pub colorspace: String,
+    /// Rule matching kind.
+    pub kind: FileRuleKind,
+}
+
+/// File rule matching behavior.
+#[derive(Debug, Clone)]
+pub enum FileRuleKind {
+    /// Basic rule: glob pattern + optional extension.
+    Basic {
+        pattern: String,
+        extension: Option<String>,
+    },
+    /// Regex rule: regex pattern.
+    Regex {
+        regex: Regex,
+    },
+    /// Default rule (fallback).
+    Default,
 }
 
 impl Default for Config {
@@ -216,9 +232,35 @@ impl Config {
         // Parse looks
         if let Some(looks) = raw.looks {
             for raw_look in looks {
-                let look = Look::new(&raw_look.name)
+                let mut look = Look::new(&raw_look.name)
                     .process_space(raw_look.process_space.unwrap_or_default())
                     .description(raw_look.description.unwrap_or_default());
+
+                if let Some(t) = raw_look.transform {
+                    match self.parse_raw_transform(&t) {
+                        Ok(parsed) => {
+                            look = look.transform(parsed);
+                        }
+                        Err(e) => {
+                            if config.strict_parsing {
+                                return Err(e);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(t) = raw_look.inverse_transform {
+                    match self.parse_raw_transform(&t) {
+                        Ok(parsed) => {
+                            look = look.inverse_transform(parsed);
+                        }
+                        Err(e) => {
+                            if config.strict_parsing {
+                                return Err(e);
+                            }
+                        }
+                    }
+                }
                 config.looks.add(look);
             }
         }
@@ -226,21 +268,125 @@ impl Config {
         // Parse view transforms (v2)
         if let Some(view_transforms) = raw.view_transforms {
             for raw_vt in view_transforms {
-                let vt = ViewTransform::new(&raw_vt.name)
+                let mut vt = ViewTransform::new(&raw_vt.name)
                     .with_description(raw_vt.description.unwrap_or_default());
+
+                if let Some(family) = raw_vt.family {
+                    vt = vt.with_family(family);
+                }
+
+                if let Some(t) = raw_vt.from_scene_reference {
+                    match self.parse_raw_transform(&t) {
+                        Ok(parsed) => {
+                            vt = vt.with_from_scene_reference(parsed);
+                        }
+                        Err(e) => {
+                            if config.strict_parsing {
+                                return Err(e);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(t) = raw_vt.to_scene_reference {
+                    match self.parse_raw_transform(&t) {
+                        Ok(parsed) => {
+                            vt = vt.with_to_scene_reference(parsed);
+                        }
+                        Err(e) => {
+                            if config.strict_parsing {
+                                return Err(e);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(t) = raw_vt.from_display_reference {
+                    match self.parse_raw_transform(&t) {
+                        Ok(parsed) => {
+                            vt = vt.with_from_display_reference(parsed);
+                        }
+                        Err(e) => {
+                            if config.strict_parsing {
+                                return Err(e);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(t) = raw_vt.to_display_reference {
+                    match self.parse_raw_transform(&t) {
+                        Ok(parsed) => {
+                            vt = vt.with_to_display_reference(parsed);
+                        }
+                        Err(e) => {
+                            if config.strict_parsing {
+                                return Err(e);
+                            }
+                        }
+                    }
+                }
                 config.displays.add_view_transform(vt);
             }
         }
 
-        // Parse file rules
+        // Parse file rules (OCIO v2)
         if let Some(file_rules) = raw.file_rules {
             for raw_rule in file_rules {
+                let name = raw_rule.name;
+                let colorspace = raw_rule.colorspace;
+
+                let kind = if name.eq_ignore_ascii_case("Default") {
+                    FileRuleKind::Default
+                } else if let Some(regex_str) = raw_rule.regex {
+                    let regex = Regex::new(&regex_str).map_err(|e| {
+                        OcioError::Validation(format!("invalid regex rule '{}': {}", name, e),)
+                    })?;
+                    FileRuleKind::Regex { regex }
+                } else {
+                    let pattern = raw_rule.pattern.unwrap_or_default();
+                    if !pattern.is_empty() {
+                        Pattern::new(&pattern).map_err(|e| {
+                            OcioError::Validation(format!("invalid glob pattern '{}': {}", name, e),)
+                        })?;
+                    }
+                    if let Some(ext) = raw_rule.extension.as_deref() {
+                        if has_glob_chars(ext) {
+                            Pattern::new(ext).map_err(|e| {
+                                OcioError::Validation(format!("invalid extension glob '{}': {}", name, e),)
+                            })?;
+                        }
+                    }
+                    FileRuleKind::Basic {
+                        pattern,
+                        extension: raw_rule.extension,
+                    }
+                };
+
                 config.file_rules.push(FileRule {
-                    name: raw_rule.name,
-                    pattern: raw_rule.pattern.unwrap_or_default(),
-                    extension: raw_rule.extension,
-                    colorspace: raw_rule.colorspace,
+                    name,
+                    colorspace,
+                    kind,
                 });
+            }
+
+            if config.strict_parsing {
+                let default_idx = config
+                    .file_rules
+                    .iter()
+                    .position(|r| matches!(r.kind, FileRuleKind::Default));
+                if default_idx.is_none() {
+                    return Err(OcioError::Validation(
+                        "file_rules must include a Default rule".into(),
+                    ));
+                }
+                if let Some(idx) = default_idx {
+                    if idx + 1 != config.file_rules.len() {
+                        return Err(OcioError::Validation(
+                            "Default rule must be the last file rule".into(),
+                        ));
+                    }
+                }
             }
         }
 
@@ -250,6 +396,7 @@ impl Config {
     /// Parses a raw colorspace definition.
     fn parse_colorspace(&self, raw: RawColorSpace) -> OcioResult<ColorSpace> {
         let mut builder = ColorSpace::builder(&raw.name);
+        let strict = self.strict_parsing;
 
         if let Some(desc) = raw.description {
             builder = builder.description(desc);
@@ -277,22 +424,64 @@ impl Config {
         // OCIO v1 uses to_reference/from_reference
         // OCIO v2 adds to_scene_reference/from_scene_reference and display variants
         if let Some(raw_t) = raw.to_reference {
-            if let Ok(t) = self.parse_raw_transform(&raw_t) {
-                builder = builder.to_reference(t);
+            match self.parse_raw_transform(&raw_t) {
+                Ok(t) => builder = builder.to_reference(t),
+                Err(e) => {
+                    if strict {
+                        return Err(e);
+                    }
+                }
             }
         } else if let Some(raw_t) = raw.to_scene_reference {
-            if let Ok(t) = self.parse_raw_transform(&raw_t) {
-                builder = builder.to_reference(t);
+            match self.parse_raw_transform(&raw_t) {
+                Ok(t) => builder = builder.to_reference(t),
+                Err(e) => {
+                    if strict {
+                        return Err(e);
+                    }
+                }
             }
         }
 
         if let Some(raw_t) = raw.from_reference {
-            if let Ok(t) = self.parse_raw_transform(&raw_t) {
-                builder = builder.from_reference(t);
+            match self.parse_raw_transform(&raw_t) {
+                Ok(t) => builder = builder.from_reference(t),
+                Err(e) => {
+                    if strict {
+                        return Err(e);
+                    }
+                }
             }
         } else if let Some(raw_t) = raw.from_scene_reference {
-            if let Ok(t) = self.parse_raw_transform(&raw_t) {
-                builder = builder.from_reference(t);
+            match self.parse_raw_transform(&raw_t) {
+                Ok(t) => builder = builder.from_reference(t),
+                Err(e) => {
+                    if strict {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        if let Some(raw_t) = raw.to_display_reference {
+            match self.parse_raw_transform(&raw_t) {
+                Ok(t) => builder = builder.to_display_reference(t),
+                Err(e) => {
+                    if strict {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        if let Some(raw_t) = raw.from_display_reference {
+            match self.parse_raw_transform(&raw_t) {
+                Ok(t) => builder = builder.from_display_reference(t),
+                Err(e) => {
+                    if strict {
+                        return Err(e);
+                    }
+                }
             }
         }
 
@@ -304,10 +493,17 @@ impl Config {
         match raw {
             RawTransform::Single(def) => self.parse_raw_transform_def(def.as_ref()),
             RawTransform::Group(defs) => {
-                let transforms: Vec<Transform> = defs
-                    .iter()
-                    .filter_map(|d| self.parse_raw_transform_def(d).ok())
-                    .collect();
+                let mut transforms = Vec::new();
+                for def in defs {
+                    match self.parse_raw_transform_def(def) {
+                        Ok(t) => transforms.push(t),
+                        Err(e) => {
+                            if self.strict_parsing {
+                                return Err(e);
+                            }
+                        }
+                    }
+                }
                 if transforms.is_empty() {
                     return Err(OcioError::Validation(
                         "empty transform group".into(),
@@ -331,8 +527,12 @@ impl Config {
 
         // FileTransform (LUT files)
         if let Some(f) = &def.file {
+            let resolved = self.context.resolve(&f.src);
+            let resolved_path = self
+                .resolve_file(&resolved)
+                .unwrap_or_else(|| self.working_dir.join(&resolved));
             return Ok(Transform::FileTransform(FileTransform {
-                src: self.working_dir.join(&f.src),
+                src: resolved_path,
                 ccc_id: f.cccid.clone(),
                 interpolation: parse_interpolation(&f.interpolation),
                 direction: parse_direction(&f.direction),
@@ -394,12 +594,18 @@ impl Config {
 
         // RangeTransform
         if let Some(r) = &def.range {
+            let style = match r.style.as_deref() {
+                Some("noClamp") | Some("noclamp") | Some("NoClamp") | Some("NOCLAMP") => {
+                    RangeStyle::NoClamp
+                }
+                _ => RangeStyle::Clamp,
+            };
             return Ok(Transform::Range(RangeTransform {
                 min_in: r.min_in_value,
                 max_in: r.max_in_value,
                 min_out: r.min_out_value,
                 max_out: r.max_out_value,
-                style: RangeStyle::Clamp,
+                style,
                 direction: parse_direction(&r.direction),
             }));
         }
@@ -571,9 +777,60 @@ impl Config {
                 view: view.into(),
             })?;
 
-        // Get display color space
-        let dst = v.colorspace();
-        self.processor(src, dst)
+        let mut transforms = Vec::new();
+
+        // Source to reference
+        let src_cs = self
+            .colorspace(src)
+            .ok_or_else(|| OcioError::ColorSpaceNotFound { name: src.into() })?;
+        if let Some(t) = src_cs.to_reference() {
+            transforms.push(t.clone());
+        }
+
+        // Apply view looks (if any) in reference space
+        if let Some(looks) = v.looks() {
+            self.append_look_transforms(&mut transforms, looks)?;
+        }
+
+        // Apply view transform (OCIO v2) if defined
+        if let Some(vt_name) = v.view_transform() {
+            let vt = self
+                .displays
+                .view_transform(vt_name)
+                .ok_or_else(|| OcioError::Validation(format!("view transform not found: {}", vt_name)))?;
+
+            if let Some(t) = vt.from_scene_reference() {
+                transforms.push(t.clone());
+            } else if let Some(t) = vt.to_scene_reference() {
+                transforms.push(t.clone().inverse());
+            } else if let Some(t) = vt.to_display_reference() {
+                transforms.push(t.clone());
+            } else if let Some(t) = vt.from_display_reference() {
+                transforms.push(t.clone().inverse());
+            }
+        }
+
+        // Display/view color space
+        let dst_cs = self
+            .colorspace(v.colorspace())
+            .ok_or_else(|| OcioError::ColorSpaceNotFound { name: v.colorspace().into() })?;
+
+        if v.view_transform().is_some() {
+            if let Some(t) = dst_cs.from_display_reference() {
+                transforms.push(t.clone());
+            } else if let Some(t) = dst_cs.from_reference() {
+                transforms.push(t.clone());
+            }
+        } else if let Some(t) = dst_cs.from_reference() {
+            transforms.push(t.clone());
+        }
+
+        if transforms.is_empty() {
+            return Ok(Processor::new());
+        }
+
+        let group = Transform::group(transforms);
+        Processor::from_transform(&group, TransformDirection::Forward)
     }
 
     /// Creates a processor with looks applied.
@@ -592,15 +849,12 @@ impl Config {
         dst: &str,
         looks: &str,
     ) -> OcioResult<Processor> {
-        use crate::look::parse_looks;
-        
-        let look_specs = parse_looks(looks);
-        if look_specs.is_empty() {
+        if looks.trim().is_empty() {
             return self.processor(src, dst);
         }
-        
+
         let mut transforms = Vec::new();
-        
+
         // Source to reference
         let src_cs = self
             .colorspace(src)
@@ -608,52 +862,8 @@ impl Config {
         if let Some(t) = src_cs.to_reference() {
             transforms.push(t.clone());
         }
-        
-        // Apply each look
-        for (look_name, forward) in look_specs {
-            let look = self
-                .looks
-                .get(look_name)
-                .ok_or_else(|| OcioError::LookNotFound { name: look_name.into() })?;
-            
-            // Convert to process space if specified
-            if let Some(ps_name) = look.get_process_space() {
-                if let Some(ps) = self.colorspace(ps_name) {
-                    if let Some(t) = ps.from_reference() {
-                        transforms.push(t.clone());
-                    }
-                }
-            }
-            
-            // Apply look transform
-            let look_transform = if forward {
-                look.get_transform()
-            } else {
-                look.get_inverse_transform().or_else(|| look.get_transform())
-            };
-            
-            if let Some(t) = look_transform {
-                if forward {
-                    transforms.push(t.clone());
-                } else {
-                    // Wrap in group with inverse direction
-                    transforms.push(Transform::Group(GroupTransform {
-                        transforms: vec![t.clone()],
-                        direction: TransformDirection::Inverse,
-                    }));
-                }
-            }
-            
-            // Return from process space
-            if let Some(ps_name) = look.get_process_space() {
-                if let Some(ps) = self.colorspace(ps_name) {
-                    if let Some(t) = ps.to_reference() {
-                        transforms.push(t.clone());
-                    }
-                }
-            }
-        }
-        
+        self.append_look_transforms(&mut transforms, looks)?;
+
         // Reference to destination
         let dst_cs = self
             .colorspace(dst)
@@ -668,6 +878,60 @@ impl Config {
         
         let group = Transform::group(transforms);
         Processor::from_transform(&group, TransformDirection::Forward)
+    }
+
+    fn append_look_transforms(&self, transforms: &mut Vec<Transform>, looks: &str) -> OcioResult<()> {
+        use crate::look::parse_looks;
+
+        let look_specs = parse_looks(looks);
+        if look_specs.is_empty() {
+            return Ok(());
+        }
+
+        for (look_name, forward) in look_specs {
+            let look = self
+                .looks
+                .get(look_name)
+                .ok_or_else(|| OcioError::LookNotFound { name: look_name.into() })?;
+
+            // Convert to process space if specified
+            if let Some(ps_name) = look.get_process_space() {
+                if let Some(ps) = self.colorspace(ps_name) {
+                    if let Some(t) = ps.from_reference() {
+                        transforms.push(t.clone());
+                    }
+                }
+            }
+
+            // Apply look transform
+            let look_transform = if forward {
+                look.get_transform()
+            } else {
+                look.get_inverse_transform().or_else(|| look.get_transform())
+            };
+
+            if let Some(t) = look_transform {
+                if forward {
+                    transforms.push(t.clone());
+                } else {
+                    transforms.push(Transform::Group(GroupTransform {
+                        transforms: vec![t.clone()],
+                        direction: TransformDirection::Inverse,
+                    }));
+                }
+            }
+
+            // Return from process space
+            if let Some(ps_name) = look.get_process_space() {
+                if let Some(ps) = self.colorspace(ps_name) {
+                    if let Some(t) = ps.to_reference() {
+                        transforms.push(t.clone());
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Resolves a file path using search paths.
@@ -697,17 +961,52 @@ impl Config {
 
     /// Gets color space from file rules.
     pub fn colorspace_from_filepath(&self, filepath: &str) -> Option<&str> {
+        if self.file_rules.is_empty() {
+            return None;
+        }
+
+        let normalized = normalize_path(filepath);
+        let ext = Path::new(&normalized)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase());
+
         for rule in &self.file_rules {
-            if let Some(ext) = &rule.extension {
-                if !filepath.ends_with(ext) {
-                    continue;
+            match &rule.kind {
+                FileRuleKind::Basic { pattern, extension } => {
+                    if !pattern.is_empty() {
+                        let glob = Pattern::new(pattern).ok()?;
+                        if !glob.matches(&normalized) {
+                            continue;
+                        }
+                    }
+
+                    if let Some(ext_rule) = extension.as_deref() {
+                        let ext_rule = ext_rule.trim_start_matches('.').to_lowercase();
+                        let file_ext = ext.as_deref().unwrap_or("");
+                        if has_glob_chars(&ext_rule) {
+                            let glob = Pattern::new(&ext_rule).ok()?;
+                            if !glob.matches(file_ext) {
+                                continue;
+                            }
+                        } else if file_ext != ext_rule {
+                            continue;
+                        }
+                    }
+
+                    return Some(&rule.colorspace);
+                }
+                FileRuleKind::Regex { regex } => {
+                    if regex.is_match(&normalized) {
+                        return Some(&rule.colorspace);
+                    }
+                }
+                FileRuleKind::Default => {
+                    return Some(&rule.colorspace);
                 }
             }
-            // Simple glob matching
-            if rule.pattern.is_empty() || filepath.contains(&rule.pattern) {
-                return Some(&rule.colorspace);
-            }
         }
+
         None
     }
 
@@ -805,6 +1104,7 @@ struct RawFileRule {
     name: String,
     pattern: Option<String>,
     extension: Option<String>,
+    regex: Option<String>,
     colorspace: String,
 }
 
@@ -890,6 +1190,7 @@ struct RawRangeTransform {
     max_in_value: Option<f64>,
     min_out_value: Option<f64>,
     max_out_value: Option<f64>,
+    style: Option<String>,
     direction: Option<String>,
 }
 
@@ -959,6 +1260,14 @@ fn parse_rgb(v: &Option<Vec<f64>>, default: f64) -> [f64; 3] {
         Some(vec) if vec.len() == 1 => [vec[0], vec[0], vec[0]],
         _ => [default, default, default],
     }
+}
+
+fn normalize_path(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+fn has_glob_chars(s: &str) -> bool {
+    s.chars().any(|c| matches!(c, '*' | '?' | '[' | ']'))
 }
 
 #[cfg(test)]

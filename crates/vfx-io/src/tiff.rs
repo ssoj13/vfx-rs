@@ -19,9 +19,9 @@
 //! tiff::write("output.tiff", &image)?;
 //! ```
 
-use crate::{ImageData, IoError, IoResult, Metadata, PixelData, PixelFormat};
+use crate::{AttrValue, ImageData, IoError, IoResult, Metadata, PixelData, PixelFormat};
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Read, Seek};
 use std::path::Path;
 
 /// Reads a TIFF file from the given path.
@@ -36,6 +36,7 @@ use std::path::Path;
 /// ```
 pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
     use tiff::decoder::{Decoder, DecodingResult};
+    use tiff::tags::Tag;
     use tiff::ColorType;
 
     let file = File::open(path.as_ref())?;
@@ -101,6 +102,25 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
 
     let mut metadata = Metadata::default();
     metadata.colorspace = Some("srgb".to_string());
+    metadata
+        .attrs
+        .set("ImageWidth", AttrValue::UInt(width));
+    metadata
+        .attrs
+        .set("ImageHeight", AttrValue::UInt(height));
+    metadata
+        .attrs
+        .set("ColorType", AttrValue::Str(format!("{:?}", color_type)));
+    metadata
+        .attrs
+        .set("BitDepth", AttrValue::UInt(bit_depth_from_color(color_type)));
+    set_tag_u16(&mut decoder, Tag::Compression, "Compression", &mut metadata);
+    set_tag_f64(&mut decoder, Tag::XResolution, "XResolution", &mut metadata);
+    set_tag_f64(&mut decoder, Tag::YResolution, "YResolution", &mut metadata);
+    set_tag_u16(&mut decoder, Tag::ResolutionUnit, "ResolutionUnit", &mut metadata);
+    set_tag_string(&mut decoder, Tag::Software, "Software", &mut metadata);
+    set_tag_string(&mut decoder, Tag::Artist, "Artist", &mut metadata);
+    set_tag_string(&mut decoder, Tag::DateTime, "DateTime", &mut metadata);
 
     Ok(ImageData {
         width,
@@ -183,6 +203,60 @@ pub enum Compression {
     Deflate,
     /// PackBits compression (simple RLE).
     PackBits,
+}
+
+fn set_tag_u16<R: Read + Seek>(
+    decoder: &mut tiff::decoder::Decoder<R>,
+    tag: tiff::tags::Tag,
+    key: &str,
+    metadata: &mut Metadata,
+) {
+    if let Ok(Some(value)) = decoder.find_tag(tag) {
+        if let Ok(v) = value.into_u16() {
+            metadata.attrs.set(key, AttrValue::UInt(v as u32));
+        }
+    }
+}
+
+fn set_tag_f64<R: Read + Seek>(
+    decoder: &mut tiff::decoder::Decoder<R>,
+    tag: tiff::tags::Tag,
+    key: &str,
+    metadata: &mut Metadata,
+) {
+    if let Ok(Some(value)) = decoder.find_tag(tag) {
+        if let Ok(v) = value.into_f64() {
+            metadata.attrs.set(key, AttrValue::Float(v as f32));
+        }
+    }
+}
+
+fn set_tag_string<R: Read + Seek>(
+    decoder: &mut tiff::decoder::Decoder<R>,
+    tag: tiff::tags::Tag,
+    key: &str,
+    metadata: &mut Metadata,
+) {
+    if let Ok(Some(value)) = decoder.find_tag(tag) {
+        if let Ok(v) = value.into_string() {
+            metadata.attrs.set(key, AttrValue::Str(v));
+        }
+    }
+}
+
+fn bit_depth_from_color(color_type: tiff::ColorType) -> u32 {
+    match color_type {
+        tiff::ColorType::RGB(bits) => bits as u32,
+        tiff::ColorType::RGBA(bits) => bits as u32,
+        tiff::ColorType::Gray(bits) => bits as u32,
+        tiff::ColorType::GrayA(bits) => bits as u32,
+        tiff::ColorType::CMYK(bits) => bits as u32,
+        tiff::ColorType::CMYKA(bits) => bits as u32,
+        tiff::ColorType::YCbCr(bits) => bits as u32,
+        tiff::ColorType::Palette(bits) => bits as u32,
+        tiff::ColorType::Multiband { bit_depth, .. } => bit_depth as u32,
+        _ => 0,
+    }
 }
 
 #[cfg(test)]

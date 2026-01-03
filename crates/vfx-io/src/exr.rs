@@ -22,7 +22,7 @@
 //! write("output.exr", &image)?;
 //! ```
 
-use crate::{ImageData, IoError, IoResult, Metadata, PixelData, PixelFormat};
+use crate::{AttrValue, ImageData, IoError, IoResult, Metadata, PixelData, PixelFormat};
 use std::path::Path;
 
 /// Reads an EXR file from the given path.
@@ -82,6 +82,17 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
     
     // Extract metadata
     result.metadata.colorspace = Some("linear".to_string());
+    result
+        .metadata
+        .attrs
+        .set("DataWindowWidth", AttrValue::UInt(width));
+    result
+        .metadata
+        .attrs
+        .set("DataWindowHeight", AttrValue::UInt(height));
+    if let Err(err) = read_metadata(path, &mut result.metadata) {
+        return Err(err);
+    }
     
     Ok(result)
 }
@@ -141,6 +152,103 @@ pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
         .to_file(path)
         .map_err(|e| IoError::EncodeError(e.to_string()))?;
     
+    Ok(())
+}
+
+fn read_metadata(path: &Path, metadata: &mut Metadata) -> IoResult<()> {
+    let data = std::fs::read(path)?;
+    let meta = exr::meta::MetaData::read_from_buffered(
+        std::io::Cursor::new(&data),
+        false,
+    )
+    .map_err(|e| IoError::DecodeError(format!("EXR metadata parse error: {}", e)))?;
+
+    for (layer_idx, header) in meta.headers.iter().enumerate() {
+        let prefix = if meta.headers.len() > 1 {
+            format!("Layer{}:", layer_idx)
+        } else {
+            String::new()
+        };
+
+        let display_window = &header.shared_attributes.display_window;
+        metadata
+            .attrs
+            .set(format!("{}ImageWidth", prefix), AttrValue::UInt(display_window.size.width() as u32));
+        metadata
+            .attrs
+            .set(format!("{}ImageHeight", prefix), AttrValue::UInt(display_window.size.height() as u32));
+
+        metadata
+            .attrs
+            .set(format!("{}PixelAspectRatio", prefix), AttrValue::Float(header.shared_attributes.pixel_aspect));
+
+        metadata
+            .attrs
+            .set(format!("{}Compression", prefix), AttrValue::Str(format!("{:?}", header.compression)));
+
+        let channels: Vec<String> = header
+            .channels
+            .list
+            .iter()
+            .map(|ch| ch.name.to_string())
+            .collect();
+        metadata
+            .attrs
+            .set(format!("{}Channels", prefix), AttrValue::Str(channels.join(", ")));
+        metadata
+            .attrs
+            .set(format!("{}ChannelCount", prefix), AttrValue::UInt(header.channels.list.len() as u32));
+
+        metadata
+            .attrs
+            .set(format!("{}LineOrder", prefix), AttrValue::Str(format!("{:?}", header.line_order)));
+
+        if let Some(chroma) = &header.shared_attributes.chromaticities {
+            metadata.attrs.set(
+                format!("{}Chromaticities", prefix),
+                AttrValue::Str(format!(
+                    "R({:.3},{:.3}) G({:.3},{:.3}) B({:.3},{:.3}) W({:.3},{:.3})",
+                    chroma.red.0,
+                    chroma.red.1,
+                    chroma.green.0,
+                    chroma.green.1,
+                    chroma.blue.0,
+                    chroma.blue.1,
+                    chroma.white.0,
+                    chroma.white.1
+                )),
+            );
+        }
+
+        if let Some(tc) = &header.shared_attributes.time_code {
+            metadata.attrs.set(
+                format!("{}TimeCode", prefix),
+                AttrValue::Str(format!(
+                    "{:02}:{:02}:{:02}:{:02}",
+                    tc.hours, tc.minutes, tc.seconds, tc.frame
+                )),
+            );
+        }
+
+        for (name, value) in &header.shared_attributes.other {
+            metadata
+                .attrs
+                .set(format!("{}EXR:{}", prefix, name), AttrValue::Str(format!("{:?}", value)));
+        }
+
+        if let Some(layer_name) = &header.own_attributes.layer_name {
+            metadata
+                .attrs
+                .set(format!("{}LayerName", prefix), AttrValue::Str(layer_name.to_string()));
+        }
+
+        for (name, value) in &header.own_attributes.other {
+            metadata
+                .attrs
+                .set(format!("{}Layer:{}", prefix, name), AttrValue::Str(format!("{:?}", value)));
+        }
+    }
+
     Ok(())
 }
 

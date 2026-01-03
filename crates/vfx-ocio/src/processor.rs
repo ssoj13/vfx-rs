@@ -438,6 +438,8 @@ pub(crate) enum Op {
         lut: Vec<f32>,
         size: usize,
         interp: Interpolation,
+        domain_min: [f32; 3],
+        domain_max: [f32; 3],
     },
     /// Exponent.
     Exponent {
@@ -705,10 +707,10 @@ impl Processor {
                     r.direction
                 };
 
-                let (scale, offset, clamp_min, clamp_max) = if let (Some(min_in), Some(max_in), Some(min_out), Some(max_out)) = 
-                    (r.min_in, r.max_in, r.min_out, r.max_out) 
+                let (scale, offset, clamp_min, clamp_max) = if let (Some(min_in), Some(max_in), Some(min_out), Some(max_out)) =
+                    (r.min_in, r.max_in, r.min_out, r.max_out)
                 {
-                    if dir == TransformDirection::Forward {
+                    let (scale, offset, clamp_min, clamp_max) = if dir == TransformDirection::Forward {
                         let scale = (max_out - min_out) / (max_in - min_in);
                         let offset = min_out - min_in * scale;
                         (scale as f32, offset as f32, r.min_out.map(|v| v as f32), r.max_out.map(|v| v as f32))
@@ -716,6 +718,12 @@ impl Processor {
                         let scale = (max_in - min_in) / (max_out - min_out);
                         let offset = min_in - min_out * scale;
                         (scale as f32, offset as f32, r.min_in.map(|v| v as f32), r.max_in.map(|v| v as f32))
+                    };
+
+                    if r.style == RangeStyle::NoClamp {
+                        (scale, offset, None, None)
+                    } else {
+                        (scale, offset, clamp_min, clamp_max)
                     }
                 } else {
                     (1.0, 0.0, None, None)
@@ -763,6 +771,14 @@ impl Processor {
                     .unwrap_or_default();
                 
                 match ext.as_str() {
+                    "cube" => {
+                        if let Ok(lut) = vfx_lut::cube::read_3d(path) {
+                            self.compile_lut3d(&lut, ft.interpolation, forward);
+                        } else {
+                            let lut = vfx_lut::cube::read_1d(path)?;
+                            self.compile_lut1d(&lut, forward);
+                        }
+                    }
                     "spi1d" => {
                         let lut = vfx_lut::read_spi1d(path)?;
                         self.compile_lut1d(&lut, forward);
@@ -1030,6 +1046,8 @@ impl Processor {
             lut: flat_data,
             size: lut.size,
             interp,
+            domain_min: lut.domain_min,
+            domain_max: lut.domain_max,
         });
     }
 
@@ -1525,9 +1543,19 @@ impl Processor {
                     }
                 }
 
-                Op::Lut3d { lut, size, interp } => {
+                Op::Lut3d { lut, size, interp, domain_min, domain_max } => {
                     let size_f = (*size - 1) as f32;
-                    let [r, g, b] = *pixel;
+                    let to_unit = |v: f32, min: f32, max: f32| {
+                        let range = max - min;
+                        if range.abs() < 1e-10 {
+                            0.0
+                        } else {
+                            ((v - min) / range).clamp(0.0, 1.0)
+                        }
+                    };
+                    let r = to_unit(pixel[0], domain_min[0], domain_max[0]);
+                    let g = to_unit(pixel[1], domain_min[1], domain_max[1]);
+                    let b = to_unit(pixel[2], domain_min[2], domain_max[2]);
                     
                     // Clamp and scale to LUT indices
                     let ri = (r * size_f).clamp(0.0, size_f);

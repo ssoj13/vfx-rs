@@ -169,6 +169,10 @@ pub struct ColorSpace {
     to_reference: Option<Transform>,
     /// Transform from reference to this space.
     from_reference: Option<Transform>,
+    /// Transform from this space to display reference (OCIO v2).
+    to_display_reference: Option<Transform>,
+    /// Transform from display reference to this space (OCIO v2).
+    from_display_reference: Option<Transform>,
     /// Allocation variables for GPU optimization.
     allocation: AllocationInfo,
 }
@@ -205,6 +209,8 @@ impl ColorSpace {
             is_data: false,
             to_reference: None,
             from_reference: None,
+            to_display_reference: None,
+            from_display_reference: None,
             allocation: AllocationInfo::default(),
         }
     }
@@ -267,6 +273,18 @@ impl ColorSpace {
     #[inline]
     pub fn from_reference(&self) -> Option<&Transform> {
         self.from_reference.as_ref()
+    }
+
+    /// Returns the transform to display reference (OCIO v2).
+    #[inline]
+    pub fn to_display_reference(&self) -> Option<&Transform> {
+        self.to_display_reference.as_ref()
+    }
+
+    /// Returns the transform from display reference (OCIO v2).
+    #[inline]
+    pub fn from_display_reference(&self) -> Option<&Transform> {
+        self.from_display_reference.as_ref()
     }
 
     /// Returns GPU allocation info.
@@ -344,6 +362,18 @@ impl ColorSpaceBuilder {
     /// Sets the transform from reference space.
     pub fn from_reference(mut self, transform: Transform) -> Self {
         self.inner.from_reference = Some(transform);
+        self
+    }
+
+    /// Sets the transform to display reference (OCIO v2).
+    pub fn to_display_reference(mut self, transform: Transform) -> Self {
+        self.inner.to_display_reference = Some(transform);
+        self
+    }
+
+    /// Sets the transform from display reference (OCIO v2).
+    pub fn from_display_reference(mut self, transform: Transform) -> Self {
+        self.inner.from_display_reference = Some(transform);
         self
     }
 
