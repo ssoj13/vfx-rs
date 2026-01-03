@@ -111,6 +111,9 @@ fn attr_to_string(value: &vfx_io::AttrValue) -> String {
         vfx_io::AttrValue::Bytes(v) => format!("{} bytes", v.len()),
         vfx_io::AttrValue::List(v) => format!("list({})", v.len()),
         vfx_io::AttrValue::Map(v) => format!("map({})", v.len()),
+        vfx_io::AttrValue::Rational(n, d) => format!("{}/{}", n, d),
+        vfx_io::AttrValue::URational(n, d) => format!("{}/{}", n, d),
+        vfx_io::AttrValue::Group(g) => format!("group({})", g.len()),
     }
 }
 

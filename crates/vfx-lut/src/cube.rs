@@ -324,7 +324,7 @@ LUT_1D_SIZE 3
         write_3d(&path, &lut).expect("write failed");
         let loaded = read_3d(&path).expect("read failed");
 
-        assert_eq!(loaded.size(), 4);
+        assert_eq!(loaded.size, 4);
         let _ = std::fs::remove_file(&path);
     }
 }

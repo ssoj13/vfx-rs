@@ -237,7 +237,7 @@ impl Config {
                     .description(raw_look.description.unwrap_or_default());
 
                 if let Some(t) = raw_look.transform {
-                    match self.parse_raw_transform(&t) {
+                    match config.parse_raw_transform(&t) {
                         Ok(parsed) => {
                             look = look.transform(parsed);
                         }
@@ -250,7 +250,7 @@ impl Config {
                 }
 
                 if let Some(t) = raw_look.inverse_transform {
-                    match self.parse_raw_transform(&t) {
+                    match config.parse_raw_transform(&t) {
                         Ok(parsed) => {
                             look = look.inverse_transform(parsed);
                         }
@@ -276,7 +276,7 @@ impl Config {
                 }
 
                 if let Some(t) = raw_vt.from_scene_reference {
-                    match self.parse_raw_transform(&t) {
+                    match config.parse_raw_transform(&t) {
                         Ok(parsed) => {
                             vt = vt.with_from_scene_reference(parsed);
                         }
@@ -289,7 +289,7 @@ impl Config {
                 }
 
                 if let Some(t) = raw_vt.to_scene_reference {
-                    match self.parse_raw_transform(&t) {
+                    match config.parse_raw_transform(&t) {
                         Ok(parsed) => {
                             vt = vt.with_to_scene_reference(parsed);
                         }
@@ -302,7 +302,7 @@ impl Config {
                 }
 
                 if let Some(t) = raw_vt.from_display_reference {
-                    match self.parse_raw_transform(&t) {
+                    match config.parse_raw_transform(&t) {
                         Ok(parsed) => {
                             vt = vt.with_from_display_reference(parsed);
                         }
@@ -315,7 +315,7 @@ impl Config {
                 }
 
                 if let Some(t) = raw_vt.to_display_reference {
-                    match self.parse_raw_transform(&t) {
+                    match config.parse_raw_transform(&t) {
                         Ok(parsed) => {
                             vt = vt.with_to_display_reference(parsed);
                         }
