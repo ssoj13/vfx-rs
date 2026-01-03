@@ -1,29 +1,626 @@
 //! JPEG format support.
 //!
-//! Provides reading of JPEG files. Writing is not currently supported
-//! as JPEG is primarily used for previews and references in VFX.
+//! Provides reading and writing of JPEG files - the universal lossy format
+//! for photographic images.
 //!
-//! # Features
+//! # Overview
 //!
-//! - 8-bit RGB decoding
-//! - EXIF metadata extraction (planned)
+//! JPEG (Joint Photographic Experts Group) is a lossy format optimized for
+//! photographic content. It supports:
+//! - 8-bit per channel only
+//! - RGB, Grayscale, and CMYK color modes
+//! - Variable quality/compression ratio
+//! - EXIF, XMP, and ICC profile metadata
 //!
-//! # Example
+//! # Architecture
 //!
+//! This module provides two approaches:
+//!
+//! 1. **Struct + Trait** (recommended for advanced use):
+//!    - [`JpegReader`] implements [`FormatReader`] for reading
+//!    - [`JpegWriter`] implements [`FormatWriter`] for writing
+//!    - Configure via [`JpegReaderOptions`] and [`JpegWriterOptions`]
+//!
+//! 2. **Convenience functions** (simple cases):
+//!    - [`read()`] - read with defaults
+//!    - [`write()`] - write with defaults
+//!
+//! # Examples
+//!
+//! Simple usage:
 //! ```rust,ignore
 //! use vfx_io::jpeg;
 //!
-//! let image = jpeg::read("reference.jpg")?;
+//! let image = jpeg::read("photo.jpg")?;
+//! jpeg::write("output.jpg", &image)?;
 //! ```
+//!
+//! With quality control:
+//! ```rust,ignore
+//! use vfx_io::jpeg::{JpegWriter, JpegWriterOptions};
+//! use vfx_io::FormatWriter;
+//!
+//! let writer = JpegWriter::with_options(JpegWriterOptions {
+//!     quality: 95,  // High quality
+//!     ..Default::default()
+//! });
+//! writer.write("highq.jpg", &image)?;
+//! ```
+//!
+//! # VFX Usage Notes
+//!
+//! JPEG is typically used in VFX for:
+//! - Reference images and textures
+//! - Preview generation
+//! - Web delivery
+//!
+//! **Not recommended** for:
+//! - Compositing (use EXR)
+//! - Color grading (use DPX/EXR)
+//! - Anything requiring lossless quality
 
-use crate::{AttrValue, ImageData, IoError, IoResult, Metadata, PixelData, PixelFormat};
-use std::fs::File;
-use std::io::{BufReader, BufWriter, Write};
+use crate::{AttrValue, FormatReader, FormatWriter, ImageData, IoError, IoResult, Metadata, PixelData, PixelFormat};
+use std::io::{BufReader, Cursor};
 use std::path::Path;
 
-/// Reads a JPEG file from the given path.
+// ============================================================================
+// Color Type
+// ============================================================================
+
+/// JPEG output color mode.
 ///
-/// Returns 8-bit RGB data.
+/// JPEG supports RGB (color) and grayscale output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ColorType {
+    /// Full color RGB output.
+    #[default]
+    Rgb,
+    /// Grayscale output (smaller files for B&W images).
+    Grayscale,
+}
+
+// ============================================================================
+// Reader Options
+// ============================================================================
+
+/// Options for reading JPEG files.
+///
+/// Currently minimal - JPEG reading is mostly automatic.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use vfx_io::jpeg::{JpegReader, JpegReaderOptions};
+/// use vfx_io::FormatReader;
+///
+/// let reader = JpegReader::with_options(JpegReaderOptions::default());
+/// let image = reader.read("photo.jpg")?;
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct JpegReaderOptions {
+    /// Reserved for future use.
+    _reserved: (),
+}
+
+// ============================================================================
+// Writer Options
+// ============================================================================
+
+/// Options for writing JPEG files.
+///
+/// Controls quality and color output mode.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use vfx_io::jpeg::{JpegWriter, JpegWriterOptions};
+/// use vfx_io::FormatWriter;
+///
+/// // High quality for reference images
+/// let options = JpegWriterOptions {
+///     quality: 95,
+///     ..Default::default()
+/// };
+/// let writer = JpegWriter::with_options(options);
+/// writer.write("reference.jpg", &image)?;
+/// ```
+#[derive(Debug, Clone)]
+pub struct JpegWriterOptions {
+    /// Quality level 1-100. Higher = better quality, larger files.
+    /// Default: 90 (good balance for most uses).
+    pub quality: u8,
+    /// Output color mode. Default: RGB.
+    pub color_type: ColorType,
+}
+
+impl Default for JpegWriterOptions {
+    fn default() -> Self {
+        Self {
+            quality: 90,
+            color_type: ColorType::Rgb,
+        }
+    }
+}
+
+// ============================================================================
+// JpegReader
+// ============================================================================
+
+/// JPEG file reader.
+///
+/// Implements [`FormatReader`] for reading JPEG files with configurable options.
+///
+/// # Features
+///
+/// - RGB, Grayscale, CMYK input support
+/// - Automatic grayscale/CMYK to RGB conversion
+/// - Comprehensive metadata extraction (JFIF, EXIF, ICC)
+/// - Memory and file reading
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use vfx_io::jpeg::JpegReader;
+/// use vfx_io::FormatReader;
+///
+/// let reader = JpegReader::new();
+/// let image = reader.read("photo.jpg")?;
+///
+/// // Check DPI if available
+/// if let Some(dpi) = image.metadata.dpi {
+///     println!("DPI: {}", dpi);
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct JpegReader {
+    #[allow(dead_code)]
+    options: JpegReaderOptions,
+}
+
+impl JpegReader {
+    /// Creates a new reader with default options.
+    pub fn new() -> Self {
+        Self::with_options(JpegReaderOptions::default())
+    }
+
+    /// Internal read implementation.
+    fn read_impl<R: std::io::Read>(&self, reader: R, raw_data: Option<&[u8]>) -> IoResult<ImageData> {
+        let buf_reader = BufReader::new(reader);
+        let mut decoder = jpeg_decoder::Decoder::new(buf_reader);
+        let pixels = decoder
+            .decode()
+            .map_err(|e| IoError::DecodeError(e.to_string()))?;
+
+        let info = decoder
+            .info()
+            .ok_or_else(|| IoError::DecodeError("missing JPEG info".into()))?;
+
+        let width = info.width as u32;
+        let height = info.height as u32;
+
+        // Convert to RGB based on input format
+        let (channels, data) = match info.pixel_format {
+            jpeg_decoder::PixelFormat::RGB24 => (3, pixels),
+            jpeg_decoder::PixelFormat::L8 => {
+                // Grayscale to RGB
+                let rgb: Vec<u8> = pixels.iter().flat_map(|&g| [g, g, g]).collect();
+                (3, rgb)
+            }
+            jpeg_decoder::PixelFormat::CMYK32 => {
+                // CMYK to RGB (approximate conversion)
+                let rgb: Vec<u8> = pixels
+                    .chunks(4)
+                    .flat_map(|cmyk| {
+                        let c = cmyk[0] as f32 / 255.0;
+                        let m = cmyk[1] as f32 / 255.0;
+                        let y = cmyk[2] as f32 / 255.0;
+                        let k = cmyk[3] as f32 / 255.0;
+
+                        let r = ((1.0 - c) * (1.0 - k) * 255.0) as u8;
+                        let g = ((1.0 - m) * (1.0 - k) * 255.0) as u8;
+                        let b = ((1.0 - y) * (1.0 - k) * 255.0) as u8;
+
+                        [r, g, b]
+                    })
+                    .collect();
+                (3, rgb)
+            }
+            jpeg_decoder::PixelFormat::L16 => {
+                // 16-bit grayscale to 8-bit RGB (use high byte)
+                let rgb: Vec<u8> = pixels
+                    .chunks(2)
+                    .flat_map(|l16| {
+                        let g = l16[0]; // High byte
+                        [g, g, g]
+                    })
+                    .collect();
+                (3, rgb)
+            }
+        };
+
+        // Build metadata
+        let mut metadata = Metadata::default();
+        metadata.colorspace = Some("sRGB".to_string());
+        metadata.attrs.set("ImageWidth", AttrValue::UInt(width));
+        metadata.attrs.set("ImageHeight", AttrValue::UInt(height));
+        metadata.attrs.set(
+            "PixelFormat",
+            AttrValue::Str(format!("{:?}", info.pixel_format)),
+        );
+        metadata.attrs.set("BitDepth", AttrValue::UInt(8));
+
+        // Parse additional metadata from raw bytes if available
+        if let Some(raw) = raw_data {
+            self.parse_metadata(raw, &mut metadata);
+        }
+
+        Ok(ImageData {
+            width,
+            height,
+            channels,
+            format: PixelFormat::U8,
+            data: PixelData::U8(data),
+            metadata,
+        })
+    }
+
+    /// Parses JPEG segments for metadata.
+    fn parse_metadata(&self, data: &[u8], metadata: &mut Metadata) {
+        if data.len() < 2 || data[0] != 0xFF || data[1] != 0xD8 {
+            return;
+        }
+
+        let mut icc_chunks: Vec<(u8, u8, Vec<u8>)> = Vec::new();
+        let mut pos = 2usize;
+
+        while pos + 1 < data.len() {
+            if data[pos] != 0xFF {
+                pos += 1;
+                continue;
+            }
+            while pos < data.len() && data[pos] == 0xFF {
+                pos += 1;
+            }
+            if pos >= data.len() {
+                break;
+            }
+
+            let marker = data[pos];
+            pos += 1;
+
+            // End markers
+            if marker == 0xD9 || marker == 0xDA {
+                break;
+            }
+
+            // Standalone markers
+            if (0xD0..=0xD7).contains(&marker) || marker == 0x01 {
+                continue;
+            }
+
+            if pos + 2 > data.len() {
+                break;
+            }
+            let seg_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
+            pos += 2;
+            if seg_len < 2 || pos + seg_len - 2 > data.len() {
+                break;
+            }
+            let segment = &data[pos..pos + seg_len - 2];
+
+            match marker {
+                0xE0 => self.parse_jfif(segment, metadata),
+                0xE1 => {
+                    if segment.starts_with(b"Exif\0\0") && segment.len() > 6 {
+                        metadata.attrs.set(
+                            "ExifSize",
+                            AttrValue::UInt((segment.len() - 6) as u32),
+                        );
+                    } else if segment.starts_with(b"http://ns.adobe.com/xap/1.0/\0") {
+                        let len = segment.len().saturating_sub(29);
+                        metadata.attrs.set("XMPSize", AttrValue::UInt(len as u32));
+                    }
+                }
+                0xE2 => {
+                    if segment.starts_with(b"ICC_PROFILE\0") && segment.len() > 14 {
+                        let chunk_num = segment[12];
+                        let total_chunks = segment[13];
+                        icc_chunks.push((chunk_num, total_chunks, segment[14..].to_vec()));
+                    }
+                }
+                0xC0 | 0xC1 | 0xC2 | 0xC3 | 0xC5 | 0xC6 | 0xC7 | 0xC9 | 0xCA | 0xCB
+                | 0xCD | 0xCE | 0xCF => self.parse_sof(marker, segment, metadata),
+                _ => {}
+            }
+            pos += seg_len - 2;
+        }
+
+        if !icc_chunks.is_empty() {
+            self.parse_icc_profile(&mut icc_chunks, metadata);
+        }
+    }
+
+    /// Parses JFIF APP0 segment.
+    fn parse_jfif(&self, data: &[u8], metadata: &mut Metadata) {
+        if data.starts_with(b"JFIF\0") && data.len() >= 14 {
+            let version_major = data[5];
+            let version_minor = data[6];
+            metadata.attrs.set(
+                "JFIFVersion",
+                AttrValue::Str(format!("{}.{:02}", version_major, version_minor)),
+            );
+
+            let units = data[7];
+            let x_density = u16::from_be_bytes([data[8], data[9]]);
+            let y_density = u16::from_be_bytes([data[10], data[11]]);
+            let unit_str = match units {
+                0 => "aspect ratio",
+                1 => "dpi",
+                2 => "dpcm",
+                _ => "unknown",
+            };
+
+            if x_density > 0 && y_density > 0 {
+                metadata.attrs.set("XResolution", AttrValue::UInt(x_density as u32));
+                metadata.attrs.set("YResolution", AttrValue::UInt(y_density as u32));
+                metadata.attrs.set("ResolutionUnit", AttrValue::Str(unit_str.into()));
+                if units == 1 && x_density == y_density {
+                    metadata.dpi = Some(x_density as f32);
+                }
+            }
+        }
+    }
+
+    /// Parses SOF (Start of Frame) segment.
+    fn parse_sof(&self, marker: u8, data: &[u8], metadata: &mut Metadata) {
+        if data.len() < 6 {
+            return;
+        }
+        let precision = data[0];
+        let components = data[5];
+
+        metadata.attrs.set("BitsPerSample", AttrValue::UInt(precision as u32));
+        metadata.attrs.set("ColorComponents", AttrValue::UInt(components as u32));
+
+        let compression = match marker {
+            0xC0 => "Baseline DCT",
+            0xC1 => "Extended Sequential DCT",
+            0xC2 => "Progressive DCT",
+            0xC3 => "Lossless",
+            0xC5 => "Differential Sequential DCT",
+            0xC6 => "Differential Progressive DCT",
+            0xC7 => "Differential Lossless",
+            0xC9 => "Extended Sequential DCT (Arithmetic)",
+            0xCA => "Progressive DCT (Arithmetic)",
+            0xCB => "Lossless (Arithmetic)",
+            0xCD => "Differential Sequential (Arithmetic)",
+            0xCE => "Differential Progressive (Arithmetic)",
+            0xCF => "Differential Lossless (Arithmetic)",
+            _ => "Unknown",
+        };
+        metadata.attrs.set("Compression", AttrValue::Str(compression.into()));
+    }
+
+    /// Parses ICC profile from chunks.
+    fn parse_icc_profile(&self, chunks: &mut [(u8, u8, Vec<u8>)], metadata: &mut Metadata) {
+        chunks.sort_by_key(|(num, _, _)| *num);
+        let mut profile_data = Vec::new();
+        for (_, _, data) in chunks.iter() {
+            profile_data.extend_from_slice(data);
+        }
+
+        if profile_data.len() < 20 {
+            metadata.attrs.set(
+                "ICCProfileSize",
+                AttrValue::UInt(profile_data.len() as u32),
+            );
+            return;
+        }
+
+        let profile_size = u32::from_be_bytes([
+            profile_data[0],
+            profile_data[1],
+            profile_data[2],
+            profile_data[3],
+        ]);
+        metadata.attrs.set("ICCProfileSize", AttrValue::UInt(profile_size));
+
+        if let Ok(space) = std::str::from_utf8(&profile_data[16..20]) {
+            metadata.attrs.set(
+                "ICCColorSpace",
+                AttrValue::Str(space.trim().to_string()),
+            );
+        }
+    }
+}
+
+impl Default for JpegReader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FormatReader<JpegReaderOptions> for JpegReader {
+    /// Returns "JPEG".
+    fn format_name(&self) -> &'static str {
+        "JPEG"
+    }
+
+    /// Returns `["jpg", "jpeg"]`.
+    fn extensions(&self) -> &'static [&'static str] {
+        &["jpg", "jpeg"]
+    }
+
+    /// Checks for JPEG magic bytes (0xFF, 0xD8, 0xFF).
+    fn can_read(&self, header: &[u8]) -> bool {
+        header.len() >= 3 && header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF
+    }
+
+    /// Reads a JPEG file from disk.
+    fn read<P: AsRef<Path>>(&self, path: P) -> IoResult<ImageData> {
+        let data = std::fs::read(path.as_ref())?;
+        self.read_impl(Cursor::new(&data), Some(&data))
+    }
+
+    /// Reads a JPEG from a byte slice.
+    fn read_from_memory(&self, data: &[u8]) -> IoResult<ImageData> {
+        self.read_impl(Cursor::new(data), Some(data))
+    }
+
+    /// Creates reader with custom options.
+    fn with_options(options: JpegReaderOptions) -> Self {
+        Self { options }
+    }
+}
+
+// ============================================================================
+// JpegWriter
+// ============================================================================
+
+/// JPEG file writer.
+///
+/// Implements [`FormatWriter`] for writing JPEG files with configurable options.
+///
+/// # Features
+///
+/// - Quality control (1-100)
+/// - RGB and grayscale output
+/// - Memory and file writing
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use vfx_io::jpeg::{JpegWriter, JpegWriterOptions};
+/// use vfx_io::FormatWriter;
+///
+/// // Low quality for previews
+/// let preview_writer = JpegWriter::with_options(JpegWriterOptions {
+///     quality: 60,
+///     ..Default::default()
+/// });
+/// preview_writer.write("preview.jpg", &image)?;
+///
+/// // High quality for final delivery
+/// let hq_writer = JpegWriter::with_options(JpegWriterOptions {
+///     quality: 98,
+///     ..Default::default()
+/// });
+/// hq_writer.write("final.jpg", &image)?;
+/// ```
+#[derive(Debug, Clone)]
+pub struct JpegWriter {
+    options: JpegWriterOptions,
+}
+
+impl JpegWriter {
+    /// Creates a new writer with default options (quality 90).
+    pub fn new() -> Self {
+        Self::with_options(JpegWriterOptions::default())
+    }
+
+    /// Internal write implementation.
+    fn write_impl(&self, image: &ImageData) -> IoResult<Vec<u8>> {
+        use jpeg_encoder::{ColorType as JpegColorType, Encoder};
+
+        // Convert to u8
+        let u8_data = image.to_u8();
+
+        // Prepare pixel data based on color type
+        let (color_type, pixel_data) = match self.options.color_type {
+            ColorType::Rgb => {
+                // Strip alpha if RGBA
+                let rgb = if image.channels == 4 {
+                    u8_data
+                        .chunks(4)
+                        .flat_map(|rgba| [rgba[0], rgba[1], rgba[2]])
+                        .collect()
+                } else if image.channels == 3 {
+                    u8_data
+                } else if image.channels == 1 {
+                    // Expand grayscale to RGB
+                    u8_data.iter().flat_map(|&g| [g, g, g]).collect()
+                } else {
+                    return Err(IoError::EncodeError(format!(
+                        "unsupported channel count: {}",
+                        image.channels
+                    )));
+                };
+                (JpegColorType::Rgb, rgb)
+            }
+            ColorType::Grayscale => {
+                // Convert to grayscale
+                let gray = if image.channels >= 3 {
+                    u8_data
+                        .chunks(image.channels as usize)
+                        .map(|px| {
+                            // ITU-R BT.601 luma coefficients
+                            let r = px[0] as f32;
+                            let g = px[1] as f32;
+                            let b = px[2] as f32;
+                            (0.299 * r + 0.587 * g + 0.114 * b) as u8
+                        })
+                        .collect()
+                } else {
+                    u8_data
+                };
+                (JpegColorType::Luma, gray)
+            }
+        };
+
+        // Encode to memory buffer
+        let mut buffer = Vec::new();
+        let encoder = Encoder::new(&mut buffer, self.options.quality);
+        encoder
+            .encode(&pixel_data, image.width as u16, image.height as u16, color_type)
+            .map_err(|e: jpeg_encoder::EncodingError| IoError::EncodeError(e.to_string()))?;
+
+        Ok(buffer)
+    }
+}
+
+impl Default for JpegWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FormatWriter<JpegWriterOptions> for JpegWriter {
+    /// Returns "JPEG".
+    fn format_name(&self) -> &'static str {
+        "JPEG"
+    }
+
+    /// Returns `["jpg", "jpeg"]`.
+    fn extensions(&self) -> &'static [&'static str] {
+        &["jpg", "jpeg"]
+    }
+
+    /// Writes a JPEG file to disk.
+    fn write<P: AsRef<Path>>(&self, path: P, image: &ImageData) -> IoResult<()> {
+        let data = self.write_to_memory(image)?;
+        std::fs::write(path.as_ref(), data)?;
+        Ok(())
+    }
+
+    /// Writes a JPEG to a byte vector.
+    fn write_to_memory(&self, image: &ImageData) -> IoResult<Vec<u8>> {
+        self.write_impl(image)
+    }
+
+    /// Creates writer with custom options.
+    fn with_options(options: JpegWriterOptions) -> Self {
+        Self { options }
+    }
+}
+
+// ============================================================================
+// Convenience Functions
+// ============================================================================
+
+/// Reads a JPEG file with default options.
+///
+/// Convenience wrapper around [`JpegReader`]. For custom options,
+/// use [`JpegReader::with_options`].
 ///
 /// # Example
 ///
@@ -33,417 +630,134 @@ use std::path::Path;
 /// let image = jpeg::read("photo.jpg")?;
 /// ```
 pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
-    let file = File::open(path.as_ref())?;
-    let reader = BufReader::new(file);
-    
-    let mut decoder = jpeg_decoder::Decoder::new(reader);
-    let pixels = decoder.decode()
-        .map_err(|e| IoError::DecodeError(e.to_string()))?;
-    
-    let info = decoder.info()
-        .ok_or_else(|| IoError::DecodeError("missing JPEG info".to_string()))?;
-    
-    let width = info.width as u32;
-    let height = info.height as u32;
-    
-    let (channels, data) = match info.pixel_format {
-        jpeg_decoder::PixelFormat::RGB24 => {
-            (3, pixels)
-        }
-        jpeg_decoder::PixelFormat::L8 => {
-            // Convert grayscale to RGB
-            let rgb: Vec<u8> = pixels.iter()
-                .flat_map(|&g| [g, g, g])
-                .collect();
-            (3, rgb)
-        }
-        jpeg_decoder::PixelFormat::CMYK32 => {
-            // Convert CMYK to RGB (approximate)
-            let rgb: Vec<u8> = pixels.chunks(4)
-                .flat_map(|cmyk| {
-                    let c = cmyk[0] as f32 / 255.0;
-                    let m = cmyk[1] as f32 / 255.0;
-                    let y = cmyk[2] as f32 / 255.0;
-                    let k = cmyk[3] as f32 / 255.0;
-                    
-                    let r = ((1.0 - c) * (1.0 - k) * 255.0) as u8;
-                    let g = ((1.0 - m) * (1.0 - k) * 255.0) as u8;
-                    let b = ((1.0 - y) * (1.0 - k) * 255.0) as u8;
-                    
-                    [r, g, b]
-                })
-                .collect();
-            (3, rgb)
-        }
-        jpeg_decoder::PixelFormat::L16 => {
-            // Convert 16-bit grayscale to RGB
-            let rgb: Vec<u8> = pixels.chunks(2)
-                .flat_map(|l16| {
-                    let g = l16[0]; // Use high byte
-                    [g, g, g]
-                })
-                .collect();
-            (3, rgb)
-        }
-    };
-    
-    let mut metadata = Metadata::default();
-    metadata.colorspace = Some("sRGB".to_string());
-    metadata
-        .attrs
-        .set("ImageWidth", AttrValue::UInt(width));
-    metadata
-        .attrs
-        .set("ImageHeight", AttrValue::UInt(height));
-    metadata.attrs.set(
-        "PixelFormat",
-        AttrValue::Str(format!("{:?}", info.pixel_format)),
-    );
-    metadata.attrs.set("BitDepth", AttrValue::UInt(8));
-    read_metadata(path.as_ref(), &mut metadata)?;
-    
-    Ok(ImageData {
-        width,
-        height,
-        channels,
-        format: PixelFormat::U8,
-        data: PixelData::U8(data),
-        metadata,
-    })
+    JpegReader::new().read(path)
 }
 
-fn read_metadata(path: &Path, metadata: &mut Metadata) -> IoResult<()> {
-    let data = std::fs::read(path)?;
-    if data.len() < 2 || data[0] != 0xFF || data[1] != 0xD8 {
-        return Ok(());
-    }
-
-    let mut icc_chunks: Vec<(u8, u8, Vec<u8>)> = Vec::new();
-    let mut pos = 2usize;
-
-    while pos + 1 < data.len() {
-        if data[pos] != 0xFF {
-            pos += 1;
-            continue;
-        }
-        while pos < data.len() && data[pos] == 0xFF {
-            pos += 1;
-        }
-        if pos >= data.len() {
-            break;
-        }
-
-        let marker = data[pos];
-        pos += 1;
-
-        if marker == 0xD9 || marker == 0xDA {
-            break;
-        }
-
-        if (0xD0..=0xD7).contains(&marker) || marker == 0x01 {
-            continue;
-        }
-
-        if pos + 2 > data.len() {
-            break;
-        }
-        let seg_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
-        pos += 2;
-        if seg_len < 2 || pos + seg_len - 2 > data.len() {
-            break;
-        }
-        let segment = &data[pos..pos + seg_len - 2];
-        match marker {
-            0xE0 => parse_jfif(segment, metadata),
-            0xE1 => {
-                if segment.starts_with(b"Exif\0\0") && segment.len() > 6 {
-                    metadata
-                        .attrs
-                        .set("ExifSize", AttrValue::UInt((segment.len() - 6) as u32));
-                } else if segment.starts_with(b"http://ns.adobe.com/xap/1.0/\0") {
-                    let len = segment.len().saturating_sub(29);
-                    metadata
-                        .attrs
-                        .set("XMPSize", AttrValue::UInt(len as u32));
-                }
-            }
-            0xE2 => {
-                if segment.starts_with(b"ICC_PROFILE\0") && segment.len() > 14 {
-                    let chunk_num = segment[12];
-                    let total_chunks = segment[13];
-                    icc_chunks.push((chunk_num, total_chunks, segment[14..].to_vec()));
-                }
-            }
-            0xC0 | 0xC1 | 0xC2 | 0xC3 | 0xC5 | 0xC6 | 0xC7 | 0xC9 | 0xCA | 0xCB | 0xCD
-            | 0xCE | 0xCF => parse_sof(marker, segment, metadata),
-            _ => {}
-        }
-        pos += seg_len - 2;
-    }
-
-    if !icc_chunks.is_empty() {
-        parse_icc_profile(&mut icc_chunks, metadata);
-    }
-
-    Ok(())
-}
-
-fn parse_jfif(data: &[u8], metadata: &mut Metadata) {
-    if data.starts_with(b"JFIF\0") && data.len() >= 14 {
-        let version_major = data[5];
-        let version_minor = data[6];
-        metadata
-            .attrs
-            .set("JFIFVersion", AttrValue::Str(format!("{}.{:02}", version_major, version_minor)));
-
-        let units = data[7];
-        let x_density = u16::from_be_bytes([data[8], data[9]]);
-        let y_density = u16::from_be_bytes([data[10], data[11]]);
-        let unit_str = match units {
-            0 => "aspect ratio",
-            1 => "dpi",
-            2 => "dpcm",
-            _ => "unknown",
-        };
-
-        if x_density > 0 && y_density > 0 {
-            metadata
-                .attrs
-                .set("XResolution", AttrValue::UInt(x_density as u32));
-            metadata
-                .attrs
-                .set("YResolution", AttrValue::UInt(y_density as u32));
-            metadata
-                .attrs
-                .set("ResolutionUnit", AttrValue::Str(unit_str.to_string()));
-            if units == 1 && x_density == y_density {
-                metadata.dpi = Some(x_density as f32);
-            }
-        }
-    }
-}
-
-fn parse_sof(marker: u8, data: &[u8], metadata: &mut Metadata) {
-    if data.len() < 6 {
-        return;
-    }
-    let precision = data[0];
-    let height = u16::from_be_bytes([data[1], data[2]]);
-    let width = u16::from_be_bytes([data[3], data[4]]);
-    let components = data[5];
-
-    metadata
-        .attrs
-        .set("ImageWidth", AttrValue::UInt(width as u32));
-    metadata
-        .attrs
-        .set("ImageHeight", AttrValue::UInt(height as u32));
-    metadata
-        .attrs
-        .set("BitsPerSample", AttrValue::UInt(precision as u32));
-    metadata
-        .attrs
-        .set("ColorComponents", AttrValue::UInt(components as u32));
-
-    let compression = match marker {
-        0xC0 => "Baseline DCT",
-        0xC1 => "Extended Sequential DCT",
-        0xC2 => "Progressive DCT",
-        0xC3 => "Lossless",
-        0xC5 => "Differential Sequential DCT",
-        0xC6 => "Differential Progressive DCT",
-        0xC7 => "Differential Lossless",
-        0xC9 => "Extended Sequential DCT (Arithmetic)",
-        0xCA => "Progressive DCT (Arithmetic)",
-        0xCB => "Lossless (Arithmetic)",
-        0xCD => "Differential Sequential (Arithmetic)",
-        0xCE => "Differential Progressive (Arithmetic)",
-        0xCF => "Differential Lossless (Arithmetic)",
-        _ => "Unknown",
-    };
-    metadata
-        .attrs
-        .set("Compression", AttrValue::Str(compression.to_string()));
-}
-
-fn parse_icc_profile(chunks: &mut [(u8, u8, Vec<u8>)], metadata: &mut Metadata) {
-    chunks.sort_by_key(|(num, _, _)| *num);
-    let mut profile_data = Vec::new();
-    for (_, _, data) in chunks.iter() {
-        profile_data.extend_from_slice(data);
-    }
-
-    if profile_data.len() < 20 {
-        metadata
-            .attrs
-            .set("ICCProfileSize", AttrValue::UInt(profile_data.len() as u32));
-        return;
-    }
-
-    let profile_size = u32::from_be_bytes([
-        profile_data[0],
-        profile_data[1],
-        profile_data[2],
-        profile_data[3],
-    ]);
-    metadata
-        .attrs
-        .set("ICCProfileSize", AttrValue::UInt(profile_size));
-
-    if let Ok(space) = std::str::from_utf8(&profile_data[16..20]) {
-        metadata
-            .attrs
-            .set("ICCColorSpace", AttrValue::Str(space.trim().to_string()));
-    }
-}
-
-/// Writes an image to a JPEG file.
+/// Writes a JPEG file with default options (quality 90).
 ///
-/// Uses a simple JPEG encoder. Quality is fixed at 90%.
+/// Convenience wrapper around [`JpegWriter`]. For custom options,
+/// use [`JpegWriter::with_options`].
 ///
-/// # Note
+/// # Example
 ///
-/// JPEG is lossy and only supports 8-bit RGB. Data is converted
-/// and clamped as needed.
+/// ```rust,ignore
+/// use vfx_io::jpeg;
+///
+/// jpeg::write("output.jpg", &image)?;
+/// ```
 pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
-    // Convert to u8 RGB
-    let u8_data = image.to_u8();
-    
-    // If RGBA, strip alpha
-    let rgb_data: Vec<u8> = if image.channels == 4 {
-        u8_data.chunks(4)
-            .flat_map(|rgba| [rgba[0], rgba[1], rgba[2]])
-            .collect()
-    } else if image.channels == 3 {
-        u8_data
-    } else {
-        return Err(IoError::EncodeError(
-            format!("JPEG requires RGB/RGBA, got {} channels", image.channels)
-        ));
-    };
-    
-    // Simple baseline JPEG encoding
-    // Using a minimal JFIF encoder
-    let file = File::create(path.as_ref())?;
-    let mut writer = BufWriter::new(file);
-    
-    write_jpeg(&mut writer, image.width, image.height, &rgb_data)
-        .map_err(|e| IoError::EncodeError(e.to_string()))?;
-    
-    Ok(())
+    JpegWriter::new().write(path, image)
 }
 
-/// Simple JPEG writer (baseline DCT).
-fn write_jpeg<W: Write>(writer: &mut W, width: u32, height: u32, _rgb: &[u8]) -> std::io::Result<()> {
-    // For simplicity, we'll write a minimal valid JPEG
-    // In production, use a proper encoder like mozjpeg or image crate
-    
-    // This is a stub - for real JPEG encoding we'd need DCT, Huffman, etc.
-    // For now, we'll just create a minimal valid JPEG structure
-    
-    // SOI (Start of Image)
-    writer.write_all(&[0xFF, 0xD8])?;
-    
-    // APP0 (JFIF marker)
-    let app0 = [
-        0xFF, 0xE0, 0x00, 0x10,  // Marker, length
-        0x4A, 0x46, 0x49, 0x46, 0x00,  // "JFIF\0"
-        0x01, 0x01,  // Version 1.1
-        0x00,  // Aspect ratio units (0 = no units)
-        0x00, 0x01,  // X density = 1
-        0x00, 0x01,  // Y density = 1
-        0x00, 0x00,  // No thumbnail
-    ];
-    writer.write_all(&app0)?;
-    
-    // DQT (Quantization table) - standard luminance table at quality ~90
-    let dqt = [
-        0xFF, 0xDB, 0x00, 0x43, 0x00,
-        3, 2, 2, 3, 2, 2, 3, 3,
-        3, 3, 4, 3, 3, 4, 5, 8,
-        5, 5, 4, 4, 5, 10, 7, 7,
-        6, 8, 12, 10, 12, 12, 11, 10,
-        11, 11, 13, 14, 18, 16, 13, 14,
-        17, 14, 11, 11, 16, 22, 16, 17,
-        19, 20, 21, 21, 21, 12, 15, 23,
-        24, 22, 20, 24, 18, 20, 21, 20,
-    ];
-    writer.write_all(&dqt)?;
-    
-    // SOF0 (Start of Frame - Baseline DCT)
-    let sof0 = [
-        0xFF, 0xC0, 0x00, 0x0B,
-        0x08,  // Precision (8 bits)
-        (height >> 8) as u8, (height & 0xFF) as u8,
-        (width >> 8) as u8, (width & 0xFF) as u8,
-        0x01,  // Number of components (grayscale for simplicity)
-        0x01, 0x11, 0x00,  // Component 1: ID=1, sampling=1x1, quant table=0
-    ];
-    writer.write_all(&sof0)?;
-    
-    // DHT (Huffman table) - minimal DC table
-    let dht_dc = [
-        0xFF, 0xC4, 0x00, 0x1F, 0x00,
-        0x00, 0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
-    ];
-    writer.write_all(&dht_dc)?;
-    
-    // DHT (Huffman table) - minimal AC table  
-    let dht_ac = [
-        0xFF, 0xC4, 0x00, 0xB5, 0x10,
-        0x00, 0x02, 0x01, 0x03, 0x03, 0x02, 0x04, 0x03, 0x05, 0x05, 0x04, 0x04, 0x00, 0x00, 0x01, 0x7D,
-        0x01, 0x02, 0x03, 0x00, 0x04, 0x11, 0x05, 0x12, 0x21, 0x31, 0x41, 0x06, 0x13, 0x51, 0x61, 0x07,
-        0x22, 0x71, 0x14, 0x32, 0x81, 0x91, 0xA1, 0x08, 0x23, 0x42, 0xB1, 0xC1, 0x15, 0x52, 0xD1, 0xF0,
-        0x24, 0x33, 0x62, 0x72, 0x82, 0x09, 0x0A, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x25, 0x26, 0x27, 0x28,
-        0x29, 0x2A, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49,
-        0x4A, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69,
-        0x6A, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89,
-        0x8A, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7,
-        0xA8, 0xA9, 0xAA, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xC2, 0xC3, 0xC4, 0xC5,
-        0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDA, 0xE1, 0xE2,
-        0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8,
-        0xF9, 0xFA,
-    ];
-    writer.write_all(&dht_ac)?;
-    
-    // SOS (Start of Scan)
-    let sos = [
-        0xFF, 0xDA, 0x00, 0x08,
-        0x01,  // Number of components
-        0x01, 0x00,  // Component 1: DC=0, AC=0
-        0x00, 0x3F, 0x00,  // Spectral selection
-    ];
-    writer.write_all(&sos)?;
-    
-    // Scan data - for a real encoder this would be DCT coefficients
-    // For now, output a simple gray pattern
-    let block_count = ((width + 7) / 8) * ((height + 7) / 8);
-    for _ in 0..block_count {
-        // DC coefficient (average gray)
-        writer.write_all(&[0x00])?;
-        // EOB for AC
-        writer.write_all(&[0x00])?;
-    }
-    
-    // EOI (End of Image)
-    writer.write_all(&[0xFF, 0xD9])?;
-    
-    Ok(())
-}
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
+    /// Tests basic roundtrip.
     #[test]
-    fn test_basic_structure() {
-        // Just test that we can create ImageData
-        let data = vec![128u8; 32 * 32 * 3];
-        let image = ImageData::from_u8(32, 32, 3, data);
-        
-        assert_eq!(image.width, 32);
-        assert_eq!(image.height, 32);
-        assert_eq!(image.channels, 3);
+    fn test_roundtrip() {
+        let width = 32;
+        let height = 32;
+        let mut data = Vec::with_capacity((width * height * 3) as usize);
+
+        for y in 0..height {
+            for x in 0..width {
+                data.push((x * 8) as u8);
+                data.push((y * 8) as u8);
+                data.push(128);
+            }
+        }
+
+        let image = ImageData::from_u8(width, height, 3, data);
+        let temp_path = std::env::temp_dir().join("vfx_io_jpeg_test.jpg");
+
+        write(&temp_path, &image).expect("Write failed");
+        let loaded = read(&temp_path).expect("Read failed");
+
+        assert_eq!(loaded.width, width);
+        assert_eq!(loaded.height, height);
+        assert_eq!(loaded.channels, 3);
+
+        let _ = std::fs::remove_file(&temp_path);
+    }
+
+    /// Tests quality options.
+    #[test]
+    fn test_quality_options() {
+        let image = ImageData::from_u8(16, 16, 3, vec![128; 16 * 16 * 3]);
+        let temp_path = std::env::temp_dir().join("vfx_io_jpeg_quality_test.jpg");
+
+        // Low quality
+        let writer = JpegWriter::with_options(JpegWriterOptions {
+            quality: 50,
+            ..Default::default()
+        });
+        writer.write(&temp_path, &image).expect("Write failed");
+        let low_size = std::fs::metadata(&temp_path).unwrap().len();
+
+        // High quality
+        let writer = JpegWriter::with_options(JpegWriterOptions {
+            quality: 99,
+            ..Default::default()
+        });
+        writer.write(&temp_path, &image).expect("Write failed");
+        let high_size = std::fs::metadata(&temp_path).unwrap().len();
+
+        // High quality should be larger (usually)
+        assert!(high_size >= low_size);
+
+        let _ = std::fs::remove_file(&temp_path);
+    }
+
+    /// Tests memory roundtrip.
+    #[test]
+    fn test_memory_roundtrip() {
+        let image = ImageData::from_u8(16, 16, 3, vec![100; 16 * 16 * 3]);
+
+        let writer = JpegWriter::new();
+        let bytes = writer.write_to_memory(&image).expect("Write failed");
+
+        let reader = JpegReader::new();
+        let loaded = reader.read_from_memory(&bytes).expect("Read failed");
+
+        assert_eq!(loaded.width, 16);
+        assert_eq!(loaded.height, 16);
+    }
+
+    /// Tests magic byte detection.
+    #[test]
+    fn test_can_read() {
+        let reader = JpegReader::new();
+
+        // Valid JPEG magic
+        assert!(reader.can_read(&[0xFF, 0xD8, 0xFF, 0xE0]));
+        assert!(reader.can_read(&[0xFF, 0xD8, 0xFF, 0xE1]));
+
+        // Invalid
+        assert!(!reader.can_read(&[0x89, 0x50, 0x4E, 0x47])); // PNG
+        assert!(!reader.can_read(&[0x76, 0x2F, 0x31, 0x01])); // EXR
+    }
+
+    /// Tests grayscale output.
+    #[test]
+    fn test_grayscale_output() {
+        let image = ImageData::from_u8(16, 16, 3, vec![128; 16 * 16 * 3]);
+        let temp_path = std::env::temp_dir().join("vfx_io_jpeg_gray_test.jpg");
+
+        let writer = JpegWriter::with_options(JpegWriterOptions {
+            color_type: ColorType::Grayscale,
+            ..Default::default()
+        });
+        writer.write(&temp_path, &image).expect("Write failed");
+
+        // Should still be readable
+        let loaded = read(&temp_path).expect("Read failed");
+        assert_eq!(loaded.width, 16);
+
+        let _ = std::fs::remove_file(&temp_path);
     }
 }

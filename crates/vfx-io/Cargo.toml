@@ -11,7 +11,7 @@ rust-version.workspace = true
 default = ["exr", "png", "jpeg", "tiff", "dpx", "hdr"]
 exr = ["dep:exr"]
 png = ["dep:png"]
-jpeg = ["dep:jpeg-decoder"]
+jpeg = ["dep:jpeg-decoder", "dep:jpeg-encoder"]
 tiff = ["dep:tiff"]
 dpx = []
 hdr = []
@@ -28,6 +28,7 @@ png = { version = "0.18", optional = true }
 
 # JPEG support
 jpeg-decoder = { version = "0.3", optional = true }
+jpeg-encoder = { version = "0.6", optional = true }
 
 # TIFF support
 tiff = { version = "0.10", optional = true }
