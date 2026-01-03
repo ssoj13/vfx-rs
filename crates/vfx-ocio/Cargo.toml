@@ -16,6 +16,7 @@ vfx-primaries = { workspace = true }
 serde = { workspace = true }
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
+glam = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

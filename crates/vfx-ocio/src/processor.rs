@@ -588,8 +588,30 @@ impl Processor {
                 };
                 
                 let (matrix, offset) = if dir == TransformDirection::Inverse {
-                    // TODO: Compute inverse matrix
-                    (m.matrix.map(|v| v as f32), m.offset.map(|v| v as f32))
+                    // Compute inverse using glam
+                    let mat4 = glam::Mat4::from_cols_array(&[
+                        m.matrix[0] as f32, m.matrix[4] as f32, m.matrix[8] as f32, m.matrix[12] as f32,
+                        m.matrix[1] as f32, m.matrix[5] as f32, m.matrix[9] as f32, m.matrix[13] as f32,
+                        m.matrix[2] as f32, m.matrix[6] as f32, m.matrix[10] as f32, m.matrix[14] as f32,
+                        m.matrix[3] as f32, m.matrix[7] as f32, m.matrix[11] as f32, m.matrix[15] as f32,
+                    ]);
+                    let inv = mat4.inverse();
+                    let inv_arr = inv.to_cols_array();
+                    // Convert back to row-major
+                    let inv_matrix = [
+                        inv_arr[0], inv_arr[4], inv_arr[8], inv_arr[12],
+                        inv_arr[1], inv_arr[5], inv_arr[9], inv_arr[13],
+                        inv_arr[2], inv_arr[6], inv_arr[10], inv_arr[14],
+                        inv_arr[3], inv_arr[7], inv_arr[11], inv_arr[15],
+                    ];
+                    // Invert offset: -inv(M) * offset
+                    let inv_offset = [
+                        -(inv_matrix[0] * m.offset[0] as f32 + inv_matrix[1] * m.offset[1] as f32 + inv_matrix[2] * m.offset[2] as f32 + inv_matrix[3] * m.offset[3] as f32),
+                        -(inv_matrix[4] * m.offset[0] as f32 + inv_matrix[5] * m.offset[1] as f32 + inv_matrix[6] * m.offset[2] as f32 + inv_matrix[7] * m.offset[3] as f32),
+                        -(inv_matrix[8] * m.offset[0] as f32 + inv_matrix[9] * m.offset[1] as f32 + inv_matrix[10] * m.offset[2] as f32 + inv_matrix[11] * m.offset[3] as f32),
+                        -(inv_matrix[12] * m.offset[0] as f32 + inv_matrix[13] * m.offset[1] as f32 + inv_matrix[14] * m.offset[2] as f32 + inv_matrix[15] * m.offset[3] as f32),
+                    ];
+                    (inv_matrix, inv_offset)
                 } else {
                     (m.matrix.map(|v| v as f32), m.offset.map(|v| v as f32))
                 };

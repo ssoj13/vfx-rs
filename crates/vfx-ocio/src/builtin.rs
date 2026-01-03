@@ -139,6 +139,39 @@ fn acescg() -> ColorSpace {
 
 /// ACEScct color timing space (log encoding).
 fn acescct() -> ColorSpace {
+    // ACEScct uses AP1 primaries (same as ACEScg) + log encoding
+    // To reference: decode ACEScct -> linear AP1 -> AP0
+    let to_ref = Transform::group(vec![
+        // Decode ACEScct log to linear
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "ACEScct".into(),
+            direction: TransformDirection::Inverse,
+        }),
+        // AP1 to AP0 matrix
+        Transform::matrix([
+            0.6954522414, 0.1406786965, 0.1638690622, 0.0,
+            0.0447945634, 0.8596711185, 0.0955343182, 0.0,
+            -0.0055258826, 0.0040252103, 1.0015006723, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+    ]);
+
+    // From reference: AP0 -> linear AP1 -> encode ACEScct
+    let from_ref = Transform::group(vec![
+        // AP0 to AP1 matrix
+        Transform::matrix([
+            1.4514393161, -0.2365107469, -0.2149285693, 0.0,
+            -0.0765537734, 1.1762296998, -0.0996759264, 0.0,
+            0.0083161484, -0.0060324498, 0.9977163014, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+        // Encode to ACEScct log
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "ACEScct".into(),
+            direction: TransformDirection::Forward,
+        }),
+    ]);
+
     ColorSpace::builder("ACEScct")
         .alias("ACES - ACEScct")
         .family(Family::Aces)
@@ -148,11 +181,40 @@ fn acescct() -> ColorSpace {
             alloc_type: AllocationType::Uniform,
             vars: [-0.35, 1.55],
         })
+        .to_reference(to_ref)
+        .from_reference(from_ref)
         .build()
 }
 
 /// ACEScc color timing space (pure log, legacy).
 fn acescc() -> ColorSpace {
+    // ACEScc uses AP1 primaries + pure log encoding (no toe)
+    let to_ref = Transform::group(vec![
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "ACEScc".into(),
+            direction: TransformDirection::Inverse,
+        }),
+        Transform::matrix([
+            0.6954522414, 0.1406786965, 0.1638690622, 0.0,
+            0.0447945634, 0.8596711185, 0.0955343182, 0.0,
+            -0.0055258826, 0.0040252103, 1.0015006723, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+    ]);
+
+    let from_ref = Transform::group(vec![
+        Transform::matrix([
+            1.4514393161, -0.2365107469, -0.2149285693, 0.0,
+            -0.0765537734, 1.1762296998, -0.0996759264, 0.0,
+            0.0083161484, -0.0060324498, 0.9977163014, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "ACEScc".into(),
+            direction: TransformDirection::Forward,
+        }),
+    ]);
+
     ColorSpace::builder("ACEScc")
         .alias("ACES - ACEScc")
         .family(Family::Aces)
@@ -162,6 +224,8 @@ fn acescc() -> ColorSpace {
             alloc_type: AllocationType::Uniform,
             vars: [-0.3584, 1.468],
         })
+        .to_reference(to_ref)
+        .from_reference(from_ref)
         .build()
 }
 
@@ -209,6 +273,37 @@ fn srgb_linear() -> ColorSpace {
 
 /// sRGB display color space.
 fn srgb() -> ColorSpace {
+    // sRGB: linear sRGB primaries + sRGB EOTF/OETF
+    let to_ref = Transform::group(vec![
+        // Decode sRGB gamma to linear
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "sRGB".into(),
+            direction: TransformDirection::Inverse,
+        }),
+        // sRGB to AP0 matrix
+        Transform::matrix([
+            0.4396658251, 0.3829824270, 0.1773517479, 0.0,
+            0.0897912300, 0.8134346456, 0.0967741244, 0.0,
+            0.0175437929, 0.1115441718, 0.8709120353, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+    ]);
+
+    let from_ref = Transform::group(vec![
+        // AP0 to sRGB matrix
+        Transform::matrix([
+            2.5216994244, -1.1368885542, -0.3848108702, 0.0,
+            -0.2752540897, 1.3697051137, -0.0944510240, 0.0,
+            -0.0159374562, -0.1478051662, 1.1637426224, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+        // Encode linear to sRGB gamma
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "sRGB".into(),
+            direction: TransformDirection::Forward,
+        }),
+    ]);
+
     ColorSpace::builder("sRGB")
         .alias("srgb")
         .alias("Output - sRGB")
@@ -216,11 +311,40 @@ fn srgb() -> ColorSpace {
         .encoding(Encoding::Sdr)
         .bit_depth(BitDepth::Uint8)
         .description("sRGB display color space")
+        .to_reference(to_ref)
+        .from_reference(from_ref)
         .build()
 }
 
 /// Rec.709 video color space.
 fn rec709() -> ColorSpace {
+    // Rec.709: sRGB primaries + Rec.709 OETF
+    let to_ref = Transform::group(vec![
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "Rec709".into(),
+            direction: TransformDirection::Inverse,
+        }),
+        Transform::matrix([
+            0.4396658251, 0.3829824270, 0.1773517479, 0.0,
+            0.0897912300, 0.8134346456, 0.0967741244, 0.0,
+            0.0175437929, 0.1115441718, 0.8709120353, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+    ]);
+
+    let from_ref = Transform::group(vec![
+        Transform::matrix([
+            2.5216994244, -1.1368885542, -0.3848108702, 0.0,
+            -0.2752540897, 1.3697051137, -0.0944510240, 0.0,
+            -0.0159374562, -0.1478051662, 1.1637426224, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "Rec709".into(),
+            direction: TransformDirection::Forward,
+        }),
+    ]);
+
     ColorSpace::builder("Rec.709")
         .alias("rec709")
         .alias("BT.709")
@@ -228,6 +352,8 @@ fn rec709() -> ColorSpace {
         .family(Family::Display)
         .encoding(Encoding::Sdr)
         .description("Rec.709 / BT.709 video color space")
+        .to_reference(to_ref)
+        .from_reference(from_ref)
         .build()
 }
 
@@ -322,5 +448,41 @@ mod tests {
     #[test]
     fn available_configs_not_empty() {
         assert!(!available_configs().is_empty());
+    }
+
+    #[test]
+    fn acescg_to_srgb_conversion() {
+        let config = aces_1_3();
+        let processor = config.processor("ACEScg", "sRGB").unwrap();
+        
+        // 18% gray in ACEScg
+        let mut pixels = [[0.18_f32, 0.18, 0.18]];
+        processor.apply_rgb(&mut pixels);
+        
+        // Should be around 0.46-0.47 in sRGB (gamma encoded 18% gray)
+        assert!((pixels[0][0] - 0.46).abs() < 0.05, "R: {}", pixels[0][0]);
+        assert!((pixels[0][1] - 0.46).abs() < 0.05, "G: {}", pixels[0][1]);
+        assert!((pixels[0][2] - 0.46).abs() < 0.05, "B: {}", pixels[0][2]);
+    }
+
+    #[test]
+    fn acescct_roundtrip() {
+        let config = aces_1_3();
+        
+        // ACEScg -> ACEScct
+        let to_cct = config.processor("ACEScg", "ACEScct").unwrap();
+        // ACEScct -> ACEScg
+        let from_cct = config.processor("ACEScct", "ACEScg").unwrap();
+        
+        let original = [0.18_f32, 0.5, 1.0];
+        let mut pixels = [original];
+        
+        to_cct.apply_rgb(&mut pixels);
+        from_cct.apply_rgb(&mut pixels);
+        
+        // Should be back to original within tolerance
+        assert!((pixels[0][0] - original[0]).abs() < 0.001, "R: {} vs {}", pixels[0][0], original[0]);
+        assert!((pixels[0][1] - original[1]).abs() < 0.001, "G: {} vs {}", pixels[0][1], original[1]);
+        assert!((pixels[0][2] - original[2]).abs() < 0.001, "B: {} vs {}", pixels[0][2], original[2]);
     }
 }

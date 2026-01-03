@@ -67,6 +67,8 @@ pub mod hlg;
 pub mod log_c;
 pub mod s_log3;
 pub mod v_log;
+pub mod acescct;
+pub mod acescc;
 
 // Re-export common functions
 pub use srgb::{eotf as srgb_eotf, oetf as srgb_oetf};
@@ -77,3 +79,5 @@ pub use hlg::{eotf as hlg_eotf, oetf as hlg_oetf};
 pub use log_c::{decode as log_c_decode, encode as log_c_encode};
 pub use s_log3::{decode as s_log3_decode, encode as s_log3_encode};
 pub use v_log::{decode as v_log_decode, encode as v_log_encode};
+pub use acescct::{decode as acescct_decode, encode as acescct_encode};
+pub use acescc::{decode as acescc_decode, encode as acescc_encode};
