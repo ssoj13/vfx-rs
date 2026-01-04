@@ -30,6 +30,8 @@ pub mod image;
 pub mod color;
 pub mod ops;
 pub mod processor;
+pub mod pipeline;
+pub mod convert;
 mod shaders;
 
 pub use backend::{
@@ -43,6 +45,13 @@ pub use processor::{
     Processor, ProcessorBuilder, ProcessorConfig,
     DEFAULT_TILE_SIZE, MIN_TILE_SIZE, MAX_TILE_SIZE, DEFAULT_RAM_PERCENT,
 };
+pub use pipeline::{
+    ComputePipeline, ComputePipelineBuilder,
+    ImageInput, ImageOutput, ProcessResult, ComputeOp,
+};
+pub use convert::Processable;
+#[cfg(feature = "io")]
+pub use convert::{LayerMeta, from_image_data, to_image_data, from_layer, to_layer};
 
 use thiserror::Error;
 

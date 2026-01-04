@@ -10,6 +10,8 @@ description = "Unified compute backend for VFX workflows (CPU + GPU)"
 [features]
 default = []
 wgpu = ["dep:wgpu", "dep:pollster"]
+io = ["dep:vfx-io"]
+streaming = ["io"]
 
 [dependencies]
 # GPU compute (optional)
@@ -19,6 +21,7 @@ pollster = { version = "0.4", optional = true }
 
 # Internal
 vfx-core = { workspace = true }
+vfx-io = { workspace = true, optional = true }
 
 # Parallelism
 rayon = { workspace = true }
