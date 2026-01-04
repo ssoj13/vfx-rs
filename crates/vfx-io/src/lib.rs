@@ -241,7 +241,7 @@ pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
 ///
 /// - `width`, `height` - Image dimensions in pixels
 /// - `channels` - Number of channels (3 for RGB, 4 for RGBA)
-/// - `format` - Pixel data format (U8, U16, F16, F32)
+/// - `format` - Pixel data format (U8, U16, F16, F32, U32)
 /// - `data` - Raw pixel data
 /// - `metadata` - Format-specific metadata
 ///
@@ -354,6 +354,8 @@ pub enum PixelFormat {
     F16,
     /// 32-bit float per channel (full precision).
     F32,
+    /// 32-bit unsigned integer per channel.
+    U32,
 }
 
 /// Raw pixel data storage.
@@ -367,6 +369,8 @@ pub enum PixelData {
     U16(Vec<u16>),
     /// 32-bit float data (also used for F16 after conversion).
     F32(Vec<f32>),
+    /// 32-bit unsigned data.
+    U32(Vec<u32>),
 }
 
 /// Image metadata container.
@@ -394,6 +398,7 @@ impl ImageData {
             PixelFormat::U8 => PixelData::U8(vec![0u8; size]),
             PixelFormat::U16 => PixelData::U16(vec![0u16; size]),
             PixelFormat::F16 | PixelFormat::F32 => PixelData::F32(vec![0.0f32; size]),
+            PixelFormat::U32 => PixelData::U32(vec![0u32; size]),
         };
         
         Self {
@@ -429,6 +434,18 @@ impl ImageData {
             metadata: Metadata::default(),
         }
     }
+
+    /// Creates ImageData from u32 pixel data.
+    pub fn from_u32(width: u32, height: u32, channels: u32, data: Vec<u32>) -> Self {
+        Self {
+            width,
+            height,
+            channels,
+            format: PixelFormat::U32,
+            data: PixelData::U32(data),
+            metadata: Metadata::default(),
+        }
+    }
     
     /// Returns the total number of pixels.
     #[inline]
@@ -444,12 +461,13 @@ impl ImageData {
     
     /// Converts pixel data to f32 (for processing).
     ///
-    /// Values are normalized to 0.0-1.0 range for integer formats.
+    /// Values are normalized to 0.0-1.0 range for U8/U16; U32 is cast without normalization.
     pub fn to_f32(&self) -> Vec<f32> {
         match &self.data {
             PixelData::U8(data) => data.iter().map(|&v| v as f32 / 255.0).collect(),
             PixelData::U16(data) => data.iter().map(|&v| v as f32 / 65535.0).collect(),
             PixelData::F32(data) => data.clone(),
+            PixelData::U32(data) => data.iter().map(|&v| v as f32).collect(),
         }
     }
     
@@ -461,6 +479,7 @@ impl ImageData {
             PixelData::U8(data) => data.clone(),
             PixelData::U16(data) => data.iter().map(|&v| (v >> 8) as u8).collect(),
             PixelData::F32(data) => data.iter().map(|&v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect(),
+            PixelData::U32(data) => data.iter().map(|&v| v.min(u8::MAX as u32) as u8).collect(),
         }
     }
 
@@ -472,6 +491,66 @@ impl ImageData {
             PixelData::U8(data) => data.iter().map(|&v| (v as u16) << 8 | v as u16).collect(),
             PixelData::U16(data) => data.clone(),
             PixelData::F32(data) => data.iter().map(|&v| (v.clamp(0.0, 1.0) * 65535.0) as u16).collect(),
+            PixelData::U32(data) => data.iter().map(|&v| v.min(u16::MAX as u32) as u16).collect(),
+        }
+    }
+
+    /// Converts this image into a single named layer with planar channels.
+    pub fn to_layer(&self, name: impl Into<String>) -> ImageLayer {
+        let name = name.into();
+        let channel_names = default_channel_names(self.channels as usize);
+        let pixel_count = self.pixel_count();
+        let channels = self.channels as usize;
+
+        let mut out_channels = Vec::with_capacity(channels);
+        for (ch_index, ch_name) in channel_names.into_iter().enumerate() {
+            let quantize_linearly = matches!(ch_name.as_str(), "A") || ch_name.starts_with("C");
+            match &self.data {
+                PixelData::U32(data) => {
+                    let mut samples = Vec::with_capacity(pixel_count);
+                    for i in 0..pixel_count {
+                        let idx = i * channels + ch_index;
+                        samples.push(*data.get(idx).unwrap_or(&0u32));
+                    }
+                    out_channels.push(ImageChannel {
+                        name: ch_name,
+                        sample_type: ChannelSampleType::U32,
+                        samples: ChannelSamples::U32(samples),
+                        sampling: (1, 1),
+                        quantize_linearly,
+                    });
+                }
+                _ => {
+                    let interleaved = self.to_f32();
+                    let mut samples = Vec::with_capacity(pixel_count);
+                    for i in 0..pixel_count {
+                        let idx = i * channels + ch_index;
+                        samples.push(interleaved.get(idx).copied().unwrap_or(0.0));
+                    }
+                    out_channels.push(ImageChannel {
+                        name: ch_name,
+                        sample_type: ChannelSampleType::F32,
+                        samples: ChannelSamples::F32(samples),
+                        sampling: (1, 1),
+                        quantize_linearly,
+                    });
+                }
+            }
+        }
+
+        ImageLayer {
+            name,
+            width: self.width,
+            height: self.height,
+            channels: out_channels,
+        }
+    }
+
+    /// Converts this image into a layered container with a single layer.
+    pub fn to_layered(&self, name: impl Into<String>) -> LayeredImage {
+        LayeredImage {
+            layers: vec![self.to_layer(name)],
+            metadata: self.metadata.clone(),
         }
     }
 }
@@ -483,7 +562,7 @@ impl PixelFormat {
         match self {
             Self::U8 => 1,
             Self::U16 | Self::F16 => 2,
-            Self::F32 => 4,
+            Self::F32 | Self::U32 => 4,
         }
     }
     
@@ -492,6 +571,204 @@ impl PixelFormat {
     pub fn is_float(&self) -> bool {
         matches!(self, Self::F16 | Self::F32)
     }
+}
+
+impl ImageLayer {
+    /// Attempts to convert this layer into a packed ImageData.
+    ///
+    /// If all channels are U32, the output is U32; otherwise U32 channels are cast to f32.
+    pub fn to_image_data(&self) -> IoResult<ImageData> {
+        self.to_image_data_with_order(&[])
+    }
+
+    /// Attempts to convert this layer into ImageData using an explicit channel order.
+    ///
+    /// If `order` is empty, a preferred default order is used.
+    /// If all channels are U32, the output is U32; otherwise U32 channels are cast to f32.
+    pub fn to_image_data_with_order(&self, order: &[&str]) -> IoResult<ImageData> {
+        if self.channels.is_empty() {
+            return Err(IoError::DecodeError("Layer has no channels".into()));
+        }
+
+        let pixel_count = (self.width as usize) * (self.height as usize);
+        for channel in &self.channels {
+            if channel.sampling != (1, 1) {
+                return Err(IoError::DecodeError(
+                    "Cannot convert subsampled channels to ImageData".into(),
+                ));
+            }
+            match (&channel.sample_type, &channel.samples) {
+                (ChannelSampleType::F16 | ChannelSampleType::F32, ChannelSamples::F32(values)) => {
+                    if values.len() != pixel_count {
+                        return Err(IoError::DecodeError(format!(
+                            "Channel {} has {} samples, expected {}",
+                            channel.name,
+                            values.len(),
+                            pixel_count
+                        )));
+                    }
+                }
+                (ChannelSampleType::U32, ChannelSamples::U32(values)) => {
+                    if values.len() != pixel_count {
+                        return Err(IoError::DecodeError(format!(
+                            "Channel {} has {} samples, expected {}",
+                            channel.name,
+                            values.len(),
+                            pixel_count
+                        )));
+                    }
+                }
+                _ => {
+                    return Err(IoError::DecodeError(
+                        "Unsupported channel sample storage".into(),
+                    ));
+                }
+            }
+        }
+
+        let order = if order.is_empty() {
+            preferred_channel_order(&self.channels)
+        } else {
+            let mut indices = Vec::with_capacity(order.len());
+            for &name in order {
+                let idx = self
+                    .channels
+                    .iter()
+                    .position(|ch| ch.name == name)
+                    .ok_or_else(|| {
+                        IoError::DecodeError(format!(
+                            "Channel {} not found in layer",
+                            name
+                        ))
+                    })?;
+                indices.push(idx);
+            }
+            indices
+        };
+        let all_u32 = order.iter().all(|&idx| matches!(self.channels[idx].sample_type, ChannelSampleType::U32));
+        if all_u32 {
+            let mut interleaved = Vec::with_capacity(pixel_count * order.len());
+            for i in 0..pixel_count {
+                for &idx in &order {
+                    let channel = &self.channels[idx];
+                    let ChannelSamples::U32(values) = &channel.samples else {
+                        return Err(IoError::DecodeError(
+                            "Unsupported channel sample storage".into(),
+                        ));
+                    };
+                    interleaved.push(values[i]);
+                }
+            }
+
+            return Ok(ImageData {
+                width: self.width,
+                height: self.height,
+                channels: order.len() as u32,
+                format: PixelFormat::U32,
+                data: PixelData::U32(interleaved),
+                metadata: Metadata::default(),
+            });
+        }
+
+        let mut interleaved = Vec::with_capacity(pixel_count * order.len());
+
+        for i in 0..pixel_count {
+            for &idx in &order {
+                let channel = &self.channels[idx];
+                match &channel.samples {
+                    ChannelSamples::F32(values) => {
+                        interleaved.push(values[i]);
+                    }
+                    ChannelSamples::U32(values) => {
+                        interleaved.push(values[i] as f32);
+                    }
+                }
+            }
+        }
+
+        Ok(ImageData {
+            width: self.width,
+            height: self.height,
+            channels: order.len() as u32,
+            format: PixelFormat::F32,
+            data: PixelData::F32(interleaved),
+            metadata: Metadata::default(),
+        })
+    }
+}
+
+impl LayeredImage {
+    /// Attempts to convert a single-layer image into ImageData.
+    pub fn to_image_data(&self) -> IoResult<ImageData> {
+        match self.layers.as_slice() {
+            [layer] => layer.to_image_data(),
+            [] => Err(IoError::DecodeError("No layers available".into())),
+            _ => Err(IoError::DecodeError(
+                "Multiple layers cannot be converted to ImageData".into(),
+            )),
+        }
+    }
+
+    /// Attempts to convert a single-layer image into ImageData using an explicit channel order.
+    pub fn to_image_data_with_order(&self, order: &[&str]) -> IoResult<ImageData> {
+        match self.layers.as_slice() {
+            [layer] => layer.to_image_data_with_order(order),
+            [] => Err(IoError::DecodeError("No layers available".into())),
+            _ => Err(IoError::DecodeError(
+                "Multiple layers cannot be converted to ImageData".into(),
+            )),
+        }
+    }
+}
+
+fn default_channel_names(count: usize) -> Vec<String> {
+    match count {
+        1 => vec!["Y".to_string()],
+        2 => vec!["Y".to_string(), "A".to_string()],
+        3 => vec!["R".to_string(), "G".to_string(), "B".to_string()],
+        4 => vec![
+            "R".to_string(),
+            "G".to_string(),
+            "B".to_string(),
+            "A".to_string(),
+        ],
+        _ => (0..count).map(|i| format!("C{}", i)).collect(),
+    }
+}
+
+fn preferred_channel_order(channels: &[ImageChannel]) -> Vec<usize> {
+    let mut indices = Vec::with_capacity(channels.len());
+    let find = |name: &str| channels.iter().position(|ch| ch.name == name);
+
+    if channels.len() == 1 {
+        if let Some(y) = find("Y") {
+            return vec![y];
+        }
+    }
+    if channels.len() == 2 {
+        if let (Some(y), Some(a)) = (find("Y"), find("A")) {
+            return vec![y, a];
+        }
+    }
+    if channels.len() >= 3 {
+        if let (Some(r), Some(g), Some(b)) = (find("R"), find("G"), find("B")) {
+            indices.push(r);
+            indices.push(g);
+            indices.push(b);
+            if channels.len() == 4 {
+                if let Some(a) = find("A") {
+                    indices.push(a);
+                    return indices;
+                }
+            }
+            if channels.len() == 3 {
+                return indices;
+            }
+            indices.clear();
+        }
+    }
+
+    (0..channels.len()).collect()
 }
 
 // === Backwards compatibility ===

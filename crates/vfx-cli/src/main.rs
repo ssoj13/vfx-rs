@@ -17,10 +17,15 @@ Combines functionality of oiiotool, iconvert, iinfo, idiff, and maketx.
 
 Examples:
   vfx info image.exr                    # Show image info
+  vfx info image.exr --stats --all      # Full stats and metadata
   vfx convert input.exr output.png      # Convert formats
+  vfx convert input.exr output.exr -d half -c piz
   vfx resize input.exr -w 1920 -h 1080 -o output.exr
   vfx diff a.exr b.exr                  # Compare images
   vfx composite fg.exr bg.exr -o out.exr
+  vfx color input.exr -o out.exr --from ACEScg --to sRGB
+  vfx lut input.exr -o out.exr -l look.cube
+  vfx maketx input.exr -o tex.tx -m -t 64
 ")]
 struct Cli {
     #[command(subcommand)]

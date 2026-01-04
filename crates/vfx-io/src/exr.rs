@@ -274,6 +274,8 @@ impl ExrReader {
     }
 
     /// Reads all layers and channels from an EXR file.
+    ///
+    /// Note: deep data is not supported by the `exr` crate, so deep layers will fail to load.
     pub fn read_layers<P: AsRef<Path>>(&self, path: P) -> IoResult<LayeredImage> {
         use exr::image::read::read_all_flat_layers_from_file;
         use exr::image::FlatSamples;
@@ -555,6 +557,16 @@ impl ExrWriter {
     /// Internal write implementation.
     fn write_impl(&self, image: &ImageData) -> IoResult<Vec<u8>> {
         use exr::prelude::*;
+
+        if image.format == PixelFormat::U32 {
+            let layer_name = self
+                .options
+                .layer_name
+                .clone()
+                .unwrap_or_else(|| "RGBA".to_string());
+            let layered = image.to_layered(layer_name);
+            return self.write_layers_impl(&layered);
+        }
 
         let width = image.width as usize;
         let height = image.height as usize;
