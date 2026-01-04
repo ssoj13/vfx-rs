@@ -23,6 +23,7 @@ pub mod paste;
 pub mod rotate;
 pub mod warp;
 pub mod aces;
+pub mod udim;
 
 use vfx_io::ImageData;
 use vfx_io::exr::{ExrReader, ExrWriter};

@@ -366,6 +366,184 @@ fn invert_lut1d(lut: &[f32], size: usize, channels: usize) -> Vec<f32> {
     inverted
 }
 
+/// Inverts a 3D LUT using iterative Newton-Raphson method.
+/// 
+/// This builds a new 3D LUT where each output maps back to the original input.
+/// Uses tetrahedral interpolation for forward evaluation during inversion.
+fn invert_lut3d(lut: &[f32], size: usize, domain_min: [f32; 3], domain_max: [f32; 3]) -> Vec<f32> {
+    let mut inverted = vec![0.0f32; size * size * size * 3];
+    let max_iters = 30;
+    let tolerance = 1e-6f32;
+    
+    // For each point in the output space, find the input that produces it
+    for iz in 0..size {
+        for iy in 0..size {
+            for ix in 0..size {
+                // Target output value (normalized 0-1)
+                let target = [
+                    ix as f32 / (size - 1) as f32,
+                    iy as f32 / (size - 1) as f32,
+                    iz as f32 / (size - 1) as f32,
+                ];
+                
+                // Scale target to domain
+                let target_scaled = [
+                    domain_min[0] + target[0] * (domain_max[0] - domain_min[0]),
+                    domain_min[1] + target[1] * (domain_max[1] - domain_min[1]),
+                    domain_min[2] + target[2] * (domain_max[2] - domain_min[2]),
+                ];
+                
+                // Initial guess: identity (start with the target itself)
+                let mut guess = target;
+                
+                // Newton-Raphson iteration
+                for _ in 0..max_iters {
+                    // Evaluate LUT at current guess
+                    let eval = eval_lut3d_tetrahedral(lut, size, &guess, domain_min, domain_max);
+                    
+                    // Compute error
+                    let err = [
+                        eval[0] - target_scaled[0],
+                        eval[1] - target_scaled[1],
+                        eval[2] - target_scaled[2],
+                    ];
+                    
+                    let err_mag = (err[0]*err[0] + err[1]*err[1] + err[2]*err[2]).sqrt();
+                    if err_mag < tolerance {
+                        break;
+                    }
+                    
+                    // Compute Jacobian numerically
+                    let delta = 1e-4f32;
+                    let mut jacobian = [[0.0f32; 3]; 3];
+                    
+                    for j in 0..3 {
+                        let mut g_plus = guess;
+                        g_plus[j] = (g_plus[j] + delta).min(1.0);
+                        let eval_plus = eval_lut3d_tetrahedral(lut, size, &g_plus, domain_min, domain_max);
+                        
+                        for i in 0..3 {
+                            jacobian[i][j] = (eval_plus[i] - eval[i]) / delta;
+                        }
+                    }
+                    
+                    // Solve J * dx = -err using Cramer's rule (3x3)
+                    let dx = solve_3x3(&jacobian, &[-err[0], -err[1], -err[2]]);
+                    
+                    // Update guess with damping
+                    let damping = 0.8f32;
+                    guess[0] = (guess[0] + damping * dx[0]).clamp(0.0, 1.0);
+                    guess[1] = (guess[1] + damping * dx[1]).clamp(0.0, 1.0);
+                    guess[2] = (guess[2] + damping * dx[2]).clamp(0.0, 1.0);
+                }
+                
+                // Store result (scale back to domain)
+                let idx = (iz * size * size + iy * size + ix) * 3;
+                inverted[idx] = domain_min[0] + guess[0] * (domain_max[0] - domain_min[0]);
+                inverted[idx + 1] = domain_min[1] + guess[1] * (domain_max[1] - domain_min[1]);
+                inverted[idx + 2] = domain_min[2] + guess[2] * (domain_max[2] - domain_min[2]);
+            }
+        }
+    }
+    
+    inverted
+}
+
+/// Evaluate 3D LUT with tetrahedral interpolation.
+fn eval_lut3d_tetrahedral(lut: &[f32], size: usize, rgb: &[f32; 3], 
+                          domain_min: [f32; 3], domain_max: [f32; 3]) -> [f32; 3] {
+    // Normalize to 0-1 range
+    let r = ((rgb[0] - domain_min[0]) / (domain_max[0] - domain_min[0])).clamp(0.0, 1.0);
+    let g = ((rgb[1] - domain_min[1]) / (domain_max[1] - domain_min[1])).clamp(0.0, 1.0);
+    let b = ((rgb[2] - domain_min[2]) / (domain_max[2] - domain_min[2])).clamp(0.0, 1.0);
+    
+    // Scale to LUT indices
+    let max_idx = (size - 1) as f32;
+    let ri = r * max_idx;
+    let gi = g * max_idx;
+    let bi = b * max_idx;
+    
+    let r0 = (ri.floor() as usize).min(size - 2);
+    let g0 = (gi.floor() as usize).min(size - 2);
+    let b0 = (bi.floor() as usize).min(size - 2);
+    
+    let fr = ri - r0 as f32;
+    let fg = gi - g0 as f32;
+    let fb = bi - b0 as f32;
+    
+    // Get 8 corners
+    let idx = |r: usize, g: usize, b: usize| -> [f32; 3] {
+        let i = (b * size * size + g * size + r) * 3;
+        [lut[i], lut[i + 1], lut[i + 2]]
+    };
+    
+    let c000 = idx(r0, g0, b0);
+    let c100 = idx(r0 + 1, g0, b0);
+    let c010 = idx(r0, g0 + 1, b0);
+    let c110 = idx(r0 + 1, g0 + 1, b0);
+    let c001 = idx(r0, g0, b0 + 1);
+    let c101 = idx(r0 + 1, g0, b0 + 1);
+    let c011 = idx(r0, g0 + 1, b0 + 1);
+    let c111 = idx(r0 + 1, g0 + 1, b0 + 1);
+    
+    // Tetrahedral interpolation
+    let mut result = [0.0f32; 3];
+    
+    for i in 0..3 {
+        result[i] = if fr > fg {
+            if fg > fb {
+                // fr > fg > fb
+                (1.0 - fr) * c000[i] + (fr - fg) * c100[i] + (fg - fb) * c110[i] + fb * c111[i]
+            } else if fr > fb {
+                // fr > fb > fg
+                (1.0 - fr) * c000[i] + (fr - fb) * c100[i] + (fb - fg) * c101[i] + fg * c111[i]
+            } else {
+                // fb > fr > fg
+                (1.0 - fb) * c000[i] + (fb - fr) * c001[i] + (fr - fg) * c101[i] + fg * c111[i]
+            }
+        } else if fr > fb {
+            // fg > fr > fb
+            (1.0 - fg) * c000[i] + (fg - fr) * c010[i] + (fr - fb) * c110[i] + fb * c111[i]
+        } else if fg > fb {
+            // fg > fb > fr
+            (1.0 - fg) * c000[i] + (fg - fb) * c010[i] + (fb - fr) * c011[i] + fr * c111[i]
+        } else {
+            // fb > fg > fr
+            (1.0 - fb) * c000[i] + (fb - fg) * c001[i] + (fg - fr) * c011[i] + fr * c111[i]
+        };
+    }
+    
+    result
+}
+
+/// Solve 3x3 linear system using Cramer's rule.
+fn solve_3x3(a: &[[f32; 3]; 3], b: &[f32; 3]) -> [f32; 3] {
+    let det = a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1])
+            - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+            + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+    
+    if det.abs() < 1e-10 {
+        return [0.0, 0.0, 0.0]; // Singular matrix, return zero
+    }
+    
+    let inv_det = 1.0 / det;
+    
+    // Replace columns with b and compute determinants
+    let det_x = b[0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1])
+              - a[0][1] * (b[1] * a[2][2] - a[1][2] * b[2])
+              + a[0][2] * (b[1] * a[2][1] - a[1][1] * b[2]);
+    
+    let det_y = a[0][0] * (b[1] * a[2][2] - a[1][2] * b[2])
+              - b[0] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+              + a[0][2] * (a[1][0] * b[2] - b[1] * a[2][0]);
+    
+    let det_z = a[0][0] * (a[1][1] * b[2] - b[1] * a[2][1])
+              - a[0][1] * (a[1][0] * b[2] - b[1] * a[2][0])
+              + b[0] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+    
+    [det_x * inv_det, det_y * inv_det, det_z * inv_det]
+}
+
 /// Optimization level for processors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OptimizationLevel {
@@ -1033,17 +1211,20 @@ impl Processor {
 
     /// Compiles a 3D LUT into Op::Lut3d.
     fn compile_lut3d(&mut self, lut: &vfx_lut::Lut3D, interp: Interpolation, forward: bool) {
-        // 3D LUT inversion is complex - we just use forward for now
-        // True inversion requires iterative solving
-        let _ = forward; // TODO: implement 3D LUT inversion
-        
         // Flatten Vec<[f32; 3]> to Vec<f32>
         let flat_data: Vec<f32> = lut.data.iter()
             .flat_map(|rgb| rgb.iter().copied())
             .collect();
         
+        // Invert if needed using Newton-Raphson
+        let lut_data = if forward {
+            flat_data
+        } else {
+            invert_lut3d(&flat_data, lut.size, lut.domain_min, lut.domain_max)
+        };
+        
         self.ops.push(Op::Lut3d {
-            lut: flat_data,
+            lut: lut_data,
             size: lut.size,
             interp,
             domain_min: lut.domain_min,
@@ -1819,5 +2000,76 @@ mod tests {
 
         let processor = Processor::from_transform(&group, TransformDirection::Forward).unwrap();
         assert_eq!(processor.num_ops(), 2);
+    }
+
+    #[test]
+    fn lut3d_inversion() {
+        // Create a 3D LUT with 0.5x gain (bijective, no clamping)
+        let size = 17; // Larger for better accuracy
+        let mut lut_data = Vec::with_capacity(size * size * size * 3);
+        
+        for b in 0..size {
+            for g in 0..size {
+                for r in 0..size {
+                    let ri = r as f32 / (size - 1) as f32;
+                    let gi = g as f32 / (size - 1) as f32;
+                    let bi = b as f32 / (size - 1) as f32;
+                    // Apply 0.5x gain (fully invertible)
+                    lut_data.push(ri * 0.5);
+                    lut_data.push(gi * 0.5);
+                    lut_data.push(bi * 0.5);
+                }
+            }
+        }
+        
+        let domain_min = [0.0, 0.0, 0.0];
+        let domain_max = [1.0, 1.0, 1.0];
+        
+        // Test forward evaluation
+        let input = [0.4, 0.6, 0.8];
+        let forward = super::eval_lut3d_tetrahedral(&lut_data, size, &input, domain_min, domain_max);
+        
+        // Expected: input * 0.5
+        assert!((forward[0] - 0.2).abs() < 0.01);
+        assert!((forward[1] - 0.3).abs() < 0.01);
+        assert!((forward[2] - 0.4).abs() < 0.01);
+        
+        // Create inverse LUT
+        let inv_lut = super::invert_lut3d(&lut_data, size, domain_min, domain_max);
+        
+        // Evaluate inverse at forward result - should get back original
+        let roundtrip = super::eval_lut3d_tetrahedral(&inv_lut, size, &forward, domain_min, domain_max);
+        
+        assert!((roundtrip[0] - input[0]).abs() < 0.05, "R: {} vs {}", roundtrip[0], input[0]);
+        assert!((roundtrip[1] - input[1]).abs() < 0.05, "G: {} vs {}", roundtrip[1], input[1]);
+        assert!((roundtrip[2] - input[2]).abs() < 0.05, "B: {} vs {}", roundtrip[2], input[2]);
+    }
+
+    #[test]
+    fn tetrahedral_interpolation() {
+        // Identity LUT
+        let size = 5;
+        let mut lut = Vec::with_capacity(size * size * size * 3);
+        
+        for b in 0..size {
+            for g in 0..size {
+                for r in 0..size {
+                    lut.push(r as f32 / (size - 1) as f32);
+                    lut.push(g as f32 / (size - 1) as f32);
+                    lut.push(b as f32 / (size - 1) as f32);
+                }
+            }
+        }
+        
+        let domain_min = [0.0, 0.0, 0.0];
+        let domain_max = [1.0, 1.0, 1.0];
+        
+        // Test identity: output should equal input
+        let input = [0.33, 0.66, 0.5];
+        let output = super::eval_lut3d_tetrahedral(&lut, size, &input, domain_min, domain_max);
+        
+        assert!((output[0] - input[0]).abs() < 0.01);
+        assert!((output[1] - input[1]).abs() < 0.01);
+        assert!((output[2] - input[2]).abs() < 0.01);
     }
 }

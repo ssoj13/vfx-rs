@@ -279,6 +279,135 @@ impl Lut3D {
         let b = (rgb[2] - self.domain_min[2]) / (self.domain_max[2] - self.domain_min[2]);
         (r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0))
     }
+
+    /// Inverts the 3D LUT using Newton-Raphson iteration.
+    ///
+    /// Creates a new LUT that approximates the inverse transform.
+    /// Works best for monotonic (bijective) LUTs.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use vfx_lut::Lut3D;
+    ///
+    /// let lut = Lut3D::identity(17);
+    /// let inv = lut.invert().unwrap();
+    /// let rgb = [0.5, 0.3, 0.2];
+    /// let fwd = lut.apply(rgb);
+    /// let back = inv.apply(fwd);
+    /// // back ≈ rgb
+    /// ```
+    pub fn invert(&self) -> LutResult<Self> {
+        let size = self.size;
+        let mut inverted = Vec::with_capacity(size * size * size);
+        
+        let max_iters = 30;
+        let tolerance = 1e-6f32;
+        let damping = 0.8f32;
+        
+        for bi in 0..size {
+            for gi in 0..size {
+                for ri in 0..size {
+                    // Target: the output we want to achieve
+                    let target = [
+                        self.domain_min[0] + (ri as f32 / (size - 1) as f32) * (self.domain_max[0] - self.domain_min[0]),
+                        self.domain_min[1] + (gi as f32 / (size - 1) as f32) * (self.domain_max[1] - self.domain_min[1]),
+                        self.domain_min[2] + (bi as f32 / (size - 1) as f32) * (self.domain_max[2] - self.domain_min[2]),
+                    ];
+                    
+                    // Initial guess: normalized grid position
+                    let mut guess = [
+                        ri as f32 / (size - 1) as f32,
+                        gi as f32 / (size - 1) as f32,
+                        bi as f32 / (size - 1) as f32,
+                    ];
+                    
+                    // Newton-Raphson iteration
+                    for _ in 0..max_iters {
+                        let eval = self.apply_tetrahedral([
+                            self.domain_min[0] + guess[0] * (self.domain_max[0] - self.domain_min[0]),
+                            self.domain_min[1] + guess[1] * (self.domain_max[1] - self.domain_min[1]),
+                            self.domain_min[2] + guess[2] * (self.domain_max[2] - self.domain_min[2]),
+                        ]);
+                        
+                        let err = [
+                            eval[0] - target[0],
+                            eval[1] - target[1],
+                            eval[2] - target[2],
+                        ];
+                        
+                        let err_mag = (err[0]*err[0] + err[1]*err[1] + err[2]*err[2]).sqrt();
+                        if err_mag < tolerance {
+                            break;
+                        }
+                        
+                        // Compute Jacobian numerically
+                        let delta = 1e-4f32;
+                        let mut jacobian = [[0.0f32; 3]; 3];
+                        
+                        for j in 0..3 {
+                            let mut g_plus = guess;
+                            g_plus[j] = (g_plus[j] + delta).min(1.0);
+                            let eval_plus = self.apply_tetrahedral([
+                                self.domain_min[0] + g_plus[0] * (self.domain_max[0] - self.domain_min[0]),
+                                self.domain_min[1] + g_plus[1] * (self.domain_max[1] - self.domain_min[1]),
+                                self.domain_min[2] + g_plus[2] * (self.domain_max[2] - self.domain_min[2]),
+                            ]);
+                            for i in 0..3 {
+                                jacobian[i][j] = (eval_plus[i] - eval[i]) / delta;
+                            }
+                        }
+                        
+                        // Solve 3x3 system using Cramer's rule
+                        let dx = solve_3x3(&jacobian, &[-err[0], -err[1], -err[2]]);
+                        
+                        guess[0] = (guess[0] + damping * dx[0]).clamp(0.0, 1.0);
+                        guess[1] = (guess[1] + damping * dx[1]).clamp(0.0, 1.0);
+                        guess[2] = (guess[2] + damping * dx[2]).clamp(0.0, 1.0);
+                    }
+                    
+                    inverted.push([
+                        self.domain_min[0] + guess[0] * (self.domain_max[0] - self.domain_min[0]),
+                        self.domain_min[1] + guess[1] * (self.domain_max[1] - self.domain_min[1]),
+                        self.domain_min[2] + guess[2] * (self.domain_max[2] - self.domain_min[2]),
+                    ]);
+                }
+            }
+        }
+        
+        Ok(Self {
+            data: inverted,
+            size,
+            domain_min: self.domain_min,
+            domain_max: self.domain_max,
+            interpolation: self.interpolation,
+        })
+    }
+}
+
+/// Solves 3x3 linear system Ax = b using Cramer's rule.
+fn solve_3x3(a: &[[f32; 3]; 3], b: &[f32; 3]) -> [f32; 3] {
+    let det = a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1])
+            - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+            + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+    
+    if det.abs() < 1e-10 {
+        return [0.0, 0.0, 0.0];
+    }
+    
+    let det_x = b[0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1])
+              - a[0][1] * (b[1] * a[2][2] - a[1][2] * b[2])
+              + a[0][2] * (b[1] * a[2][1] - a[1][1] * b[2]);
+    
+    let det_y = a[0][0] * (b[1] * a[2][2] - a[1][2] * b[2])
+              - b[0] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+              + a[0][2] * (a[1][0] * b[2] - b[1] * a[2][0]);
+    
+    let det_z = a[0][0] * (a[1][1] * b[2] - b[1] * a[2][1])
+              - a[0][1] * (a[1][0] * b[2] - b[1] * a[2][0])
+              + b[0] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+    
+    [det_x / det, det_y / det, det_z / det]
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@
 use crate::ConvertArgs;
 use anyhow::{Context, Result};
 use vfx_io::exr::{Compression, ExrReader, ExrWriter, ExrWriterOptions};
-use vfx_io::{Format, FormatWriter};
+use vfx_io::{Format, FormatWriter, PixelFormat};
 
 /// Runs the convert command.
 ///
@@ -32,13 +32,15 @@ pub fn run(args: ConvertArgs, verbose: bool) -> Result<()> {
     }
 
     // Standard single-layer conversion
-    let image = super::load_image(&args.input)?;
+    let mut image = super::load_image(&args.input)?;
 
+    // Apply bit depth conversion if requested
     if let Some(ref depth) = args.depth {
+        let target_format = parse_depth(depth)?;
         if verbose {
-            println!("  Target depth: {}", depth);
+            println!("  Converting depth: {:?} -> {:?}", image.format, target_format);
         }
-        // TODO: Apply bit depth conversion
+        image = image.convert_to(target_format);
     }
 
     super::save_image(&args.output, &image)?;
@@ -107,6 +109,20 @@ fn parse_compression(s: &str) -> Result<Compression> {
         "dwab" => Ok(Compression::Dwab),
         _ => anyhow::bail!(
             "Unknown EXR compression '{}'. Options: none, rle, zip, piz, dwaa, dwab",
+            s
+        ),
+    }
+}
+
+/// Parses bit depth string into PixelFormat.
+fn parse_depth(s: &str) -> Result<PixelFormat> {
+    match s.to_lowercase().as_str() {
+        "8" | "u8" | "uint8" => Ok(PixelFormat::U8),
+        "16" | "u16" | "uint16" => Ok(PixelFormat::U16),
+        "32" | "f32" | "float" | "float32" => Ok(PixelFormat::F32),
+        "half" | "f16" | "float16" => Ok(PixelFormat::F16),
+        _ => anyhow::bail!(
+            "Unknown bit depth '{}'. Options: 8, 16, 32, half (or u8, u16, f32, f16)",
             s
         ),
     }

@@ -126,6 +126,9 @@ enum Commands {
 
     /// Apply ACES color transforms (IDT/RRT/ODT)
     Aces(AcesArgs),
+
+    /// UDIM texture set operations (info, convert, atlas, split)
+    Udim(UdimArgs),
 }
 
 #[derive(Args)]
@@ -624,6 +627,54 @@ struct AcesArgs {
     rrt_variant: String,
 }
 
+/// Arguments for the `udim` command.
+#[derive(Args)]
+pub struct UdimArgs {
+    /// UDIM subcommand
+    #[command(subcommand)]
+    pub command: UdimCommand,
+}
+
+/// UDIM subcommands.
+#[derive(Subcommand)]
+pub enum UdimCommand {
+    /// Show UDIM texture set information
+    Info {
+        /// Input pattern (e.g., texture.<UDIM>.exr or texture.1001.exr)
+        pattern: PathBuf,
+    },
+    /// Convert all tiles to another format
+    Convert {
+        /// Input pattern
+        input: PathBuf,
+        /// Output pattern
+        output: PathBuf,
+        /// Compression (for EXR)
+        #[arg(short, long)]
+        compression: Option<String>,
+    },
+    /// Create atlas from UDIM tiles
+    Atlas {
+        /// Input pattern
+        input: PathBuf,
+        /// Output atlas image
+        output: PathBuf,
+        /// Tile resolution (all tiles scaled to this)
+        #[arg(short, long, default_value = "1024")]
+        tile_size: u32,
+    },
+    /// Split single image into UDIM tiles
+    Split {
+        /// Input image
+        input: PathBuf,
+        /// Output pattern with <UDIM>
+        output: PathBuf,
+        /// Tile size in pixels
+        #[arg(short, long, default_value = "1024")]
+        tile_size: u32,
+    },
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -663,5 +714,6 @@ fn main() -> Result<()> {
         Commands::Rotate(args) => commands::rotate::run(args, cli.verbose),
         Commands::Warp(args) => commands::warp::run(args, cli.verbose),
         Commands::Aces(args) => commands::aces::run(args, cli.verbose),
+        Commands::Udim(args) => commands::udim::run(args, cli.verbose),
     }
 }

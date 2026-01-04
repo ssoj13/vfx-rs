@@ -112,6 +112,21 @@ pub struct CachedImageInfo {
     pub subimages: u32,
 }
 
+/// Cached full image data for efficient tile extraction.
+#[derive(Clone)]
+struct CachedImageData {
+    /// Full resolution f32 pixel data.
+    data: Vec<f32>,
+    /// Image width.
+    width: u32,
+    /// Image height.
+    height: u32,
+    /// Number of channels.
+    channels: u32,
+    /// Pre-generated mip levels (level -> data).
+    mips: HashMap<u32, Vec<f32>>,
+}
+
 impl CachedImageInfo {
     /// Number of tiles in X direction.
     #[inline]
@@ -146,6 +161,12 @@ struct LruNode {
 ///
 /// Caches image tiles in memory with configurable size limit.
 /// Automatically evicts least recently used tiles when full.
+///
+/// # Tiled EXR optimization
+///
+/// For efficient tile access, the cache loads full images once and extracts
+/// tiles on demand. For native tiled EXR block reading (avoiding full image load),
+/// use exr crate's `block::FilteredChunksReader` with `BlockIndex::pixel_position`.
 pub struct ImageCache {
     /// Maximum cache size in bytes.
     max_size: usize,
@@ -155,6 +176,8 @@ pub struct ImageCache {
     tiles: RwLock<HashMap<TileKey, Tile>>,
     /// Image info cache.
     image_info: RwLock<HashMap<PathBuf, CachedImageInfo>>,
+    /// Full image data cache for efficient tile extraction.
+    image_data: RwLock<HashMap<PathBuf, CachedImageData>>,
     /// LRU list head (most recent).
     lru_head: Mutex<Option<TileKey>>,
     /// LRU list tail (least recent).
@@ -202,6 +225,7 @@ impl ImageCache {
             current_size: RwLock::new(0),
             tiles: RwLock::new(HashMap::new()),
             image_info: RwLock::new(HashMap::new()),
+            image_data: RwLock::new(HashMap::new()),
             lru_head: Mutex::new(None),
             lru_tail: Mutex::new(None),
             lru_nodes: RwLock::new(HashMap::new()),
@@ -241,9 +265,11 @@ impl ImageCache {
         let mut lru_nodes = self.lru_nodes.write().unwrap();
         let mut current_size = self.current_size.write().unwrap();
         let mut stats = self.stats.write().unwrap();
+        let mut image_data = self.image_data.write().unwrap();
 
         tiles.clear();
         lru_nodes.clear();
+        image_data.clear();
         *current_size = 0;
         *self.lru_head.lock().unwrap() = None;
         *self.lru_tail.lock().unwrap() = None;
@@ -326,20 +352,65 @@ impl ImageCache {
         Ok(Arc::new(tile))
     }
 
-    /// Loads a tile from disk.
+    /// Loads a tile from disk using cached image data.
+    ///
+    /// First checks if full image is cached, loads and caches if not.
+    /// Then extracts the requested tile from cached data.
     fn load_tile(&self, path: &Path, _subimage: u32, mip_level: u32, tile_x: u32, tile_y: u32) -> IoResult<Tile> {
-        // Load full image (TODO: support tiled EXR loading)
-        let image = crate::read(path)?;
+        let path_buf = path.to_path_buf();
+        
+        // Get or load cached image data
+        let cached = {
+            let cache = self.image_data.read().unwrap();
+            cache.get(&path_buf).cloned()
+        };
+        
+        let cached = match cached {
+            Some(c) => c,
+            None => {
+                // Load full image and cache it
+                let image = crate::read(path)?;
+                let data = image.to_f32();
+                let cached = CachedImageData {
+                    data,
+                    width: image.width,
+                    height: image.height,
+                    channels: image.channels,
+                    mips: HashMap::new(),
+                };
+                
+                let mut cache = self.image_data.write().unwrap();
+                cache.insert(path_buf.clone(), cached.clone());
+                cached
+            }
+        };
 
         // Compute mip dimensions
-        let mip_width = (image.width >> mip_level).max(1);
-        let mip_height = (image.height >> mip_level).max(1);
+        let mip_width = (cached.width >> mip_level).max(1);
+        let mip_height = (cached.height >> mip_level).max(1);
 
-        // Generate mip if needed
-        let mip_data = if mip_level == 0 {
-            image.to_f32()
+        // Get or generate mip level data
+        let mip_data: std::borrow::Cow<'_, [f32]> = if mip_level == 0 {
+            std::borrow::Cow::Borrowed(&cached.data)
         } else {
-            generate_mip(&image.to_f32(), image.width, image.height, image.channels, mip_level)
+            // Check mip cache first
+            let mip_cached = {
+                let cache = self.image_data.read().unwrap();
+                cache.get(&path_buf).and_then(|c| c.mips.get(&mip_level).cloned())
+            };
+            
+            match mip_cached {
+                Some(mip) => std::borrow::Cow::Owned(mip),
+                None => {
+                    // Generate and cache mip
+                    let mip = generate_mip(&cached.data, cached.width, cached.height, cached.channels, mip_level);
+                    let mut cache = self.image_data.write().unwrap();
+                    if let Some(entry) = cache.get_mut(&path_buf) {
+                        entry.mips.insert(mip_level, mip.clone());
+                    }
+                    std::borrow::Cow::Owned(mip)
+                }
+            }
         };
 
         // Extract tile region
@@ -352,7 +423,7 @@ impl ImageCache {
             return Err(IoError::DecodeError("Tile out of bounds".into()));
         }
 
-        let channels = image.channels as usize;
+        let channels = cached.channels as usize;
         let mut tile_data = Vec::with_capacity((tile_w * tile_h) as usize * channels);
 
         for y in 0..tile_h {
@@ -366,7 +437,7 @@ impl ImageCache {
             }
         }
 
-        Ok(Tile::new(tile_w, tile_h, image.channels, tile_data))
+        Ok(Tile::new(tile_w, tile_h, cached.channels, tile_data))
     }
 
     /// Ensures there's enough space for new data.
@@ -483,6 +554,12 @@ impl ImageCache {
         {
             let mut info_cache = self.image_info.write().unwrap();
             info_cache.remove(&path);
+        }
+
+        // Remove cached image data
+        {
+            let mut data_cache = self.image_data.write().unwrap();
+            data_cache.remove(&path);
         }
 
         // Find and remove all tiles for this path
@@ -610,5 +687,42 @@ mod tests {
         // Average of 2x2 blocks
         assert!((mip1[0] - 3.5).abs() < 0.001); // (1+2+5+6)/4
         assert!((mip1[1] - 5.5).abs() < 0.001); // (3+4+7+8)/4
+    }
+
+    #[test]
+    fn cached_image_data_reuse() {
+        // Test that image data is cached and reused for multiple tile requests
+        let cache = ImageCache::new(1024 * 1024);
+        
+        // Create test image
+        let temp_path = std::env::temp_dir().join("vfx_io_cache_test.exr");
+        let mut pixels = Vec::with_capacity(128 * 128 * 4);
+        for y in 0..128u32 {
+            for x in 0..128u32 {
+                pixels.push(x as f32 / 127.0);
+                pixels.push(y as f32 / 127.0);
+                pixels.push(0.5);
+                pixels.push(1.0);
+            }
+        }
+        let image = crate::ImageData::from_f32(128, 128, 4, pixels);
+        crate::write(&temp_path, &image).expect("Failed to write test image");
+        
+        // Request multiple tiles - should reuse cached image data
+        let _ = cache.get_tile(&temp_path, 0, 0, 0, 0).expect("Tile 0,0");
+        let _ = cache.get_tile(&temp_path, 0, 0, 1, 0).expect("Tile 1,0");
+        let _ = cache.get_tile(&temp_path, 0, 0, 0, 1).expect("Tile 0,1");
+        
+        // Check stats - should have 3 misses (tiles), but only 1 image load
+        let stats = cache.stats();
+        assert_eq!(stats.misses, 3);
+        assert_eq!(stats.tile_count, 3);
+        
+        // Request same tile again - should be a hit
+        let _ = cache.get_tile(&temp_path, 0, 0, 0, 0).expect("Tile 0,0 again");
+        let stats = cache.stats();
+        assert_eq!(stats.hits, 1);
+        
+        let _ = std::fs::remove_file(&temp_path);
     }
 }

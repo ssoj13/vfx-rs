@@ -566,6 +566,39 @@ impl ImageData {
         }
     }
 
+    /// Converts image to specified pixel format (bit depth).
+    ///
+    /// # Example
+    /// ```ignore
+    /// let f32_image = image.convert_to(PixelFormat::F32);
+    /// let u8_image = image.convert_to(PixelFormat::U8);
+    /// ```
+    pub fn convert_to(&self, format: PixelFormat) -> Self {
+        if self.format == format {
+            return self.clone();
+        }
+        
+        let data = match format {
+            PixelFormat::U8 => PixelData::U8(self.to_u8()),
+            PixelFormat::U16 => PixelData::U16(self.to_u16()),
+            PixelFormat::F16 | PixelFormat::F32 => PixelData::F32(self.to_f32()),
+            PixelFormat::U32 => {
+                // Convert via f32, then to u32 (assumes normalized 0-1 data)
+                let f32_data = self.to_f32();
+                PixelData::U32(f32_data.iter().map(|&v| (v.max(0.0) * u32::MAX as f32) as u32).collect())
+            }
+        };
+        
+        Self {
+            width: self.width,
+            height: self.height,
+            channels: self.channels,
+            format,
+            data,
+            metadata: self.metadata.clone(),
+        }
+    }
+
     /// Converts this image into a single named layer with planar channels.
     pub fn to_layer(&self, name: impl Into<String>) -> ImageLayer {
         let name = name.into();

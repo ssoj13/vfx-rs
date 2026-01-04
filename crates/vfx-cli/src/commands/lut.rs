@@ -41,6 +41,19 @@ fn apply_cube_lut(image: &ImageData, lut_path: &std::path::Path, invert: bool) -
         None
     };
 
+    // Invert LUTs if requested
+    let lut3d = if invert {
+        lut3d.map(|lut| lut.invert().expect("Failed to invert 3D LUT"))
+    } else {
+        lut3d
+    };
+    
+    let lut1d = if invert {
+        lut1d.map(|lut| lut.invert().expect("Failed to invert 1D LUT"))
+    } else {
+        lut1d
+    };
+
     let mut data = image.to_f32();
     let w = image.width as usize;
     let h = image.height as usize;
@@ -68,8 +81,6 @@ fn apply_cube_lut(image: &ImageData, lut_path: &std::path::Path, invert: bool) -
             if channels > 2 { data[idx + 2] = result[2]; }
         }
     }
-
-    let _ = invert; // TODO: implement LUT inversion
 
     Ok(ImageData::from_f32(image.width, image.height, image.channels, data))
 }
