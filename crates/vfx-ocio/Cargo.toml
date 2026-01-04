@@ -13,8 +13,6 @@ vfx-lut = { workspace = true }
 vfx-transfer = { workspace = true }
 vfx-primaries = { workspace = true }
 
-serde = { workspace = true }
-serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 glam = { workspace = true }
 glob = { workspace = true }

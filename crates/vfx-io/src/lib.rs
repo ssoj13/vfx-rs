@@ -121,6 +121,8 @@ pub mod dpx;
 pub mod hdr;
 
 pub mod sequence;
+pub mod cache;
+pub mod texture;
 
 // Re-exports
 pub use error::{IoError, IoResult};
