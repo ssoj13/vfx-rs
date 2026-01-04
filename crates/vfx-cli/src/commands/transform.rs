@@ -5,9 +5,9 @@ use anyhow::{Result, bail};
 use vfx_io::ImageData;
 use vfx_ops::transform::{flip_h, flip_v, rotate_90_cw};
 
-pub fn run(args: TransformArgs, verbose: bool) -> Result<()> {
+pub fn run(args: TransformArgs, verbose: bool, allow_non_color: bool) -> Result<()> {
     let image = super::load_image(&args.input)?;
-    super::ensure_color_processing(&image, "transform")?;
+    super::ensure_color_processing(&image, "transform", allow_non_color)?;
     let mut data = image.to_f32();
     let mut width = image.width as usize;
     let mut height = image.height as usize;

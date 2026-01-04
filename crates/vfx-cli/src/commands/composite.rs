@@ -5,11 +5,11 @@ use anyhow::{Result, bail};
 use vfx_io::ImageData;
 use vfx_ops::composite::{over, blend, BlendMode};
 
-pub fn run(args: CompositeArgs, verbose: bool) -> Result<()> {
+pub fn run(args: CompositeArgs, verbose: bool, allow_non_color: bool) -> Result<()> {
     let fg = super::load_image(&args.fg)?;
     let bg = super::load_image(&args.bg)?;
-    super::ensure_color_processing(&fg, "composite")?;
-    super::ensure_color_processing(&bg, "composite")?;
+    super::ensure_color_processing(&fg, "composite", allow_non_color)?;
+    super::ensure_color_processing(&bg, "composite", allow_non_color)?;
 
     if fg.width != bg.width || fg.height != bg.height {
         bail!("Image dimensions don't match: {}x{} vs {}x{}",

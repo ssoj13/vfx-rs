@@ -41,6 +41,10 @@ pub enum IoError {
     #[error("unsupported bit depth: {0}")]
     UnsupportedBitDepth(String),
 
+    /// Unsupported operation.
+    #[error("unsupported operation: {0}")]
+    UnsupportedOperation(String),
+
     /// Missing required data.
     #[error("missing data: {0}")]
     MissingData(String),

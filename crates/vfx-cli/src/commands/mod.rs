@@ -15,9 +15,9 @@ pub mod maketx;
 pub mod grep;
 pub mod batch;
 
-use vfx_io::{ChannelKind, ImageData};
+use vfx_io::ImageData;
 use std::path::Path;
-use anyhow::{Result, Context, bail};
+use anyhow::{Result, Context};
 
 /// Load image from path
 pub fn load_image(path: &Path) -> Result<ImageData> {
@@ -32,22 +32,10 @@ pub fn save_image(path: &Path, image: &ImageData) -> Result<()> {
 }
 
 /// Ensure the image channels are valid for color processing operations.
-pub fn ensure_color_processing(image: &ImageData, op: &str) -> Result<()> {
-    let layer = image.to_layer("input");
-    for channel in &layer.channels {
-        match channel.kind {
-            ChannelKind::Color | ChannelKind::Alpha | ChannelKind::Depth => {}
-            ChannelKind::Id | ChannelKind::Mask | ChannelKind::Generic => {
-                bail!(
-                    "{} is not supported for channel '{}' (kind: {:?})",
-                    op,
-                    channel.name,
-                    channel.kind
-                );
-            }
-        }
-    }
-    Ok(())
+pub fn ensure_color_processing(image: &ImageData, op: &str, allow_non_color: bool) -> Result<()> {
+    image
+        .ensure_color_processing(allow_non_color, op)
+        .map_err(|e| anyhow::anyhow!(e))
 }
 
 /// Format file size for display

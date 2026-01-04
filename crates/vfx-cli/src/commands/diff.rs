@@ -4,11 +4,11 @@ use crate::DiffArgs;
 use anyhow::{Result, bail};
 use vfx_io::ImageData;
 
-pub fn run(args: DiffArgs, verbose: bool) -> Result<()> {
+pub fn run(args: DiffArgs, verbose: bool, allow_non_color: bool) -> Result<()> {
     let img_a = super::load_image(&args.a)?;
     let img_b = super::load_image(&args.b)?;
-    super::ensure_color_processing(&img_a, "diff")?;
-    super::ensure_color_processing(&img_b, "diff")?;
+    super::ensure_color_processing(&img_a, "diff", allow_non_color)?;
+    super::ensure_color_processing(&img_b, "diff", allow_non_color)?;
 
     if img_a.width != img_b.width || img_a.height != img_b.height {
         bail!("Image dimensions don't match: {}x{} vs {}x{}",

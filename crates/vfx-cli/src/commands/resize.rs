@@ -5,9 +5,9 @@ use anyhow::{Result, bail};
 use vfx_io::ImageData;
 use vfx_ops::resize::{resize_f32, Filter};
 
-pub fn run(args: ResizeArgs, verbose: bool) -> Result<()> {
+pub fn run(args: ResizeArgs, verbose: bool, allow_non_color: bool) -> Result<()> {
     let image = super::load_image(&args.input)?;
-    super::ensure_color_processing(&image, "resize")?;
+    super::ensure_color_processing(&image, "resize", allow_non_color)?;
     let src_w = image.width as usize;
     let src_h = image.height as usize;
 

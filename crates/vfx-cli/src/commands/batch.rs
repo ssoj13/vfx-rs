@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use rayon::prelude::*;
 use vfx_io::ImageData;
 
-pub fn run(args: BatchArgs, verbose: bool) -> Result<()> {
+pub fn run(args: BatchArgs, verbose: bool, allow_non_color: bool) -> Result<()> {
     // Find matching files
     let files: Vec<PathBuf> = glob::glob(&args.input)?
         .filter_map(|r| r.ok())
@@ -38,7 +38,15 @@ pub fn run(args: BatchArgs, verbose: bool) -> Result<()> {
 
     // Process files in parallel
     let results: Vec<Result<()>> = files.par_iter().map(|input| {
-        process_file(input, &args.output_dir, &args.op, &op_args, args.format.as_deref(), verbose)
+        process_file(
+            input,
+            &args.output_dir,
+            &args.op,
+            &op_args,
+            args.format.as_deref(),
+            allow_non_color,
+            verbose,
+        )
     }).collect();
 
     // Report results
@@ -69,6 +77,7 @@ fn process_file(
     op: &str,
     args: &std::collections::HashMap<String, String>,
     format: Option<&str>,
+    allow_non_color: bool,
     verbose: bool,
 ) -> Result<()> {
     // Determine output path
@@ -90,7 +99,7 @@ fn process_file(
 
     let image = super::load_image(input)?;
     if !op.eq_ignore_ascii_case("convert") {
-        super::ensure_color_processing(&image, op)?;
+        super::ensure_color_processing(&image, op, allow_non_color)?;
     }
     let data = image.to_f32();
     let w = image.width as usize;

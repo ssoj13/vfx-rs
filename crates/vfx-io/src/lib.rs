@@ -576,6 +576,28 @@ impl ImageData {
             metadata: self.metadata.clone(),
         }
     }
+
+    /// Validates that this image is safe for color processing operations.
+    pub fn ensure_color_processing(&self, allow_non_color: bool, op: &str) -> IoResult<()> {
+        if allow_non_color {
+            return Ok(());
+        }
+
+        let layer = self.to_layer("input");
+        for channel in &layer.channels {
+            match channel.kind {
+                ChannelKind::Color | ChannelKind::Alpha | ChannelKind::Depth => {}
+                ChannelKind::Id | ChannelKind::Mask | ChannelKind::Generic => {
+                    return Err(IoError::UnsupportedOperation(format!(
+                        "{} is not supported for channel '{}' (kind: {:?})",
+                        op, channel.name, channel.kind
+                    )));
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl PixelFormat {

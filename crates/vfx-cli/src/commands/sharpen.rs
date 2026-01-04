@@ -5,9 +5,9 @@ use anyhow::Result;
 use vfx_io::ImageData;
 use vfx_ops::filter::{Kernel, convolve};
 
-pub fn run(args: SharpenArgs, verbose: bool) -> Result<()> {
+pub fn run(args: SharpenArgs, verbose: bool, allow_non_color: bool) -> Result<()> {
     let image = super::load_image(&args.input)?;
-    super::ensure_color_processing(&image, "sharpen")?;
+    super::ensure_color_processing(&image, "sharpen", allow_non_color)?;
     let w = image.width as usize;
     let h = image.height as usize;
     let c = image.channels as usize;

@@ -5,9 +5,9 @@ use anyhow::{Result, bail};
 use vfx_io::ImageData;
 use vfx_lut::cube;
 
-pub fn run(args: LutArgs, verbose: bool) -> Result<()> {
+pub fn run(args: LutArgs, verbose: bool, allow_non_color: bool) -> Result<()> {
     let image = super::load_image(&args.input)?;
-    super::ensure_color_processing(&image, "lut")?;
+    super::ensure_color_processing(&image, "lut", allow_non_color)?;
 
     if verbose {
         println!("Applying LUT {} to {}", args.lut.display(), args.input.display());

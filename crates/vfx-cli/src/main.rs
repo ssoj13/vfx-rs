@@ -26,6 +26,7 @@ Examples:
   vfx color input.exr -o out.exr --from ACEScg --to sRGB
   vfx lut input.exr -o out.exr -l look.cube
   vfx maketx input.exr -o tex.tx -m -t 64
+  vfx --allow-non-color blur id.exr -o id_blur.exr
 ")]
 struct Cli {
     #[command(subcommand)]
@@ -38,6 +39,10 @@ struct Cli {
     /// Number of threads (0 = auto)
     #[arg(short = 'j', long, global = true, default_value = "0")]
     threads: usize,
+
+    /// Allow processing non-color channels (ID/Mask/Generic) by casting to float
+    #[arg(long = "allow-non-color", alias = "force-processing", alias = "force", global = true)]
+    allow_non_color: bool,
 }
 
 #[derive(Subcommand)]
@@ -416,17 +421,21 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Info(args) => commands::info::run(args, cli.verbose),
         Commands::Convert(args) => commands::convert::run(args, cli.verbose),
-        Commands::Resize(args) => commands::resize::run(args, cli.verbose),
-        Commands::Crop(args) => commands::crop::run(args, cli.verbose),
-        Commands::Diff(args) => commands::diff::run(args, cli.verbose),
-        Commands::Composite(args) => commands::composite::run(args, cli.verbose),
-        Commands::Blur(args) => commands::blur::run(args, cli.verbose),
-        Commands::Sharpen(args) => commands::sharpen::run(args, cli.verbose),
-        Commands::Color(args) => commands::color::run(args, cli.verbose),
-        Commands::Lut(args) => commands::lut::run(args, cli.verbose),
-        Commands::Transform(args) => commands::transform::run(args, cli.verbose),
-        Commands::Maketx(args) => commands::maketx::run(args, cli.verbose),
+        Commands::Resize(args) => commands::resize::run(args, cli.verbose, cli.allow_non_color),
+        Commands::Crop(args) => commands::crop::run(args, cli.verbose, cli.allow_non_color),
+        Commands::Diff(args) => commands::diff::run(args, cli.verbose, cli.allow_non_color),
+        Commands::Composite(args) => {
+            commands::composite::run(args, cli.verbose, cli.allow_non_color)
+        }
+        Commands::Blur(args) => commands::blur::run(args, cli.verbose, cli.allow_non_color),
+        Commands::Sharpen(args) => commands::sharpen::run(args, cli.verbose, cli.allow_non_color),
+        Commands::Color(args) => commands::color::run(args, cli.verbose, cli.allow_non_color),
+        Commands::Lut(args) => commands::lut::run(args, cli.verbose, cli.allow_non_color),
+        Commands::Transform(args) => {
+            commands::transform::run(args, cli.verbose, cli.allow_non_color)
+        }
+        Commands::Maketx(args) => commands::maketx::run(args, cli.verbose, cli.allow_non_color),
         Commands::Grep(args) => commands::grep::run(args, cli.verbose),
-        Commands::Batch(args) => commands::batch::run(args, cli.verbose),
+        Commands::Batch(args) => commands::batch::run(args, cli.verbose, cli.allow_non_color),
     }
 }
