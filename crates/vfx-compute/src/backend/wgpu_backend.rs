@@ -205,7 +205,9 @@ impl WgpuPrimitives {
         let limits = GpuLimits {
             max_tile_dim: adapter_limits.max_texture_dimension_2d,
             max_buffer_bytes: adapter_limits.max_buffer_size,
-            available_memory,
+            total_memory: available_memory,
+            available_memory: (available_memory as f64 * 0.6) as u64, // 40% safety margin
+            detected: true,
         };
 
         // Create pipelines

@@ -19,12 +19,17 @@ use std::sync::{Arc, RwLock, Mutex};
 use std::time::Instant;
 
 use crate::{IoResult, IoError};
+use crate::streaming::{self, BoxedSource};
 
 /// Default tile size in pixels.
 pub const DEFAULT_TILE_SIZE: u32 = 64;
 
 /// Default cache size in bytes (256MB).
 pub const DEFAULT_CACHE_SIZE: usize = 256 * 1024 * 1024;
+
+/// Default streaming threshold in bytes (512MB).
+/// Images larger than this will use streaming instead of full load.
+pub const DEFAULT_STREAMING_THRESHOLD: u64 = 512 * 1024 * 1024;
 
 /// Key for cached tiles.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -127,6 +132,19 @@ struct CachedImageData {
     mips: HashMap<u32, Vec<f32>>,
 }
 
+/// Image storage mode - either full data or streaming source.
+enum ImageStorage {
+    /// Full image data in memory (for small images).
+    Full(CachedImageData),
+    /// Streaming source for large images (lazy tile loading).
+    Streaming {
+        source: BoxedSource,
+        width: u32,
+        height: u32,
+        channels: u32,
+    },
+}
+
 impl CachedImageInfo {
     /// Number of tiles in X direction.
     #[inline]
@@ -176,8 +194,8 @@ pub struct ImageCache {
     tiles: RwLock<HashMap<TileKey, Tile>>,
     /// Image info cache.
     image_info: RwLock<HashMap<PathBuf, CachedImageInfo>>,
-    /// Full image data cache for efficient tile extraction.
-    image_data: RwLock<HashMap<PathBuf, CachedImageData>>,
+    /// Image data storage (full or streaming).
+    image_storage: RwLock<HashMap<PathBuf, ImageStorage>>,
     /// LRU list head (most recent).
     lru_head: Mutex<Option<TileKey>>,
     /// LRU list tail (least recent).
@@ -186,6 +204,8 @@ pub struct ImageCache {
     lru_nodes: RwLock<HashMap<TileKey, LruNode>>,
     /// Tile size for new loads.
     tile_size: u32,
+    /// Streaming threshold in bytes (images larger use streaming).
+    streaming_threshold: u64,
     /// Statistics.
     stats: RwLock<CacheStats>,
 }
@@ -225,13 +245,24 @@ impl ImageCache {
             current_size: RwLock::new(0),
             tiles: RwLock::new(HashMap::new()),
             image_info: RwLock::new(HashMap::new()),
-            image_data: RwLock::new(HashMap::new()),
+            image_storage: RwLock::new(HashMap::new()),
             lru_head: Mutex::new(None),
             lru_tail: Mutex::new(None),
             lru_nodes: RwLock::new(HashMap::new()),
             tile_size: DEFAULT_TILE_SIZE,
+            streaming_threshold: DEFAULT_STREAMING_THRESHOLD,
             stats: RwLock::new(CacheStats::default()),
         }
+    }
+
+    /// Creates a cache with custom streaming threshold.
+    ///
+    /// Images larger than `streaming_threshold` will use streaming I/O
+    /// instead of loading the full image into memory.
+    pub fn with_streaming_threshold(max_size: usize, streaming_threshold: u64) -> Self {
+        let mut cache = Self::new(max_size);
+        cache.streaming_threshold = streaming_threshold;
+        cache
     }
 
     /// Creates a cache with default settings.
@@ -265,11 +296,11 @@ impl ImageCache {
         let mut lru_nodes = self.lru_nodes.write().unwrap();
         let mut current_size = self.current_size.write().unwrap();
         let mut stats = self.stats.write().unwrap();
-        let mut image_data = self.image_data.write().unwrap();
+        let mut image_storage = self.image_storage.write().unwrap();
 
         tiles.clear();
         lru_nodes.clear();
-        image_data.clear();
+        image_storage.clear();
         *current_size = 0;
         *self.lru_head.lock().unwrap() = None;
         *self.lru_tail.lock().unwrap() = None;
@@ -277,6 +308,8 @@ impl ImageCache {
     }
 
     /// Gets image info, loading from file if needed.
+    ///
+    /// Uses header-only reading when possible to avoid loading full image.
     pub fn get_image_info(&self, path: impl AsRef<Path>) -> IoResult<CachedImageInfo> {
         let path = path.as_ref();
 
@@ -288,16 +321,29 @@ impl ImageCache {
             }
         }
 
-        // Load from file
-        let image = crate::read(path)?;
-        let info = CachedImageInfo {
-            width: image.width,
-            height: image.height,
-            channels: image.channels,
-            tile_width: self.tile_size,
-            tile_height: self.tile_size,
-            mip_levels: compute_mip_levels(image.width, image.height),
-            subimages: 1,
+        // Try to estimate from header (fast path - no pixel loading)
+        let info = if let Ok(estimate) = streaming::estimate_memory(path) {
+            CachedImageInfo {
+                width: estimate.width,
+                height: estimate.height,
+                channels: estimate.channels,
+                tile_width: self.tile_size,
+                tile_height: self.tile_size,
+                mip_levels: compute_mip_levels(estimate.width, estimate.height),
+                subimages: 1,
+            }
+        } else {
+            // Fallback: load image to get dimensions
+            let image = crate::read(path)?;
+            CachedImageInfo {
+                width: image.width,
+                height: image.height,
+                channels: image.channels,
+                tile_width: self.tile_size,
+                tile_height: self.tile_size,
+                mip_levels: compute_mip_levels(image.width, image.height),
+                subimages: 1,
+            }
         };
 
         // Cache info
@@ -352,23 +398,40 @@ impl ImageCache {
         Ok(Arc::new(tile))
     }
 
-    /// Loads a tile from disk using cached image data.
+    /// Loads a tile from disk using cached image data or streaming.
     ///
-    /// First checks if full image is cached, loads and caches if not.
-    /// Then extracts the requested tile from cached data.
+    /// For small images: loads full image and extracts tiles from memory.
+    /// For large images: uses streaming source to read only needed regions.
     fn load_tile(&self, path: &Path, _subimage: u32, mip_level: u32, tile_x: u32, tile_y: u32) -> IoResult<Tile> {
         let path_buf = path.to_path_buf();
         
-        // Get or load cached image data
-        let cached = {
-            let cache = self.image_data.read().unwrap();
-            cache.get(&path_buf).cloned()
+        // Check if we have storage for this image
+        let has_storage = {
+            let storage = self.image_storage.read().unwrap();
+            storage.contains_key(&path_buf)
         };
         
-        let cached = match cached {
-            Some(c) => c,
-            None => {
-                // Load full image and cache it
+        if !has_storage {
+            // Decide: streaming or full load based on size estimate
+            let use_streaming = streaming::estimate_memory(path)
+                .map(|est| est.f32_bytes > self.streaming_threshold)
+                .unwrap_or(false);
+            
+            if use_streaming {
+                // Open streaming source
+                let source = streaming::open_streaming(path)?;
+                let (width, height) = source.dimensions();
+                let channels = source.channels();
+                
+                let mut storage = self.image_storage.write().unwrap();
+                storage.insert(path_buf.clone(), ImageStorage::Streaming {
+                    source,
+                    width,
+                    height,
+                    channels,
+                });
+            } else {
+                // Load full image
                 let image = crate::read(path)?;
                 let data = image.to_f32();
                 let cached = CachedImageData {
@@ -379,65 +442,97 @@ impl ImageCache {
                     mips: HashMap::new(),
                 };
                 
-                let mut cache = self.image_data.write().unwrap();
-                cache.insert(path_buf.clone(), cached.clone());
-                cached
+                let mut storage = self.image_storage.write().unwrap();
+                storage.insert(path_buf.clone(), ImageStorage::Full(cached));
             }
-        };
-
-        // Compute mip dimensions
-        let mip_width = (cached.width >> mip_level).max(1);
-        let mip_height = (cached.height >> mip_level).max(1);
-
-        // Get or generate mip level data
-        let mip_data: std::borrow::Cow<'_, [f32]> = if mip_level == 0 {
-            std::borrow::Cow::Borrowed(&cached.data)
-        } else {
-            // Check mip cache first
-            let mip_cached = {
-                let cache = self.image_data.read().unwrap();
-                cache.get(&path_buf).and_then(|c| c.mips.get(&mip_level).cloned())
-            };
-            
-            match mip_cached {
-                Some(mip) => std::borrow::Cow::Owned(mip),
-                None => {
-                    // Generate and cache mip
-                    let mip = generate_mip(&cached.data, cached.width, cached.height, cached.channels, mip_level);
-                    let mut cache = self.image_data.write().unwrap();
-                    if let Some(entry) = cache.get_mut(&path_buf) {
-                        entry.mips.insert(mip_level, mip.clone());
+        }
+        
+        // Now load the tile from storage
+        let mut storage = self.image_storage.write().unwrap();
+        let entry = storage.get_mut(&path_buf)
+            .ok_or_else(|| IoError::DecodeError("Storage not found".into()))?;
+        
+        match entry {
+            ImageStorage::Streaming { source, width, height, channels } => {
+                // For streaming: mip_level > 0 not supported yet
+                if mip_level > 0 {
+                    return Err(IoError::UnsupportedOperation(
+                        "Mip levels not supported in streaming mode".into()
+                    ));
+                }
+                
+                let tile_px_x = tile_x * self.tile_size;
+                let tile_px_y = tile_y * self.tile_size;
+                let tile_w = self.tile_size.min(width.saturating_sub(tile_px_x));
+                let tile_h = self.tile_size.min(height.saturating_sub(tile_px_y));
+                
+                if tile_w == 0 || tile_h == 0 {
+                    return Err(IoError::DecodeError("Tile out of bounds".into()));
+                }
+                
+                // Read region from streaming source
+                let region = source.read_region(tile_px_x, tile_px_y, tile_w, tile_h)?;
+                
+                // Convert Region (RGBA) to tile format
+                let ch = *channels as usize;
+                let mut tile_data = Vec::with_capacity((tile_w * tile_h) as usize * ch);
+                
+                for y in 0..tile_h {
+                    for x in 0..tile_w {
+                        let rgba = region.pixel(x, y);
+                        for c in 0..ch {
+                            tile_data.push(rgba[c]);
+                        }
                     }
-                    std::borrow::Cow::Owned(mip)
                 }
+                
+                Ok(Tile::new(tile_w, tile_h, *channels, tile_data))
             }
-        };
-
-        // Extract tile region
-        let tile_px_x = tile_x * self.tile_size;
-        let tile_px_y = tile_y * self.tile_size;
-        let tile_w = self.tile_size.min(mip_width.saturating_sub(tile_px_x));
-        let tile_h = self.tile_size.min(mip_height.saturating_sub(tile_px_y));
-
-        if tile_w == 0 || tile_h == 0 {
-            return Err(IoError::DecodeError("Tile out of bounds".into()));
-        }
-
-        let channels = cached.channels as usize;
-        let mut tile_data = Vec::with_capacity((tile_w * tile_h) as usize * channels);
-
-        for y in 0..tile_h {
-            let src_y = tile_px_y + y;
-            for x in 0..tile_w {
-                let src_x = tile_px_x + x;
-                let src_idx = ((src_y * mip_width + src_x) as usize) * channels;
-                for c in 0..channels {
-                    tile_data.push(mip_data.get(src_idx + c).copied().unwrap_or(0.0));
+            
+            ImageStorage::Full(cached) => {
+                // Original full-image logic
+                let mip_width = (cached.width >> mip_level).max(1);
+                let mip_height = (cached.height >> mip_level).max(1);
+                
+                // Get or generate mip level data
+                let mip_data: Vec<f32> = if mip_level == 0 {
+                    cached.data.clone()
+                } else {
+                    if let Some(mip) = cached.mips.get(&mip_level) {
+                        mip.clone()
+                    } else {
+                        let mip = generate_mip(&cached.data, cached.width, cached.height, cached.channels, mip_level);
+                        cached.mips.insert(mip_level, mip.clone());
+                        mip
+                    }
+                };
+                
+                let tile_px_x = tile_x * self.tile_size;
+                let tile_px_y = tile_y * self.tile_size;
+                let tile_w = self.tile_size.min(mip_width.saturating_sub(tile_px_x));
+                let tile_h = self.tile_size.min(mip_height.saturating_sub(tile_px_y));
+                
+                if tile_w == 0 || tile_h == 0 {
+                    return Err(IoError::DecodeError("Tile out of bounds".into()));
                 }
+                
+                let channels = cached.channels as usize;
+                let mut tile_data = Vec::with_capacity((tile_w * tile_h) as usize * channels);
+                
+                for y in 0..tile_h {
+                    let src_y = tile_px_y + y;
+                    for x in 0..tile_w {
+                        let src_x = tile_px_x + x;
+                        let src_idx = ((src_y * mip_width + src_x) as usize) * channels;
+                        for c in 0..channels {
+                            tile_data.push(mip_data.get(src_idx + c).copied().unwrap_or(0.0));
+                        }
+                    }
+                }
+                
+                Ok(Tile::new(tile_w, tile_h, cached.channels, tile_data))
             }
         }
-
-        Ok(Tile::new(tile_w, tile_h, cached.channels, tile_data))
     }
 
     /// Ensures there's enough space for new data.
@@ -556,10 +651,10 @@ impl ImageCache {
             info_cache.remove(&path);
         }
 
-        // Remove cached image data
+        // Remove cached image storage
         {
-            let mut data_cache = self.image_data.write().unwrap();
-            data_cache.remove(&path);
+            let mut storage = self.image_storage.write().unwrap();
+            storage.remove(&path);
         }
 
         // Find and remove all tiles for this path
@@ -574,6 +669,16 @@ impl ImageCache {
         for key in keys_to_remove {
             self.evict(&key);
         }
+    }
+
+    /// Returns current streaming threshold in bytes.
+    pub fn streaming_threshold(&self) -> u64 {
+        self.streaming_threshold
+    }
+
+    /// Sets streaming threshold.
+    pub fn set_streaming_threshold(&mut self, threshold: u64) {
+        self.streaming_threshold = threshold;
     }
 }
 
@@ -690,11 +795,11 @@ mod tests {
     }
 
     #[test]
-    fn cached_image_data_reuse() {
-        // Test that image data is cached and reused for multiple tile requests
+    fn cached_image_storage_reuse() {
+        // Test that image storage is cached and reused for multiple tile requests
         let cache = ImageCache::new(1024 * 1024);
         
-        // Create test image
+        // Create test image (small, should use Full storage)
         let temp_path = std::env::temp_dir().join("vfx_io_cache_test.exr");
         let mut pixels = Vec::with_capacity(128 * 128 * 4);
         for y in 0..128u32 {
@@ -708,7 +813,7 @@ mod tests {
         let image = crate::ImageData::from_f32(128, 128, 4, pixels);
         crate::write(&temp_path, &image).expect("Failed to write test image");
         
-        // Request multiple tiles - should reuse cached image data
+        // Request multiple tiles - should reuse cached image storage
         let _ = cache.get_tile(&temp_path, 0, 0, 0, 0).expect("Tile 0,0");
         let _ = cache.get_tile(&temp_path, 0, 0, 1, 0).expect("Tile 1,0");
         let _ = cache.get_tile(&temp_path, 0, 0, 0, 1).expect("Tile 0,1");
@@ -724,5 +829,16 @@ mod tests {
         assert_eq!(stats.hits, 1);
         
         let _ = std::fs::remove_file(&temp_path);
+    }
+
+    #[test]
+    fn streaming_threshold_config() {
+        // Test streaming threshold configuration
+        let cache = ImageCache::with_streaming_threshold(1024 * 1024, 256 * 1024 * 1024);
+        assert_eq!(cache.streaming_threshold(), 256 * 1024 * 1024);
+        
+        let mut cache2 = ImageCache::new(1024 * 1024);
+        cache2.set_streaming_threshold(1024 * 1024 * 1024);
+        assert_eq!(cache2.streaming_threshold(), 1024 * 1024 * 1024);
     }
 }

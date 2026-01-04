@@ -108,11 +108,11 @@ vfx-cli        Command-line tools
 - [x] Metadata extraction  `crates/vfx-io/src/metadata.rs`
 - [x] Image sequences  `crates/vfx-io/src/sequence.rs`
 - [x] UDIM detection  `crates/vfx-io/src/udim.rs`
-- [x] ImageCache (LRU, tile-based)  `crates/vfx-io/src/cache.rs`
+- [x] ImageCache (LRU, tile-based, streaming-aware)  `crates/vfx-io/src/cache.rs`
 - [x] TextureSystem (MIP, filtering, wrap modes)  `crates/vfx-io/src/texture.rs`
 
-**NOTE:** ImageCache/TextureSystem load full images then extract tiles.
-For >RAM images, need true tiled I/O (see P1.7).
+**NOTE:** ImageCache now uses streaming for large images (>512MB threshold).
+For truly huge images (>RAM), streaming pipeline with double-buffering is recommended.
 
 ### DONE - Image Operations (vfx-ops)
 - [x] Resize (Nearest, Bilinear, Lanczos3, Mitchell)  `crates/vfx-ops/src/resize.rs`
@@ -201,9 +201,17 @@ Implemented streaming for >RAM images:
 - [x] tile_iterator, TileSpec, ProgressCallback  `crates/vfx-io/src/streaming/pipeline.rs`
 
 ### P1.7 Streaming Optimizations
-- [ ] EXR tiled block reading via `exr::block::FilteredChunksReader`
+- [ ] EXR tiled block reading via `exr::block::FilteredChunksReader` (complex, deferred)
 - [x] Double-buffered producer-consumer  `crates/vfx-io/src/streaming/pipeline.rs`
-- [ ] VRAM-aware tile sizing
+- [x] VRAM-aware tile sizing  `crates/vfx-compute/src/backend/tiling.rs`
+  - ProcessingStrategy enum (SinglePass, Tiled, Streaming)
+  - TileWorkflow for operation-specific sizing
+  - GpuLimits with total_memory, available_memory, detected
+  - Power-of-2 aligned tiles for GPU efficiency
+- [x] ImageCache streaming integration  `crates/vfx-io/src/cache.rs`
+  - Uses streaming for images > 512MB (configurable)
+  - Header-only reading for get_image_info()
+  - ImageStorage enum (Full vs Streaming mode)
 
 ---
 

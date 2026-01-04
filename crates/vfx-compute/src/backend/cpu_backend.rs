@@ -55,7 +55,9 @@ impl CpuPrimitives {
             limits: GpuLimits {
                 max_tile_dim: u32::MAX,
                 max_buffer_bytes: u64::MAX,
+                total_memory: available,
                 available_memory: available,
+                detected: true,
             },
         }
     }

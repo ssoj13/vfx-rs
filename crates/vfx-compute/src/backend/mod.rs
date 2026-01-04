@@ -11,7 +11,7 @@ mod cpu_backend;
 mod wgpu_backend;
 
 pub use gpu_primitives::{GpuPrimitives, ImageHandle, KernelParams};
-pub use tiling::{GpuLimits, Tile, generate_tiles};
+pub use tiling::{GpuLimits, Tile, generate_tiles, ProcessingStrategy, TileWorkflow};
 pub use detect::{detect_backends, select_best_backend, describe_backends, BackendInfo};
 pub use cpu_backend::{CpuBackend, CpuPrimitives};
 
