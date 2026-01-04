@@ -341,6 +341,326 @@ For 8K+ EXR/TIFF that exceed RAM, need streaming I/O:
 Deep EXR пока не надо, мы потом сделаем, это наинизший приоритет.
 Python bidings - только после стабилизации Rust API.
 Обратную совместимость не надо, ломаем.
-Нужно чтобы было похоже на OIIO/OCIO, но можно улучшать и оптимизировать, делать лучше. 
-Задай вопросы если есть.
+Нужно чтобы было похоже на OIIO/OCIO, но можно улучшать и оптимизировать, делать лучше.
+
+---
+
+## STREAMING I/O MIGRATION PLAN
+
+> Based on analysis of `_ref/stool-rs`. Last updated: 2026-01-04
+
+### Key Decisions
+
+1. **Keep multi-format PixelFormat** (U8/U16/F16/F32/U32) - unique vfx-rs feature
+2. **Keep LayeredImage** for multi-layer EXR - critical for VFX
+3. **Integrate color pipeline** into streaming - apply transforms on-the-fly
+4. **Keep trait-based API** - adapt streaming to current style
+5. **Always rustdocs + comments** - explain what/why/where
+
+### Phase 1: Streaming Traits (vfx-io)
+
+Add streaming infrastructure to `vfx-io`:
+
+```
+crates/vfx-io/src/
+├── streaming/
+│   ├── mod.rs           # Re-exports, should_use_streaming()
+│   ├── traits.rs        # StreamingSource, StreamingOutput traits
+│   ├── memory.rs        # MemorySource, MemoryOutput (fallback)
+│   ├── tiff_stream.rs   # TiffStreamingSource (true random access)
+│   ├── exr_stream.rs    # ExrStreamingSource (lazy loading)
+│   └── factory.rs       # open_streaming(), create_streaming_output()
+├── format.rs            # native_bpp(), MemoryEstimate (from stool-rs)
+└── ... existing files
+```
+
+**Traits to port from stool-rs:**
+
+```rust
+/// Streaming source for reading image regions from disk.
+/// 
+/// Implementations can read arbitrary rectangular regions. Some formats
+/// support true random access (TIFF), while others require full decode
+/// on first access (PNG, JPEG, EXR currently).
+pub trait StreamingSource: Send {
+    /// Image dimensions (width, height).
+    fn dimensions(&self) -> (u32, u32);
+    
+    /// Read a rectangular region, returning in native PixelFormat.
+    fn read_region(&mut self, x: u32, y: u32, w: u32, h: u32) -> IoResult<ImageData>;
+    
+    /// Read region with color transform applied on-the-fly.
+    fn read_region_with_color<P: ColorProcessor>(
+        &mut self, x: u32, y: u32, w: u32, h: u32, processor: &P
+    ) -> IoResult<ImageData>;
+    
+    /// True if format supports efficient region reading.
+    fn supports_random_access(&self) -> bool;
+    
+    /// Native pixel format of source file.
+    fn native_format(&self) -> PixelFormat;
+    
+    /// Native tile/strip size if tiled format.
+    fn native_tile_size(&self) -> Option<(u32, u32)>;
+}
+
+/// Streaming output for writing image tiles to disk.
+pub trait StreamingOutput: Send {
+    /// Initialize output with dimensions and format.
+    fn init(&mut self, width: u32, height: u32, format: PixelFormat) -> IoResult<()>;
+    
+    /// Write a tile with optional color transform.
+    fn write_tile(&mut self, tile: &ImageData, x: u32, y: u32) -> IoResult<()>;
+    
+    /// Write tile with color transform applied.
+    fn write_tile_with_color<P: ColorProcessor>(
+        &mut self, tile: &ImageData, x: u32, y: u32, processor: &P
+    ) -> IoResult<()>;
+    
+    /// Finalize and close the output file.
+    fn finish(&mut self) -> IoResult<()>;
+}
+```
+
+### Phase 2: Format Detection (vfx-io)
+
+Add `format.rs` with memory estimation:
+
+```rust
+/// Memory estimate for a file.
+pub struct MemoryEstimate {
+    /// Bytes in native format (as stored in file).
+    pub native_bytes: u64,
+    /// Bytes if converted to f32 RGBA.
+    pub f32_bytes: u64,
+    /// Native bytes per pixel.
+    pub native_bpp: u64,
+    /// Dimensions.
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Get actual bytes per pixel by reading file header.
+/// Works for EXR (reads channel sample types), TIFF, PNG, JPEG, etc.
+pub fn native_bpp<P: AsRef<Path>>(path: P) -> Option<u64>;
+
+/// Estimate memory for a file.
+pub fn estimate_file_memory<P: AsRef<Path>>(path: P) -> Option<MemoryEstimate>;
+
+/// Check if streaming is recommended based on available RAM.
+pub fn should_use_streaming(src_dims: (u32, u32), out_dims: (u32, u32)) -> bool;
+```
+
+### Phase 3: TIFF Streaming (vfx-io)
+
+True random access via `tiff::decoder::read_chunk()`:
+
+```rust
+/// TIFF streaming source with true chunk-based random access.
+/// 
+/// Uses the `tiff` crate's `read_chunk()` API to read only the strips
+/// or tiles needed for a requested region, without loading the entire image.
+pub struct TiffStreamingSource {
+    path: PathBuf,
+    width: u32,
+    height: u32,
+    chunk_dims: (u32, u32),  // Strip height or tile dims
+    is_tiled: bool,
+    native_format: PixelFormat,
+    decoder: tiff::decoder::Decoder<BufReader<File>>,
+}
+```
+
+### Phase 4: EXR Streaming (vfx-io)
+
+Lazy loading (header-only until first read):
+
+```rust
+/// EXR streaming source with lazy loading.
+/// 
+/// Currently loads the entire image on first region request and caches it.
+/// True block-level access via exr::block API is planned for future.
+pub struct ExrStreamingSource {
+    path: PathBuf,
+    width: u32,
+    height: u32,
+    cached_image: Option<ImageData>,  // Lazy-loaded
+    layers: Option<LayeredImage>,     // For multi-layer support
+}
+```
+
+### Phase 5: Auto-Streaming read/write (vfx-io)
+
+Modify top-level API to auto-select streaming:
+
+```rust
+/// Reads an image, automatically using streaming for large files.
+/// 
+/// If the file exceeds 80% of available RAM, uses streaming mode.
+/// Otherwise loads fully into memory for faster processing.
+pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
+    let estimate = estimate_file_memory(&path)?;
+    if should_use_streaming_for_estimate(&estimate) {
+        // Return streaming wrapper that loads on demand
+        read_streaming(path)
+    } else {
+        read_full(path)  // Current behavior
+    }
+}
+
+/// Opens a streaming source for explicit control.
+pub fn open_streaming<P: AsRef<Path>>(path: P) -> IoResult<Box<dyn StreamingSource>>;
+
+/// Creates a streaming output for explicit control.
+pub fn create_streaming_output<P: AsRef<Path>>(path: P) -> IoResult<Box<dyn StreamingOutput>>;
+```
+
+### Phase 6: GpuPrimitives Trait (vfx-compute)
+
+Unified backend interface:
+
+```rust
+/// Core GPU operations abstracted for all backends.
+/// 
+/// Associated types allow backends to use their native handle types.
+pub trait GpuPrimitives: Send + Sync {
+    /// Backend-specific source handle type.
+    type Source: SourceHandle;
+    /// Backend-specific output handle type.
+    type Output: OutputHandle;
+    
+    /// Upload image region to GPU memory.
+    fn upload_source(&self, image: &ImageData) -> Result<Self::Source>;
+    
+    /// Upload without clone (takes ownership).
+    fn upload_source_owned(&self, image: ImageData) -> Result<Self::Source>;
+    
+    /// Allocate output buffer on GPU.
+    fn allocate_output(&self, width: u32, height: u32, format: PixelFormat) -> Result<Self::Output>;
+    
+    /// Download output from GPU to CPU.
+    fn download_output(&self, output: &Self::Output) -> Result<ImageData>;
+    
+    /// Execute color transform kernel.
+    fn execute_color<P: ColorProcessor>(
+        &self,
+        source: &Self::Source,
+        output: &Self::Output,
+        processor: &P,
+    ) -> Result<()>;
+    
+    /// Get GPU limits for tiling decisions.
+    fn limits(&self) -> &GpuLimits;
+}
+```
+
+### Phase 7: Strategy Executor (vfx-compute)
+
+Auto-select processing strategy:
+
+```rust
+/// Strategy for handling source image during processing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProcessingStrategy {
+    /// Source fits comfortably in VRAM (<=40%).
+    /// Upload entire source once, process all tiles with same GPU buffer.
+    FullSource,
+    
+    /// Source partially fits in VRAM (40-80%).
+    /// Cluster tiles by source region overlap to maximize reuse.
+    RegionCache,
+    
+    /// Source exceeds VRAM (>80%) or exceeds texture limit.
+    /// Adaptive tiling with dynamic subdivision.
+    AdaptiveTiled,
+    
+    /// Source exceeds RAM - use StreamingSource.
+    Streaming,
+}
+
+/// Unified executor for all strategies.
+pub struct ProcessingExecutor<G: GpuPrimitives> {
+    gpu: G,
+    region_cache: Option<RegionCache<G::Source>>,
+}
+```
+
+### Phase 8: Color Pipeline Integration
+
+Apply color transforms during streaming:
+
+```rust
+/// Process large image with color transform, streaming if needed.
+pub fn process_with_color<P: AsRef<Path>>(
+    input: P,
+    output: P,
+    processor: &ColorProcessor,
+) -> IoResult<()> {
+    let estimate = estimate_file_memory(&input)?;
+    let strategy = ProcessingStrategy::select(&estimate, &gpu.limits());
+    
+    match strategy {
+        ProcessingStrategy::Streaming => {
+            let mut source = open_streaming(&input)?;
+            let mut output = create_streaming_output(&output)?;
+            
+            // Process tile by tile with color transform
+            for tile in generate_tiles(source.dimensions(), tile_size) {
+                let region = source.read_region(tile.x, tile.y, tile.w, tile.h)?;
+                let processed = processor.apply(&region)?;
+                output.write_tile(&processed, tile.x, tile.y)?;
+            }
+            
+            output.finish()
+        }
+        _ => {
+            // In-memory processing
+            ...
+        }
+    }
+}
+```
+
+### Phase 9: CUDA Backend (Later)
+
+Port from stool-rs when ready:
+
+```
+crates/vfx-compute/src/backend/
+├── cuda_backend.rs      # CudaBackend impl
+├── cuda_primitives.rs   # CudaPrimitives impl
+└── cuda_kernels.cu      # CUDA kernels (or PTX)
+```
+
+### Files to Port from stool-rs
+
+| stool-rs file | → vfx-rs location | Notes |
+|--------------|-------------------|-------|
+| `streaming_io.rs` | `vfx-io/src/streaming/` | Split into traits.rs, memory.rs, etc. |
+| `format.rs` | `vfx-io/src/format.rs` | Adapt for multi-format PixelFormat |
+| `gpu_primitives.rs` | `vfx-compute/src/primitives.rs` | Adapt for ImageData |
+| `strategy.rs` | `vfx-compute/src/strategy.rs` | Add Streaming strategy |
+| `planner.rs` | `vfx-compute/src/planner.rs` | Morton sorting, binary search |
+| `tiling.rs` | `vfx-compute/src/tiling.rs` | Tile, SourceRegion, generate_tiles |
+| `region_cache.rs` | `vfx-compute/src/region_cache.rs` | LRU cache for GPU regions |
+| `cuda_*.rs` | `vfx-compute/src/backend/cuda_*.rs` | Later |
+
+### API Changes (Breaking)
+
+1. `read()` may return lazy-loading wrapper for large files
+2. `ImageData` gains `.region()` method for tile access
+3. `FormatReader` trait extends with `read_region()` 
+4. New `StreamingSource`/`StreamingOutput` traits
+5. `Backend` trait in vfx-compute becomes `GpuPrimitives`
+6. New `ProcessingStrategy` enum
+
+### Memory Savings Example
+
+65K×65K JPEG processing:
+
+| Approach | RAM Usage |
+|----------|----------|
+| Current (full f32 RGBA) | ~64 GB |
+| Native format (u8 RGB) | ~12 GB |
+| Streaming (tiles) | ~400 MB |
 
