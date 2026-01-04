@@ -7,6 +7,8 @@ use vfx_io::ImageData;
 pub fn run(args: DiffArgs, verbose: bool) -> Result<()> {
     let img_a = super::load_image(&args.a)?;
     let img_b = super::load_image(&args.b)?;
+    super::ensure_color_processing(&img_a, "diff")?;
+    super::ensure_color_processing(&img_b, "diff")?;
 
     if img_a.width != img_b.width || img_a.height != img_b.height {
         bail!("Image dimensions don't match: {}x{} vs {}x{}",

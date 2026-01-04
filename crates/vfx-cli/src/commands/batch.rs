@@ -89,6 +89,9 @@ fn process_file(
     }
 
     let image = super::load_image(input)?;
+    if !op.eq_ignore_ascii_case("convert") {
+        super::ensure_color_processing(&image, op)?;
+    }
     let data = image.to_f32();
     let w = image.width as usize;
     let h = image.height as usize;

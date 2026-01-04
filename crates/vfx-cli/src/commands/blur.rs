@@ -7,6 +7,7 @@ use vfx_ops::filter::{box_blur, Kernel, convolve};
 
 pub fn run(args: BlurArgs, verbose: bool) -> Result<()> {
     let image = super::load_image(&args.input)?;
+    super::ensure_color_processing(&image, "blur")?;
     let w = image.width as usize;
     let h = image.height as usize;
     let c = image.channels as usize;

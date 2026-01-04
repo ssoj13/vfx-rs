@@ -273,6 +273,23 @@ pub struct ImageData {
     pub metadata: Metadata,
 }
 
+/// Semantic meaning of a channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelKind {
+    /// Color data (RGB/YCbCr/etc).
+    Color,
+    /// Alpha/opacity.
+    Alpha,
+    /// Depth/Z or similar distance data.
+    Depth,
+    /// Object or material identifiers.
+    Id,
+    /// Matte/mask data.
+    Mask,
+    /// Unknown or non-color data.
+    Generic,
+}
+
 /// The sample type stored for a channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChannelSampleType {
@@ -309,6 +326,8 @@ impl ChannelSamples {
 pub struct ImageChannel {
     /// Channel name (e.g., "R", "G", "B", "A", "Z", "ID").
     pub name: String,
+    /// Semantic meaning of this channel.
+    pub kind: ChannelKind,
     /// The intended sample type for serialization.
     pub sample_type: ChannelSampleType,
     /// Channel samples.
@@ -512,8 +531,10 @@ impl ImageData {
                         let idx = i * channels + ch_index;
                         samples.push(*data.get(idx).unwrap_or(&0u32));
                     }
+                    let kind = channel_kind_from_name(&ch_name, ChannelSampleType::U32);
                     out_channels.push(ImageChannel {
                         name: ch_name,
+                        kind,
                         sample_type: ChannelSampleType::U32,
                         samples: ChannelSamples::U32(samples),
                         sampling: (1, 1),
@@ -527,8 +548,10 @@ impl ImageData {
                         let idx = i * channels + ch_index;
                         samples.push(interleaved.get(idx).copied().unwrap_or(0.0));
                     }
+                    let kind = channel_kind_from_name(&ch_name, ChannelSampleType::F32);
                     out_channels.push(ImageChannel {
                         name: ch_name,
+                        kind,
                         sample_type: ChannelSampleType::F32,
                         samples: ChannelSamples::F32(samples),
                         sampling: (1, 1),
@@ -733,6 +756,30 @@ fn default_channel_names(count: usize) -> Vec<String> {
             "A".to_string(),
         ],
         _ => (0..count).map(|i| format!("C{}", i)).collect(),
+    }
+}
+
+pub(crate) fn channel_kind_from_name(name: &str, sample_type: ChannelSampleType) -> ChannelKind {
+    let upper = name.to_ascii_uppercase();
+    match upper.as_str() {
+        "A" | "ALPHA" => ChannelKind::Alpha,
+        "Z" | "DEPTH" => ChannelKind::Depth,
+        "ID" | "OBJECTID" | "OBJECT_ID" => ChannelKind::Id,
+        "MASK" | "MATTE" => ChannelKind::Mask,
+        "R" | "G" | "B" | "Y" => {
+            if sample_type == ChannelSampleType::U32 {
+                ChannelKind::Id
+            } else {
+                ChannelKind::Color
+            }
+        }
+        _ => {
+            if sample_type == ChannelSampleType::U32 {
+                ChannelKind::Id
+            } else {
+                ChannelKind::Generic
+            }
+        }
     }
 }
 

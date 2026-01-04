@@ -6,6 +6,7 @@ use vfx_io::ImageData;
 
 pub fn run(args: ColorArgs, verbose: bool) -> Result<()> {
     let image = super::load_image(&args.input)?;
+    super::ensure_color_processing(&image, "color")?;
     let mut data = image.to_f32();
     let w = image.width as usize;
     let h = image.height as usize;

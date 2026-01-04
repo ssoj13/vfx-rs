@@ -7,6 +7,7 @@ use vfx_ops::transform::crop;
 
 pub fn run(args: CropArgs, verbose: bool) -> Result<()> {
     let image = super::load_image(&args.input)?;
+    super::ensure_color_processing(&image, "crop")?;
     let w = image.width as usize;
     let h = image.height as usize;
     let c = image.channels as usize;

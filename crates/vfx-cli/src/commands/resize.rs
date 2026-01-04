@@ -7,6 +7,7 @@ use vfx_ops::resize::{resize_f32, Filter};
 
 pub fn run(args: ResizeArgs, verbose: bool) -> Result<()> {
     let image = super::load_image(&args.input)?;
+    super::ensure_color_processing(&image, "resize")?;
     let src_w = image.width as usize;
     let src_h = image.height as usize;
 

@@ -8,6 +8,8 @@ use vfx_ops::composite::{over, blend, BlendMode};
 pub fn run(args: CompositeArgs, verbose: bool) -> Result<()> {
     let fg = super::load_image(&args.fg)?;
     let bg = super::load_image(&args.bg)?;
+    super::ensure_color_processing(&fg, "composite")?;
+    super::ensure_color_processing(&bg, "composite")?;
 
     if fg.width != bg.width || fg.height != bg.height {
         bail!("Image dimensions don't match: {}x{} vs {}x{}",

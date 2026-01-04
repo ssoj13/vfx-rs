@@ -49,8 +49,9 @@
 //! ```
 
 use crate::{
-    AttrValue, ChannelSampleType, ChannelSamples, FormatReader, FormatWriter, ImageChannel,
-    ImageData, ImageLayer, IoError, IoResult, LayeredImage, Metadata, PixelData, PixelFormat,
+    channel_kind_from_name, AttrValue, ChannelSampleType, ChannelSamples, FormatReader,
+    FormatWriter, ImageChannel, ImageData, ImageLayer, IoError, IoResult, LayeredImage, Metadata,
+    PixelData, PixelFormat,
 };
 use std::io::Cursor;
 use std::path::Path;
@@ -320,8 +321,10 @@ impl ExrReader {
                     }
                 };
 
+                let kind = channel_kind_from_name(&name, sample_type);
                 channels.push(ImageChannel {
                     name,
+                    kind,
                     sample_type,
                     samples,
                     sampling,
@@ -845,6 +848,7 @@ pub fn write_layers<P: AsRef<Path>>(path: P, image: &LayeredImage) -> IoResult<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ChannelKind;
 
     /// Tests basic read/write roundtrip.
     #[test]
@@ -904,6 +908,7 @@ mod tests {
             channels: vec![
                 ImageChannel {
                     name: "R".to_string(),
+                    kind: ChannelKind::Color,
                     sample_type: ChannelSampleType::F16,
                     samples: ChannelSamples::F32(vec![0.25; 8 * 8]),
                     sampling: (1, 1),
@@ -911,6 +916,7 @@ mod tests {
                 },
                 ImageChannel {
                     name: "G".to_string(),
+                    kind: ChannelKind::Color,
                     sample_type: ChannelSampleType::F32,
                     samples: ChannelSamples::F32(vec![0.25; 8 * 8]),
                     sampling: (1, 1),
@@ -918,6 +924,7 @@ mod tests {
                 },
                 ImageChannel {
                     name: "B".to_string(),
+                    kind: ChannelKind::Color,
                     sample_type: ChannelSampleType::F32,
                     samples: ChannelSamples::F32(vec![0.25; 8 * 8]),
                     sampling: (1, 1),
@@ -925,6 +932,7 @@ mod tests {
                 },
                 ImageChannel {
                     name: "A".to_string(),
+                    kind: ChannelKind::Alpha,
                     sample_type: ChannelSampleType::F32,
                     samples: ChannelSamples::F32(vec![1.0; 8 * 8]),
                     sampling: (1, 1),
@@ -939,6 +947,7 @@ mod tests {
             channels: vec![
                 ImageChannel {
                     name: "R".to_string(),
+                    kind: ChannelKind::Color,
                     sample_type: ChannelSampleType::F32,
                     samples: ChannelSamples::F32(vec![0.75; 8 * 8]),
                     sampling: (1, 1),
@@ -946,6 +955,7 @@ mod tests {
                 },
                 ImageChannel {
                     name: "G".to_string(),
+                    kind: ChannelKind::Color,
                     sample_type: ChannelSampleType::F32,
                     samples: ChannelSamples::F32(vec![0.75; 8 * 8]),
                     sampling: (1, 1),
@@ -953,6 +963,7 @@ mod tests {
                 },
                 ImageChannel {
                     name: "B".to_string(),
+                    kind: ChannelKind::Color,
                     sample_type: ChannelSampleType::F32,
                     samples: ChannelSamples::F32(vec![0.75; 8 * 8]),
                     sampling: (1, 1),
@@ -960,6 +971,7 @@ mod tests {
                 },
                 ImageChannel {
                     name: "A".to_string(),
+                    kind: ChannelKind::Alpha,
                     sample_type: ChannelSampleType::F32,
                     samples: ChannelSamples::F32(vec![1.0; 8 * 8]),
                     sampling: (1, 1),
@@ -1005,6 +1017,7 @@ mod tests {
             channels: vec![
                 ImageChannel {
                     name: "R".to_string(),
+                    kind: ChannelKind::Color,
                     sample_type: ChannelSampleType::F32,
                     samples: ChannelSamples::F32(vec![0.1; pixel_count]),
                     sampling: (1, 1),
@@ -1012,6 +1025,7 @@ mod tests {
                 },
                 ImageChannel {
                     name: "G".to_string(),
+                    kind: ChannelKind::Color,
                     sample_type: ChannelSampleType::F32,
                     samples: ChannelSamples::F32(vec![0.2; pixel_count]),
                     sampling: (1, 1),
@@ -1019,6 +1033,7 @@ mod tests {
                 },
                 ImageChannel {
                     name: "B".to_string(),
+                    kind: ChannelKind::Color,
                     sample_type: ChannelSampleType::F32,
                     samples: ChannelSamples::F32(vec![0.3; pixel_count]),
                     sampling: (1, 1),
@@ -1026,6 +1041,7 @@ mod tests {
                 },
                 ImageChannel {
                     name: "A".to_string(),
+                    kind: ChannelKind::Alpha,
                     sample_type: ChannelSampleType::F32,
                     samples: ChannelSamples::F32(vec![1.0; pixel_count]),
                     sampling: (1, 1),
@@ -1033,6 +1049,7 @@ mod tests {
                 },
                 ImageChannel {
                     name: "Z".to_string(),
+                    kind: ChannelKind::Depth,
                     sample_type: ChannelSampleType::F32,
                     samples: ChannelSamples::F32((0..pixel_count).map(|i| i as f32).collect()),
                     sampling: (1, 1),
@@ -1040,6 +1057,7 @@ mod tests {
                 },
                 ImageChannel {
                     name: "ID".to_string(),
+                    kind: ChannelKind::Id,
                     sample_type: ChannelSampleType::U32,
                     samples: ChannelSamples::U32((0..pixel_count as u32).collect()),
                     sampling: (1, 1),

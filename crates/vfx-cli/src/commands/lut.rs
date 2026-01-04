@@ -7,6 +7,7 @@ use vfx_lut::cube;
 
 pub fn run(args: LutArgs, verbose: bool) -> Result<()> {
     let image = super::load_image(&args.input)?;
+    super::ensure_color_processing(&image, "lut")?;
 
     if verbose {
         println!("Applying LUT {} to {}", args.lut.display(), args.input.display());
