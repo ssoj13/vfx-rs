@@ -222,7 +222,11 @@ For 8K+ EXR/TIFF that exceed RAM, need streaming I/O:
 - [ ] Feature detection
 
 ### P2.5 EXR Advanced
-- [ ] Tiled image write
+- [ ] Tiled image read/write
+- [ ] Full mipchain maketx output
+
+### P2.5b TIFF Advanced
+- [ ] Tiled image read/write
 - [ ] Full mipchain maketx output
 
 ### P2.6 Python Bindings
@@ -232,6 +236,7 @@ For 8K+ EXR/TIFF that exceed RAM, need streaming I/O:
 ### P2.7 Benchmarks
 - [ ] Use vfx-bench to measure throughput vs C++ references
 - [ ] Regression tests for performance
+- [ ] Copy OpenImageIO test suite files in there if applicable
 
 ---
 
