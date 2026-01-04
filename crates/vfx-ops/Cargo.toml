@@ -15,6 +15,7 @@ parallel = ["rayon"]
 
 [dependencies]
 vfx-core.workspace = true
+vfx-io.workspace = true
 vfx-math.workspace = true
 thiserror.workspace = true
 rayon = { workspace = true, optional = true }

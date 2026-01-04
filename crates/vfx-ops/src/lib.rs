@@ -50,6 +50,7 @@
 #![warn(rustdoc::missing_crate_level_docs)]
 
 mod error;
+pub mod guard;
 pub mod resize;
 pub mod composite;
 pub mod filter;

@@ -1,11 +1,14 @@
 //! Color transform command
+//!
+//! Applies color adjustments: exposure, gamma, saturation, transfer functions.
+//! Supports `--layer` for processing specific layers in multi-layer EXR.
 
 use crate::ColorArgs;
 use anyhow::Result;
 use vfx_io::ImageData;
 
 pub fn run(args: ColorArgs, verbose: bool, allow_non_color: bool) -> Result<()> {
-    let image = super::load_image(&args.input)?;
+    let image = super::load_image_layer(&args.input, args.layer.as_deref())?;
     super::ensure_color_processing(&image, "color", allow_non_color)?;
     let mut data = image.to_f32();
     let w = image.width as usize;
@@ -48,7 +51,7 @@ pub fn run(args: ColorArgs, verbose: bool, allow_non_color: bool) -> Result<()> 
     }
 
     let output = ImageData::from_f32(image.width, image.height, image.channels, data);
-    super::save_image(&args.output, &output)?;
+    super::save_image_layer(&args.output, &output, args.layer.as_deref())?;
 
     if verbose {
         println!("Done.");

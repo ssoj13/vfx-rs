@@ -1,4 +1,7 @@
 //! Resize command
+//!
+//! Scales images using various resampling filters.
+//! Supports `--layer` for processing specific layers in multi-layer EXR.
 
 use crate::ResizeArgs;
 use anyhow::{Result, bail};
@@ -6,7 +9,7 @@ use vfx_io::ImageData;
 use vfx_ops::resize::{resize_f32, Filter};
 
 pub fn run(args: ResizeArgs, verbose: bool, allow_non_color: bool) -> Result<()> {
-    let image = super::load_image(&args.input)?;
+    let image = super::load_image_layer(&args.input, args.layer.as_deref())?;
     super::ensure_color_processing(&image, "resize", allow_non_color)?;
     let src_w = image.width as usize;
     let src_h = image.height as usize;
@@ -49,7 +52,7 @@ pub fn run(args: ResizeArgs, verbose: bool, allow_non_color: bool) -> Result<()>
 
     let output = ImageData::from_f32(dst_w as u32, dst_h as u32, image.channels, resized);
 
-    super::save_image(&args.output, &output)?;
+    super::save_image_layer(&args.output, &output, args.layer.as_deref())?;
 
     if verbose {
         println!("Done.");

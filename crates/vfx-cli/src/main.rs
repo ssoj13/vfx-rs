@@ -94,6 +94,18 @@ enum Commands {
 
     /// Batch process multiple images
     Batch(BatchArgs),
+
+    /// List layers and channels in multi-layer EXR files
+    #[command(visible_alias = "l")]
+    Layers(LayersArgs),
+
+    /// Extract a single layer from multi-layer EXR
+    #[command(name = "extract-layer", visible_alias = "xl")]
+    ExtractLayer(ExtractLayerArgs),
+
+    /// Merge layers from multiple files into one EXR
+    #[command(name = "merge-layers", visible_alias = "ml")]
+    MergeLayers(MergeLayersArgs),
 }
 
 #[derive(Args)]
@@ -164,6 +176,10 @@ struct ResizeArgs {
     /// Fit mode: exact, fit, fill
     #[arg(long, default_value = "exact")]
     fit: String,
+
+    /// Process only this layer (for multi-layer EXR)
+    #[arg(long)]
+    layer: Option<String>,
 }
 
 #[derive(Args)]
@@ -190,6 +206,10 @@ struct CropArgs {
     /// Height
     #[arg(short = 'H')]
     h: usize,
+
+    /// Process only this layer (for multi-layer EXR)
+    #[arg(long)]
+    layer: Option<String>,
 }
 
 #[derive(Args)]
@@ -250,6 +270,10 @@ struct BlurArgs {
     /// Blur type: box, gaussian
     #[arg(short = 't', long, default_value = "gaussian")]
     blur_type: String,
+
+    /// Process only this layer (for multi-layer EXR)
+    #[arg(long)]
+    layer: Option<String>,
 }
 
 #[derive(Args)]
@@ -264,6 +288,10 @@ struct SharpenArgs {
     /// Sharpen amount (0.0-10.0)
     #[arg(short, long, default_value = "1.0")]
     amount: f32,
+
+    /// Process only this layer (for multi-layer EXR)
+    #[arg(long)]
+    layer: Option<String>,
 }
 
 #[derive(Args)]
@@ -298,6 +326,10 @@ struct ColorArgs {
     /// Saturation multiplier
     #[arg(long)]
     saturation: Option<f32>,
+
+    /// Process only this layer (for multi-layer EXR)
+    #[arg(long)]
+    layer: Option<String>,
 }
 
 #[derive(Args)]
@@ -407,6 +439,49 @@ struct BatchArgs {
     format: Option<String>,
 }
 
+/// Arguments for the `layers` command.
+#[derive(Args)]
+struct LayersArgs {
+    /// Input EXR file(s)
+    #[arg(required = true)]
+    input: Vec<PathBuf>,
+
+    /// Machine-readable output (JSON)
+    #[arg(long)]
+    json: bool,
+}
+
+/// Arguments for the `extract-layer` command.
+#[derive(Args)]
+struct ExtractLayerArgs {
+    /// Input EXR file
+    input: PathBuf,
+
+    /// Output file
+    #[arg(short, long)]
+    output: PathBuf,
+
+    /// Layer name or index to extract
+    #[arg(short, long)]
+    layer: Option<String>,
+}
+
+/// Arguments for the `merge-layers` command.
+#[derive(Args)]
+struct MergeLayersArgs {
+    /// Input files (each becomes a layer)
+    #[arg(required = true)]
+    input: Vec<PathBuf>,
+
+    /// Output EXR file
+    #[arg(short, long)]
+    output: PathBuf,
+
+    /// Custom layer names (one per input)
+    #[arg(short, long)]
+    names: Vec<String>,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -437,5 +512,8 @@ fn main() -> Result<()> {
         Commands::Maketx(args) => commands::maketx::run(args, cli.verbose, cli.allow_non_color),
         Commands::Grep(args) => commands::grep::run(args, cli.verbose),
         Commands::Batch(args) => commands::batch::run(args, cli.verbose, cli.allow_non_color),
+        Commands::Layers(args) => commands::layers::run_layers(args, cli.verbose),
+        Commands::ExtractLayer(args) => commands::layers::run_extract_layer(args, cli.verbose),
+        Commands::MergeLayers(args) => commands::layers::run_merge_layers(args, cli.verbose),
     }
 }
