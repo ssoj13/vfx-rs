@@ -9,10 +9,12 @@ This plan sequences work to reach OCIO v2 and OIIO-like parity within the curren
 - Metadata: integrate from exiftool-rs and map into vfx-io metadata.
 - CLI: one smart tool with consistent command/option system; not 1:1 with OIIO/OCIO, but better UX.
 
-## Status Update
+## Status Update (Current)
 - Completed: OCIO strict parsing + file rules + view/looks + LUT domain + .cube FileTransform.
 - Completed: HDR format support (RGBE read/write, RLE scanlines) and format detection.
-- In progress: Metadata integration (Attrs/AttrValue added; EXR/HDR metadata mapped; remaining formats pending).
+- Completed: Metadata integration for PNG/JPEG/TIFF/DPX/HDR/EXR with typed Attrs.
+- Completed: DPX 8/10-bit write support, controlled via Metadata attrs (no separate writer API).
+- Completed: CLI info prints metadata (human + JSON attrs).
 
 ## Phase 1: OCIO v2 Correctness and Rules
 1. Strict parsing policy
@@ -63,14 +65,12 @@ This plan sequences work to reach OCIO v2 and OIIO-like parity within the curren
 2. Golden image tests for I/O and ops.
 3. Performance sanity checks (non-regression).
 
-## Deliverables
-- OCIO v2 correctness (rules + view/looks + LUT domain correctness).
-- HDR format support.
-- Metadata integration.
-- Unified CLI.
-- Engine abstraction + tests.
+## Mini-Plans (Per Task)
+- DPX 8/10-bit + metadata: done.
+- PNG/JPEG/TIFF metadata enrichment: done.
+- CLI info metadata output: done.
+- Next: metadata preservation on convert/write; DPX fixtures (8/10) + tests.
 
 ## Open Decisions (Need Confirmation)
 - Metadata integration: path dependency vs vendoring exiftool-rs.
-- HDR format: HDR/RGBE only or include .pic.
 - Metadata schema: keep ImageData::Metadata or adopt richer struct.
