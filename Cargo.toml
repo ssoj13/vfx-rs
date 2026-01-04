@@ -41,6 +41,7 @@ vfx-compute = { path = "crates/vfx-compute" }
 glam = "0.30"
 half = "2.7"
 wide = "0.7"
+rustfft = "6.2"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

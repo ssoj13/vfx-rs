@@ -12,6 +12,7 @@ categories = ["graphics", "multimedia::images"]
 [features]
 default = ["parallel"]
 parallel = ["rayon"]
+fft = ["rustfft"]
 
 [dependencies]
 vfx-core.workspace = true
@@ -20,5 +21,6 @@ vfx-math.workspace = true
 vfx-compute.workspace = true
 thiserror.workspace = true
 rayon = { workspace = true, optional = true }
+rustfft = { workspace = true, optional = true }
 
 [dev-dependencies]

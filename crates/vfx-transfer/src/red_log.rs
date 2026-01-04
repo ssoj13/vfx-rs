@@ -4,7 +4,7 @@
 //!
 //! # REDLogFilm
 //!
-//! Older RED log encoding with Cineon-style curve.
+//! Older RED log encoding with Cineon-style curve (LogAffine transform).
 //!
 //! # REDLog3G10
 //!
@@ -13,11 +13,12 @@
 //!
 //! # Reference
 //!
-//! RED Digital Cinema - Technical White Papers
-//! OCIO BuiltinTransforms - RedCameras.cpp
+//! Source: OpenColorIO/src/OpenColorIO/transforms/builtins/RedCameras.cpp
+//! <https://github.com/AcademySoftwareFoundation/OpenColorIO/blob/main/src/OpenColorIO/transforms/builtins/RedCameras.cpp>
 
 // === REDLogFilm Constants ===
-// From OCIO: RED_REDLOGFILM_RWG_to_LINEAR
+// Source: OCIO RedCameras.cpp - RED_REDLOGFILM_RWG_to_LINEAR
+// Uses LogAffine with Cineon-style parameters
 
 const REDLOGFILM_REF_WHITE: f64 = 685.0 / 1023.0;
 const REDLOGFILM_REF_BLACK: f64 = 95.0 / 1023.0;
@@ -89,7 +90,8 @@ pub fn redlogfilm_decode(log: f32) -> f32 {
 }
 
 // === REDLog3G10 Constants ===
-// From OCIO: RED_LOG3G10_RWG_to_LINEAR
+// Source: OCIO RedCameras.cpp - RED_LOG3G10_RWG_to_LINEAR
+// Uses LogCameraTransform with base=10
 
 const LOG3G10_LIN_SIDE_SLOPE: f64 = 155.975327;
 const LOG3G10_LIN_SIDE_OFFSET: f64 = 0.01 * LOG3G10_LIN_SIDE_SLOPE + 1.0;
@@ -238,14 +240,17 @@ mod tests {
 
     #[test]
     fn test_log3g10_negative_handling() {
-        // REDLog3G10 should handle negative values
-        let neg = log3g10_encode(-0.005);
-        assert!(neg < 0.0, "Negative linear should give negative log");
+        // REDLog3G10 has break at -0.01, test linear extension below that
+        let neg = log3g10_encode(-0.02);
+        // At break=-0.01, log value is small positive, so -0.02 should be negative
+        let at_break = log3g10_encode(-0.01);
+        assert!(neg < at_break, "Below break should give smaller value");
 
         let decoded = log3g10_decode(neg);
         assert!(
-            (decoded - (-0.005)).abs() < 0.001,
-            "Negative roundtrip failed"
+            (decoded - (-0.02)).abs() < 0.001,
+            "Negative roundtrip failed: got {}",
+            decoded
         );
     }
 }

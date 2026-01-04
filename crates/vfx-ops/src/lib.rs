@@ -61,6 +61,9 @@ pub mod warp;
 #[cfg(feature = "parallel")]
 pub mod parallel;
 
+#[cfg(feature = "fft")]
+pub mod fft;
+
 pub use error::{OpsError, OpsResult};
 pub use resize::Filter;
 pub use composite::BlendMode;

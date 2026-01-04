@@ -97,6 +97,7 @@
 mod traits;
 mod source;
 pub mod format;
+pub mod pipeline;
 
 #[cfg(feature = "tiff")]
 mod tiff;
@@ -131,6 +132,14 @@ pub use format::{
     RGBA_F32_BPP,
     MEMORY_SAFETY_MARGIN,
     STREAMING_THRESHOLD_RATIO,
+};
+
+pub use pipeline::{
+    TileSpec,
+    tile_iterator,
+    StreamingPipeline,
+    ProgressCallback,
+    run_with_progress,
 };
 
 // Factory functions are defined at module level and exported here

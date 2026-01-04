@@ -23,6 +23,8 @@
 //! | [`log_c`] | ARRI cameras | Scene-referred |
 //! | [`s_log3`] | Sony cameras | Scene-referred |
 //! | [`v_log`] | Panasonic cameras | Scene-referred |
+//! | [`red_log`] | RED cameras (REDLogFilm, REDLog3G10) | Scene-referred |
+//! | [`bmd_film`] | Blackmagic cameras (BMDFilm Gen5) | Scene-referred |
 //!
 //! # Usage
 //!
@@ -69,6 +71,8 @@ pub mod s_log3;
 pub mod v_log;
 pub mod acescct;
 pub mod acescc;
+pub mod red_log;
+pub mod bmd_film;
 
 // Re-export common functions
 pub use srgb::{eotf as srgb_eotf, oetf as srgb_oetf};
@@ -81,3 +85,5 @@ pub use s_log3::{decode as s_log3_decode, encode as s_log3_encode};
 pub use v_log::{decode as v_log_decode, encode as v_log_encode};
 pub use acescct::{decode as acescct_decode, encode as acescct_encode};
 pub use acescc::{decode as acescc_decode, encode as acescc_encode};
+pub use red_log::{redlogfilm_encode, redlogfilm_decode, log3g10_encode, log3g10_decode};
+pub use bmd_film::{bmd_film_gen5_encode, bmd_film_gen5_decode};

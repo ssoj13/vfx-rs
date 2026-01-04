@@ -372,6 +372,239 @@ fn blur_vertical(
     dst
 }
 
+/// Applies median filter to image.
+///
+/// Median filter removes noise while preserving edges better than blur.
+///
+/// # Arguments
+///
+/// * `src` - Source pixel data
+/// * `width` - Image width
+/// * `height` - Image height
+/// * `channels` - Number of channels (3 or 4)
+/// * `radius` - Filter radius (1 = 3x3, 2 = 5x5, etc.)
+///
+/// # Example
+///
+/// ```rust
+/// use vfx_ops::filter::median;
+///
+/// let src = vec![0.5f32; 8 * 8 * 3];
+/// let result = median(&src, 8, 8, 3, 1).unwrap();
+/// ```
+pub fn median(
+    src: &[f32],
+    width: usize,
+    height: usize,
+    channels: usize,
+    radius: usize,
+) -> OpsResult<Vec<f32>> {
+    let expected = width * height * channels;
+    if src.len() != expected {
+        return Err(OpsError::InvalidDimensions(format!(
+            "expected {} pixels, got {}",
+            expected,
+            src.len()
+        )));
+    }
+
+    let mut dst = vec![0.0f32; expected];
+    let size = 2 * radius + 1;
+    let count = size * size;
+    let mid = count / 2;
+
+    for y in 0..height {
+        for x in 0..width {
+            for c in 0..channels {
+                // Collect neighborhood values
+                let mut values: Vec<f32> = Vec::with_capacity(count);
+
+                for ky in 0..size {
+                    for kx in 0..size {
+                        let sx = (x as isize + kx as isize - radius as isize)
+                            .max(0)
+                            .min(width as isize - 1) as usize;
+                        let sy = (y as isize + ky as isize - radius as isize)
+                            .max(0)
+                            .min(height as isize - 1) as usize;
+
+                        values.push(src[(sy * width + sx) * channels + c]);
+                    }
+                }
+
+                // Sort and take median
+                values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                dst[(y * width + x) * channels + c] = values[mid];
+            }
+        }
+    }
+
+    Ok(dst)
+}
+
+/// Morphological dilation - expands bright regions.
+///
+/// Uses a square structuring element of given radius.
+///
+/// # Arguments
+///
+/// * `src` - Source pixel data
+/// * `width` - Image width
+/// * `height` - Image height
+/// * `channels` - Number of channels
+/// * `radius` - Structuring element radius
+///
+/// # Example
+///
+/// ```rust
+/// use vfx_ops::filter::dilate;
+///
+/// let src = vec![0.0f32; 8 * 8 * 1];
+/// let result = dilate(&src, 8, 8, 1, 1).unwrap();
+/// ```
+pub fn dilate(
+    src: &[f32],
+    width: usize,
+    height: usize,
+    channels: usize,
+    radius: usize,
+) -> OpsResult<Vec<f32>> {
+    morphology_op(src, width, height, channels, radius, true)
+}
+
+/// Morphological erosion - shrinks bright regions.
+///
+/// Uses a square structuring element of given radius.
+///
+/// # Arguments
+///
+/// * `src` - Source pixel data
+/// * `width` - Image width
+/// * `height` - Image height
+/// * `channels` - Number of channels
+/// * `radius` - Structuring element radius
+///
+/// # Example
+///
+/// ```rust
+/// use vfx_ops::filter::erode;
+///
+/// let src = vec![1.0f32; 8 * 8 * 1];
+/// let result = erode(&src, 8, 8, 1, 1).unwrap();
+/// ```
+pub fn erode(
+    src: &[f32],
+    width: usize,
+    height: usize,
+    channels: usize,
+    radius: usize,
+) -> OpsResult<Vec<f32>> {
+    morphology_op(src, width, height, channels, radius, false)
+}
+
+/// Internal morphology operation.
+fn morphology_op(
+    src: &[f32],
+    width: usize,
+    height: usize,
+    channels: usize,
+    radius: usize,
+    is_dilate: bool,
+) -> OpsResult<Vec<f32>> {
+    let expected = width * height * channels;
+    if src.len() != expected {
+        return Err(OpsError::InvalidDimensions(format!(
+            "expected {} pixels, got {}",
+            expected,
+            src.len()
+        )));
+    }
+
+    let mut dst = vec![0.0f32; expected];
+    let size = 2 * radius + 1;
+
+    for y in 0..height {
+        for x in 0..width {
+            for c in 0..channels {
+                let mut val = if is_dilate { f32::MIN } else { f32::MAX };
+
+                for ky in 0..size {
+                    for kx in 0..size {
+                        let sx = (x as isize + kx as isize - radius as isize)
+                            .max(0)
+                            .min(width as isize - 1) as usize;
+                        let sy = (y as isize + ky as isize - radius as isize)
+                            .max(0)
+                            .min(height as isize - 1) as usize;
+
+                        let v = src[(sy * width + sx) * channels + c];
+                        if is_dilate {
+                            val = val.max(v);
+                        } else {
+                            val = val.min(v);
+                        }
+                    }
+                }
+
+                dst[(y * width + x) * channels + c] = val;
+            }
+        }
+    }
+
+    Ok(dst)
+}
+
+/// Morphological opening - erosion followed by dilation.
+///
+/// Removes small bright spots and thin protrusions.
+pub fn morph_open(
+    src: &[f32],
+    width: usize,
+    height: usize,
+    channels: usize,
+    radius: usize,
+) -> OpsResult<Vec<f32>> {
+    let eroded = erode(src, width, height, channels, radius)?;
+    dilate(&eroded, width, height, channels, radius)
+}
+
+/// Morphological closing - dilation followed by erosion.
+///
+/// Removes small dark spots and fills thin gaps.
+pub fn morph_close(
+    src: &[f32],
+    width: usize,
+    height: usize,
+    channels: usize,
+    radius: usize,
+) -> OpsResult<Vec<f32>> {
+    let dilated = dilate(src, width, height, channels, radius)?;
+    erode(&dilated, width, height, channels, radius)
+}
+
+/// Morphological gradient - dilation minus erosion.
+///
+/// Highlights edges and boundaries.
+pub fn morph_gradient(
+    src: &[f32],
+    width: usize,
+    height: usize,
+    channels: usize,
+    radius: usize,
+) -> OpsResult<Vec<f32>> {
+    let dilated = dilate(src, width, height, channels, radius)?;
+    let eroded = erode(src, width, height, channels, radius)?;
+
+    let expected = width * height * channels;
+    let mut dst = vec![0.0f32; expected];
+
+    for i in 0..expected {
+        dst[i] = dilated[i] - eroded[i];
+    }
+
+    Ok(dst)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,6 +669,77 @@ mod tests {
         // Constant image stays constant
         for v in result {
             assert!((v - 0.5).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_median_constant() {
+        let src = vec![0.5f32; 8 * 8 * 3];
+        let result = median(&src, 8, 8, 3, 1).unwrap();
+
+        for v in result {
+            assert!((v - 0.5).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn test_median_noise() {
+        // 3x3 patch with single outlier
+        let mut src = vec![0.5f32; 9];
+        src[4] = 10.0; // Spike in center
+
+        let result = median(&src, 3, 3, 1, 1).unwrap();
+        // Center should be 0.5, not 10.0
+        assert!((result[4] - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_dilate() {
+        // 3x3 with center bright
+        let mut src = vec![0.0f32; 9];
+        src[4] = 1.0;
+
+        let result = dilate(&src, 3, 3, 1, 1).unwrap();
+        // All pixels should be 1.0 after dilation
+        for v in result {
+            assert!((v - 1.0).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn test_erode() {
+        // 3x3 with center dark
+        let mut src = vec![1.0f32; 9];
+        src[4] = 0.0;
+
+        let result = erode(&src, 3, 3, 1, 1).unwrap();
+        // All pixels should be 0.0 after erosion
+        for v in result {
+            assert!(v.abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn test_morph_open_close() {
+        let src = vec![0.5f32; 8 * 8 * 1];
+        let opened = morph_open(&src, 8, 8, 1, 1).unwrap();
+        let closed = morph_close(&src, 8, 8, 1, 1).unwrap();
+
+        // Constant image should be unchanged
+        for (o, c) in opened.iter().zip(closed.iter()) {
+            assert!((*o - 0.5).abs() < 0.01);
+            assert!((*c - 0.5).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_morph_gradient() {
+        let src = vec![0.5f32; 8 * 8 * 1];
+        let grad = morph_gradient(&src, 8, 8, 1, 1).unwrap();
+
+        // Gradient of constant should be zero
+        for v in grad {
+            assert!(v.abs() < 0.001);
         }
     }
 }
