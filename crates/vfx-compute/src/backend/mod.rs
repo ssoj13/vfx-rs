@@ -49,6 +49,22 @@ impl Backend {
     }
 }
 
+/// Blend mode for compositing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u32)]
+pub enum BlendMode {
+    #[default]
+    Normal = 0,
+    Multiply = 1,
+    Screen = 2,
+    Add = 3,
+    Subtract = 4,
+    Overlay = 5,
+    SoftLight = 6,
+    HardLight = 7,
+    Difference = 8,
+}
+
 /// Trait for color/image processing backends.
 pub trait ProcessingBackend: Send + Sync {
     /// Backend name.
@@ -66,6 +82,8 @@ pub trait ProcessingBackend: Send + Sync {
     /// Download image from GPU.
     fn download(&self, handle: &dyn ImageHandle) -> ComputeResult<Vec<f32>>;
     
+    // === Color operations ===
+    
     /// Apply 4x4 color matrix transform.
     fn apply_matrix(&self, handle: &mut dyn ImageHandle, matrix: &[f32; 16]) -> ComputeResult<()>;
     
@@ -78,11 +96,35 @@ pub trait ProcessingBackend: Send + Sync {
     /// Apply 3D LUT.
     fn apply_lut3d(&self, handle: &mut dyn ImageHandle, lut: &[f32], size: u32) -> ComputeResult<()>;
     
+    // === Image operations ===
+    
     /// Resize image.
     fn resize(&self, handle: &dyn ImageHandle, width: u32, height: u32, filter: u32) -> ComputeResult<Box<dyn ImageHandle>>;
     
     /// Apply Gaussian blur.
     fn blur(&self, handle: &mut dyn ImageHandle, radius: f32) -> ComputeResult<()>;
+    
+    // === Composite operations ===
+    
+    /// Porter-Duff Over: fg over bg.
+    fn composite_over(&self, fg: &dyn ImageHandle, bg: &mut dyn ImageHandle) -> ComputeResult<()>;
+    
+    /// Blend with mode.
+    fn blend(&self, fg: &dyn ImageHandle, bg: &mut dyn ImageHandle, mode: BlendMode, opacity: f32) -> ComputeResult<()>;
+    
+    // === Transform operations ===
+    
+    /// Crop region.
+    fn crop(&self, handle: &dyn ImageHandle, x: u32, y: u32, w: u32, h: u32) -> ComputeResult<Box<dyn ImageHandle>>;
+    
+    /// Flip horizontal.
+    fn flip_h(&self, handle: &mut dyn ImageHandle) -> ComputeResult<()>;
+    
+    /// Flip vertical.
+    fn flip_v(&self, handle: &mut dyn ImageHandle) -> ComputeResult<()>;
+    
+    /// Rotate 90 degrees clockwise (n times).
+    fn rotate_90(&self, handle: &dyn ImageHandle, n: u32) -> ComputeResult<Box<dyn ImageHandle>>;
 }
 
 /// Create a backend instance.

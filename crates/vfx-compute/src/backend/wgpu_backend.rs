@@ -42,6 +42,44 @@ struct ResizeUniform {
     dst_dims: [u32; 4],  // dw, dh, 0, 0
 }
 
+/// Blend params uniform.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct BlendUniform {
+    mode: u32,
+    opacity: f32,
+    _pad0: u32,
+    _pad1: u32,
+}
+
+/// Crop params uniform.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct CropUniform {
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+    x: u32,
+    y: u32,
+    c: u32,
+    _pad: u32,
+}
+
+/// Rotate params uniform.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct RotateUniform {
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+    c: u32,
+    n: u32,
+    _pad0: u32,
+    _pad1: u32,
+}
+
 // =============================================================================
 // WgpuImage Handle
 // =============================================================================
@@ -83,6 +121,14 @@ struct Pipelines {
     resize: wgpu::ComputePipeline,
     blur_h: wgpu::ComputePipeline,
     blur_v: wgpu::ComputePipeline,
+    // Composite
+    composite_over: wgpu::ComputePipeline,
+    blend: wgpu::ComputePipeline,
+    // Transform
+    crop: wgpu::ComputePipeline,
+    flip_h: wgpu::ComputePipeline,
+    flip_v: wgpu::ComputePipeline,
+    rotate_90: wgpu::ComputePipeline,
 }
 
 // =============================================================================
@@ -198,6 +244,14 @@ impl WgpuPrimitives {
             resize: create_pipeline(shaders::RESIZE, "resize_pipeline")?,
             blur_h: create_pipeline(shaders::BLUR_H, "blur_h_pipeline")?,
             blur_v: create_pipeline(shaders::BLUR_V, "blur_v_pipeline")?,
+            // Composite
+            composite_over: create_pipeline(shaders::COMPOSITE_OVER, "composite_over_pipeline")?,
+            blend: create_pipeline(shaders::BLEND, "blend_pipeline")?,
+            // Transform
+            crop: create_pipeline(shaders::CROP, "crop_pipeline")?,
+            flip_h: create_pipeline(shaders::FLIP_H, "flip_h_pipeline")?,
+            flip_v: create_pipeline(shaders::FLIP_V, "flip_v_pipeline")?,
+            rotate_90: create_pipeline(shaders::ROTATE_90, "rotate_90_pipeline")?,
         })
     }
 
@@ -626,6 +680,214 @@ impl ProcessingBackend for WgpuBackend {
         
         std::mem::swap(&mut wgpu_handle.buffer, &mut dst.buffer);
         Ok(())
+    }
+
+    // === Composite operations ===
+
+    fn composite_over(&self, fg: &dyn ImageHandle, bg: &mut dyn ImageHandle) -> ComputeResult<()> {
+        let fg_handle = fg.as_any()
+            .downcast_ref::<WgpuImage>()
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid fg handle type".into()))?;
+        let bg_handle = bg.as_any_mut()
+            .downcast_mut::<WgpuImage>()
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid bg handle type".into()))?;
+
+        let (w, h, c) = fg_handle.dimensions();
+        let dims_buf = self.primitives.create_dims_buffer(w, h, c, 0);
+
+        let layout = self.primitives.pipelines.composite_over.get_bind_group_layout(0);
+        let bind_group = self.primitives.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("composite_over_bind_group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: fg_handle.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: bg_handle.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: dims_buf.as_entire_binding() },
+            ],
+        });
+
+        let total = w * h;
+        self.primitives.dispatch_and_wait(&self.primitives.pipelines.composite_over, &bind_group, (total.div_ceil(256), 1, 1));
+        Ok(())
+    }
+
+    fn blend(&self, fg: &dyn ImageHandle, bg: &mut dyn ImageHandle, mode: super::BlendMode, opacity: f32) -> ComputeResult<()> {
+        let fg_handle = fg.as_any()
+            .downcast_ref::<WgpuImage>()
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid fg handle type".into()))?;
+        let bg_handle = bg.as_any_mut()
+            .downcast_mut::<WgpuImage>()
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid bg handle type".into()))?;
+
+        let (w, h, c) = fg_handle.dimensions();
+        let dims_buf = self.primitives.create_dims_buffer(w, h, c, 0);
+
+        let blend_uniform = BlendUniform {
+            mode: mode as u32,
+            opacity,
+            _pad0: 0,
+            _pad1: 0,
+        };
+        let blend_buf = self.primitives.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("blend_uniform"),
+            contents: bytemuck::bytes_of(&blend_uniform),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let layout = self.primitives.pipelines.blend.get_bind_group_layout(0);
+        let bind_group = self.primitives.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("blend_bind_group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: fg_handle.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: bg_handle.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: dims_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: blend_buf.as_entire_binding() },
+            ],
+        });
+
+        let total = w * h;
+        self.primitives.dispatch_and_wait(&self.primitives.pipelines.blend, &bind_group, (total.div_ceil(256), 1, 1));
+        Ok(())
+    }
+
+    // === Transform operations ===
+
+    fn crop(&self, handle: &dyn ImageHandle, x: u32, y: u32, w: u32, h: u32) -> ComputeResult<Box<dyn ImageHandle>> {
+        let src_handle = handle.as_any()
+            .downcast_ref::<WgpuImage>()
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
+
+        let (sw, sh, c) = src_handle.dimensions();
+        let dst = self.primitives.allocate(w, h, c)?;
+
+        let crop_uniform = CropUniform {
+            src_w: sw,
+            src_h: sh,
+            dst_w: w,
+            dst_h: h,
+            x,
+            y,
+            c,
+            _pad: 0,
+        };
+        let crop_buf = self.primitives.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("crop_uniform"),
+            contents: bytemuck::bytes_of(&crop_uniform),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let layout = self.primitives.pipelines.crop.get_bind_group_layout(0);
+        let bind_group = self.primitives.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("crop_bind_group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: src_handle.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: dst.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: crop_buf.as_entire_binding() },
+            ],
+        });
+
+        self.primitives.dispatch_and_wait(&self.primitives.pipelines.crop, &bind_group, (w.div_ceil(16), h.div_ceil(16), 1));
+        Ok(Box::new(dst))
+    }
+
+    fn flip_h(&self, handle: &mut dyn ImageHandle) -> ComputeResult<()> {
+        let wgpu_handle = handle.as_any_mut()
+            .downcast_mut::<WgpuImage>()
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
+
+        let (w, h, c) = wgpu_handle.dimensions();
+        let mut dst = self.primitives.allocate(w, h, c)?;
+        let dims_buf = self.primitives.create_dims_buffer(w, h, c, 0);
+
+        let layout = self.primitives.pipelines.flip_h.get_bind_group_layout(0);
+        let bind_group = self.primitives.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("flip_h_bind_group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu_handle.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: dst.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: dims_buf.as_entire_binding() },
+            ],
+        });
+
+        self.primitives.dispatch_and_wait(&self.primitives.pipelines.flip_h, &bind_group, (w.div_ceil(16), h.div_ceil(16), 1));
+        std::mem::swap(&mut wgpu_handle.buffer, &mut dst.buffer);
+        Ok(())
+    }
+
+    fn flip_v(&self, handle: &mut dyn ImageHandle) -> ComputeResult<()> {
+        let wgpu_handle = handle.as_any_mut()
+            .downcast_mut::<WgpuImage>()
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
+
+        let (w, h, c) = wgpu_handle.dimensions();
+        let mut dst = self.primitives.allocate(w, h, c)?;
+        let dims_buf = self.primitives.create_dims_buffer(w, h, c, 0);
+
+        let layout = self.primitives.pipelines.flip_v.get_bind_group_layout(0);
+        let bind_group = self.primitives.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("flip_v_bind_group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu_handle.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: dst.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: dims_buf.as_entire_binding() },
+            ],
+        });
+
+        self.primitives.dispatch_and_wait(&self.primitives.pipelines.flip_v, &bind_group, (w.div_ceil(16), h.div_ceil(16), 1));
+        std::mem::swap(&mut wgpu_handle.buffer, &mut dst.buffer);
+        Ok(())
+    }
+
+    fn rotate_90(&self, handle: &dyn ImageHandle, n: u32) -> ComputeResult<Box<dyn ImageHandle>> {
+        let src_handle = handle.as_any()
+            .downcast_ref::<WgpuImage>()
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
+
+        let (sw, sh, c) = src_handle.dimensions();
+        let n = n % 4;
+        if n == 0 {
+            // No rotation - just copy
+            let data = self.primitives.download(src_handle)?;
+            return self.upload(&data, sw, sh, c);
+        }
+
+        // For 90/270 - swap dimensions
+        let (dw, dh) = if n == 2 { (sw, sh) } else { (sh, sw) };
+        let dst = self.primitives.allocate(dw, dh, c)?;
+
+        let rotate_uniform = RotateUniform {
+            src_w: sw,
+            src_h: sh,
+            dst_w: dw,
+            dst_h: dh,
+            c,
+            n,
+            _pad0: 0,
+            _pad1: 0,
+        };
+        let rotate_buf = self.primitives.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("rotate_uniform"),
+            contents: bytemuck::bytes_of(&rotate_uniform),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let layout = self.primitives.pipelines.rotate_90.get_bind_group_layout(0);
+        let bind_group = self.primitives.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rotate_bind_group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: src_handle.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: dst.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: rotate_buf.as_entire_binding() },
+            ],
+        });
+
+        self.primitives.dispatch_and_wait(&self.primitives.pipelines.rotate_90, &bind_group, (dw.div_ceil(16), dh.div_ceil(16), 1));
+        Ok(Box::new(dst))
     }
 }
 

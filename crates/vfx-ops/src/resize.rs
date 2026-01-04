@@ -1,6 +1,7 @@
 //! Image resize and resampling operations.
 //!
 //! Provides high-quality image scaling using various interpolation filters.
+//! Uses vfx-compute for automatic GPU/CPU backend selection.
 //!
 //! # Filters
 //!
@@ -19,6 +20,7 @@
 //! ```
 
 use crate::{OpsError, OpsResult};
+use vfx_compute::{Processor, ComputeImage, ResizeFilter as ComputeFilter};
 
 /// Resampling filter for resize operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -159,10 +161,39 @@ pub fn resize_f32(
         ));
     }
 
+    // Try GPU-accelerated resize via vfx-compute
+    if let Ok(proc) = Processor::auto() {
+        let compute_filter = match filter {
+            Filter::Nearest => ComputeFilter::Nearest,
+            Filter::Bilinear => ComputeFilter::Bilinear,
+            Filter::Bicubic => ComputeFilter::Bicubic,
+            Filter::Lanczos3 => ComputeFilter::Lanczos,
+        };
+        
+        if let Ok(img) = ComputeImage::from_f32(src.to_vec(), src_w as u32, src_h as u32, channels as u32) {
+            if let Ok(resized) = proc.resize(&img, dst_w as u32, dst_h as u32, compute_filter) {
+                return Ok(resized.data().to_vec());
+            }
+        }
+    }
+
+    // Fallback: CPU separable resize
+    resize_f32_cpu(src, src_w, src_h, channels, dst_w, dst_h, filter)
+}
+
+/// CPU fallback for resize (separable convolution).
+fn resize_f32_cpu(
+    src: &[f32],
+    src_w: usize,
+    src_h: usize,
+    channels: usize,
+    dst_w: usize,
+    dst_h: usize,
+    filter: Filter,
+) -> OpsResult<Vec<f32>> {
     // Two-pass separable resize: horizontal then vertical
     let temp = resize_horizontal(src, src_w, src_h, channels, dst_w, filter);
     let result = resize_vertical(&temp, dst_w, src_h, channels, dst_h, filter);
-
     Ok(result)
 }
 

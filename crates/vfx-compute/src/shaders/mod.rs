@@ -252,6 +252,234 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 "#;
 
+/// Porter-Duff Over compositing.
+pub const COMPOSITE_OVER: &str = r#"
+@group(0) @binding(0) var<storage, read> fg: array<f32>;    // foreground RGBA
+@group(0) @binding(1) var<storage, read_write> bg: array<f32>; // background RGBA (in-place)
+@group(0) @binding(2) var<uniform> dims: vec4<u32>;  // w, h, c, 0
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let px = id.x;
+    let total = dims.x * dims.y;
+    if px >= total { return; }
+
+    let c = dims.z;
+    let base = px * c;
+
+    let fg_r = fg[base];
+    let fg_g = fg[base + 1];
+    let fg_b = fg[base + 2];
+    let fg_a = select(1.0, fg[base + 3], c >= 4);
+
+    let bg_r = bg[base];
+    let bg_g = bg[base + 1];
+    let bg_b = bg[base + 2];
+    let bg_a = select(1.0, bg[base + 3], c >= 4);
+
+    // Porter-Duff Over: Fg + Bg * (1 - Fg.a)
+    let inv_fg_a = 1.0 - fg_a;
+    bg[base] = fg_r * fg_a + bg_r * bg_a * inv_fg_a;
+    bg[base + 1] = fg_g * fg_a + bg_g * bg_a * inv_fg_a;
+    bg[base + 2] = fg_b * fg_a + bg_b * bg_a * inv_fg_a;
+    if c >= 4 {
+        bg[base + 3] = fg_a + bg_a * inv_fg_a;
+    }
+}
+"#;
+
+/// Blend modes compositing.
+pub const BLEND: &str = r#"
+struct BlendParams {
+    mode: u32,      // 0=Normal,1=Multiply,2=Screen,3=Add,4=Subtract,5=Overlay,6=SoftLight,7=HardLight,8=Difference
+    opacity: f32,
+    _pad0: u32,
+    _pad1: u32,
+}
+
+@group(0) @binding(0) var<storage, read> fg: array<f32>;
+@group(0) @binding(1) var<storage, read_write> bg: array<f32>;
+@group(0) @binding(2) var<uniform> dims: vec4<u32>;
+@group(0) @binding(3) var<uniform> params: BlendParams;
+
+fn blend_channel(a: f32, b: f32, mode: u32) -> f32 {
+    switch mode {
+        case 0u: { return a; }                                           // Normal
+        case 1u: { return a * b; }                                       // Multiply
+        case 2u: { return 1.0 - (1.0 - a) * (1.0 - b); }                 // Screen
+        case 3u: { return min(a + b, 1.0); }                             // Add
+        case 4u: { return max(b - a, 0.0); }                             // Subtract
+        case 5u: {                                                        // Overlay
+            if b < 0.5 { return 2.0 * a * b; }
+            else { return 1.0 - 2.0 * (1.0 - a) * (1.0 - b); }
+        }
+        case 6u: {                                                        // SoftLight
+            if a < 0.5 { return b - (1.0 - 2.0 * a) * b * (1.0 - b); }
+            else { return b + (2.0 * a - 1.0) * (sqrt(b) - b); }
+        }
+        case 7u: {                                                        // HardLight
+            if a < 0.5 { return 2.0 * a * b; }
+            else { return 1.0 - 2.0 * (1.0 - a) * (1.0 - b); }
+        }
+        case 8u: { return abs(a - b); }                                  // Difference
+        default: { return a; }
+    }
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let px = id.x;
+    let total = dims.x * dims.y;
+    if px >= total { return; }
+
+    let c = dims.z;
+    let base = px * c;
+
+    for (var ch = 0u; ch < min(c, 3u); ch = ch + 1) {
+        let a = fg[base + ch];
+        let b = bg[base + ch];
+        let blended = blend_channel(a, b, params.mode);
+        bg[base + ch] = b + params.opacity * (blended - b);
+    }
+}
+"#;
+
+/// Crop region from image.
+pub const CROP: &str = r#"
+struct CropParams {
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+    x: u32,
+    y: u32,
+    c: u32,
+    _pad: u32,
+}
+
+@group(0) @binding(0) var<storage, read> src: array<f32>;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<uniform> params: CropParams;
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let dx = id.x;
+    let dy = id.y;
+    if dx >= params.dst_w || dy >= params.dst_h { return; }
+
+    let sx = params.x + dx;
+    let sy = params.y + dy;
+    let src_idx = (sy * params.src_w + sx) * params.c;
+    let dst_idx = (dy * params.dst_w + dx) * params.c;
+
+    for (var ch = 0u; ch < params.c; ch = ch + 1) {
+        dst[dst_idx + ch] = src[src_idx + ch];
+    }
+}
+"#;
+
+/// Flip horizontal.
+pub const FLIP_H: &str = r#"
+@group(0) @binding(0) var<storage, read> src: array<f32>;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<uniform> dims: vec4<u32>;  // w, h, c, 0
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let x = id.x;
+    let y = id.y;
+    let w = dims.x;
+    let h = dims.y;
+    let c = dims.z;
+    if x >= w || y >= h { return; }
+
+    let src_idx = (y * w + (w - 1 - x)) * c;
+    let dst_idx = (y * w + x) * c;
+
+    for (var ch = 0u; ch < c; ch = ch + 1) {
+        dst[dst_idx + ch] = src[src_idx + ch];
+    }
+}
+"#;
+
+/// Flip vertical.
+pub const FLIP_V: &str = r#"
+@group(0) @binding(0) var<storage, read> src: array<f32>;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<uniform> dims: vec4<u32>;  // w, h, c, 0
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let x = id.x;
+    let y = id.y;
+    let w = dims.x;
+    let h = dims.y;
+    let c = dims.z;
+    if x >= w || y >= h { return; }
+
+    let src_idx = ((h - 1 - y) * w + x) * c;
+    let dst_idx = (y * w + x) * c;
+
+    for (var ch = 0u; ch < c; ch = ch + 1) {
+        dst[dst_idx + ch] = src[src_idx + ch];
+    }
+}
+"#;
+
+/// Rotate 90 degrees clockwise.
+pub const ROTATE_90: &str = r#"
+struct RotateParams {
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,  // = src_h
+    dst_h: u32,  // = src_w
+    c: u32,
+    n: u32,      // rotation count (1=90, 2=180, 3=270)
+    _pad0: u32,
+    _pad1: u32,
+}
+
+@group(0) @binding(0) var<storage, read> src: array<f32>;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<uniform> params: RotateParams;
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let dx = id.x;
+    let dy = id.y;
+    if dx >= params.dst_w || dy >= params.dst_h { return; }
+
+    var sx: u32;
+    var sy: u32;
+    
+    switch params.n {
+        case 1u: {  // 90° CW
+            sx = dy;
+            sy = params.src_h - 1 - dx;
+        }
+        case 2u: {  // 180°
+            sx = params.src_w - 1 - dx;
+            sy = params.src_h - 1 - dy;
+        }
+        case 3u: {  // 270° CW
+            sx = params.src_w - 1 - dy;
+            sy = dx;
+        }
+        default: {  // 0° (copy)
+            sx = dx;
+            sy = dy;
+        }
+    }
+
+    let src_idx = (sy * params.src_w + sx) * params.c;
+    let dst_idx = (dy * params.dst_w + dx) * params.c;
+
+    for (var ch = 0u; ch < params.c; ch = ch + 1) {
+        dst[dst_idx + ch] = src[src_idx + ch];
+    }
+}
+"#;
+
 /// Gaussian blur (vertical pass).
 pub const BLUR_V: &str = r#"
 @group(0) @binding(0) var<storage, read> src: array<f32>;
