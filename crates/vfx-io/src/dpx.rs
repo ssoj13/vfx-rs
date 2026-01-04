@@ -186,6 +186,102 @@ impl Default for DpxWriterOptions {
 
 // === DPX Header ===
 
+/// Orientation header data (offsets 1628-1663 in SMPTE 268M).
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+struct OrientationHeader {
+    /// X offset in pixels.
+    x_offset: u32,
+    /// Y offset in pixels.
+    y_offset: u32,
+    /// X center.
+    x_center: f32,
+    /// Y center.
+    y_center: f32,
+    /// X original size.
+    x_original_size: u32,
+    /// Y original size.
+    y_original_size: u32,
+    /// Source image filename.
+    source_filename: String,
+    /// Source creation date.
+    source_date: String,
+    /// Input device name.
+    input_device: String,
+    /// Input device serial.
+    input_serial: String,
+    /// Pixel aspect ratio (horizontal:vertical).
+    pixel_aspect: (u32, u32),
+}
+
+/// Film header data (offsets 1664-1727 in SMPTE 268M).
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+struct FilmHeader {
+    /// Film manufacturer ID.
+    film_mfg_id: String,
+    /// Film type.
+    film_type: String,
+    /// Perforation offset.
+    perf_offset: String,
+    /// Film prefix.
+    prefix: String,
+    /// Film count.
+    count: u32,
+    /// Film format (e.g., "35mm").
+    format: String,
+    /// Frame position in sequence.
+    frame_position: u32,
+    /// Sequence length (total frames).
+    sequence_length: u32,
+    /// Held count.
+    held_count: u32,
+    /// Frame rate (fps).
+    frame_rate: f32,
+    /// Shutter angle in degrees.
+    shutter_angle: f32,
+    /// Frame identification.
+    frame_id: String,
+    /// Slate information.
+    slate_info: String,
+}
+
+/// TV header data (offsets 1728-1919 in SMPTE 268M).
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+struct TvHeader {
+    /// SMPTE timecode (packed BCD).
+    timecode: u32,
+    /// SMPTE user bits.
+    user_bits: u32,
+    /// Interlace (0=progressive, 1=2:1 interlace).
+    interlace: u8,
+    /// Field number.
+    field_number: u8,
+    /// Video signal standard.
+    video_signal: u8,
+    /// Horizontal sampling rate (Hz).
+    horizontal_sample_rate: f32,
+    /// Vertical sampling rate (Hz).
+    vertical_sample_rate: f32,
+    /// Temporal sampling rate (fps).
+    temporal_sample_rate: f32,
+    /// Time offset from sync (ms).
+    time_offset: f32,
+    /// Gamma.
+    gamma: f32,
+    /// Black level code.
+    black_level: f32,
+    /// Black gain.
+    black_gain: f32,
+    /// Breakpoint.
+    breakpoint: f32,
+    /// White level code.
+    white_level: f32,
+    /// Integration time (s).
+    integration_time: f32,
+}
+
 /// Parsed DPX file header.
 ///
 /// Contains essential information extracted from the 2048-byte header.
@@ -214,6 +310,12 @@ struct DpxHeader {
     transfer: u8,
     /// Colorimetric specification.
     colorimetric: u8,
+    /// Orientation header.
+    orientation: OrientationHeader,
+    /// Film header.
+    film: FilmHeader,
+    /// TV header.
+    tv: TvHeader,
 }
 
 impl DpxHeader {
@@ -271,6 +373,15 @@ impl DpxHeader {
         let bit_depth = read_u8(reader)?;
         let packing = read_u16(reader, is_big_endian)?;
 
+        // Parse Orientation header (offset 1628)
+        let orientation = Self::read_orientation(reader, is_big_endian)?;
+
+        // Parse Film header (offset 1724)
+        let film = Self::read_film(reader, is_big_endian)?;
+
+        // Parse TV header (offset 1920)
+        let tv = Self::read_tv(reader, is_big_endian)?;
+
         Ok(Self {
             magic,
             image_offset,
@@ -283,6 +394,130 @@ impl DpxHeader {
             descriptor,
             transfer,
             colorimetric,
+            orientation,
+            film,
+            tv,
+        })
+    }
+
+    /// Reads the Orientation header section.
+    fn read_orientation<R: Read + Seek>(reader: &mut R, is_be: bool) -> IoResult<OrientationHeader> {
+        // Orientation header starts at offset 1628 per SMPTE 268M
+        reader.seek(SeekFrom::Start(1628))
+            .map_err(|e| IoError::DecodeError(e.to_string()))?;
+
+        let x_offset = read_u32(reader, is_be)?;
+        let y_offset = read_u32(reader, is_be)?;
+        let x_center = read_f32(reader, is_be)?;
+        let y_center = read_f32(reader, is_be)?;
+        let x_original_size = read_u32(reader, is_be)?;
+        let y_original_size = read_u32(reader, is_be)?;
+        let source_filename = read_string(reader, 100)?;
+        let source_date = read_string(reader, 24)?;
+        let input_device = read_string(reader, 32)?;
+        let input_serial = read_string(reader, 32)?;
+
+        // Border validity (4x u16 = 8 bytes)
+        reader.seek(SeekFrom::Current(8))
+            .map_err(|e| IoError::DecodeError(e.to_string()))?;
+
+        // Pixel aspect ratio
+        let pixel_h = read_u32(reader, is_be)?;
+        let pixel_v = read_u32(reader, is_be)?;
+
+        Ok(OrientationHeader {
+            x_offset,
+            y_offset,
+            x_center,
+            y_center,
+            x_original_size,
+            y_original_size,
+            source_filename,
+            source_date,
+            input_device,
+            input_serial,
+            pixel_aspect: (pixel_h, pixel_v),
+        })
+    }
+
+    /// Reads the Film header section.
+    fn read_film<R: Read + Seek>(reader: &mut R, is_be: bool) -> IoResult<FilmHeader> {
+        // Film header at offset 1724 per SMPTE 268M
+        reader.seek(SeekFrom::Start(1724))
+            .map_err(|e| IoError::DecodeError(e.to_string()))?;
+
+        let film_mfg_id = read_string(reader, 2)?;
+        let film_type = read_string(reader, 2)?;
+        let perf_offset = read_string(reader, 2)?;
+        let prefix = read_string(reader, 6)?;
+        let count = read_u32(reader, is_be)?;
+        let format = read_string(reader, 32)?;
+        let frame_position = read_u32(reader, is_be)?;
+        let sequence_length = read_u32(reader, is_be)?;
+        let held_count = read_u32(reader, is_be)?;
+        let frame_rate = read_f32(reader, is_be)?;
+        let shutter_angle = read_f32(reader, is_be)?;
+        let frame_id = read_string(reader, 32)?;
+        let slate_info = read_string(reader, 100)?;
+
+        Ok(FilmHeader {
+            film_mfg_id,
+            film_type,
+            perf_offset,
+            prefix,
+            count,
+            format,
+            frame_position,
+            sequence_length,
+            held_count,
+            frame_rate,
+            shutter_angle,
+            frame_id,
+            slate_info,
+        })
+    }
+
+    /// Reads the TV header section.
+    fn read_tv<R: Read + Seek>(reader: &mut R, is_be: bool) -> IoResult<TvHeader> {
+        // TV header at offset 1920 per SMPTE 268M
+        reader.seek(SeekFrom::Start(1920))
+            .map_err(|e| IoError::DecodeError(e.to_string()))?;
+
+        let timecode = read_u32(reader, is_be)?;
+        let user_bits = read_u32(reader, is_be)?;
+        let interlace = read_u8(reader)?;
+        let field_number = read_u8(reader)?;
+        let video_signal = read_u8(reader)?;
+        // Skip padding byte
+        reader.seek(SeekFrom::Current(1))
+            .map_err(|e| IoError::DecodeError(e.to_string()))?;
+        let horizontal_sample_rate = read_f32(reader, is_be)?;
+        let vertical_sample_rate = read_f32(reader, is_be)?;
+        let temporal_sample_rate = read_f32(reader, is_be)?;
+        let time_offset = read_f32(reader, is_be)?;
+        let gamma = read_f32(reader, is_be)?;
+        let black_level = read_f32(reader, is_be)?;
+        let black_gain = read_f32(reader, is_be)?;
+        let breakpoint = read_f32(reader, is_be)?;
+        let white_level = read_f32(reader, is_be)?;
+        let integration_time = read_f32(reader, is_be)?;
+
+        Ok(TvHeader {
+            timecode,
+            user_bits,
+            interlace,
+            field_number,
+            video_signal,
+            horizontal_sample_rate,
+            vertical_sample_rate,
+            temporal_sample_rate,
+            time_offset,
+            gamma,
+            black_level,
+            black_gain,
+            breakpoint,
+            white_level,
+            integration_time,
         })
     }
 
@@ -377,6 +612,94 @@ impl DpxReader {
         metadata.attrs.set("Transfer", AttrValue::UInt(header.transfer as u32));
         metadata.attrs.set("Colorimetric", AttrValue::UInt(header.colorimetric as u32));
         metadata.attrs.set("Packing", AttrValue::UInt(header.packing as u32));
+
+        // Orientation header
+        if header.orientation.pixel_aspect.0 > 0 && header.orientation.pixel_aspect.1 > 0 {
+            let aspect = header.orientation.pixel_aspect.0 as f32 / header.orientation.pixel_aspect.1 as f32;
+            metadata.attrs.set("PixelAspectRatio", AttrValue::Float(aspect));
+            metadata.attrs.set("PixelAspectH", AttrValue::UInt(header.orientation.pixel_aspect.0));
+            metadata.attrs.set("PixelAspectV", AttrValue::UInt(header.orientation.pixel_aspect.1));
+        }
+        if header.orientation.x_original_size > 0 {
+            metadata.attrs.set("XOriginalSize", AttrValue::UInt(header.orientation.x_original_size));
+        }
+        if header.orientation.y_original_size > 0 {
+            metadata.attrs.set("YOriginalSize", AttrValue::UInt(header.orientation.y_original_size));
+        }
+        if !header.orientation.source_filename.is_empty() {
+            metadata.attrs.set("SourceFilename", AttrValue::Str(header.orientation.source_filename.clone()));
+        }
+        if !header.orientation.source_date.is_empty() {
+            metadata.attrs.set("SourceDate", AttrValue::Str(header.orientation.source_date.clone()));
+        }
+        if !header.orientation.input_device.is_empty() {
+            metadata.attrs.set("InputDevice", AttrValue::Str(header.orientation.input_device.clone()));
+        }
+        if !header.orientation.input_serial.is_empty() {
+            metadata.attrs.set("InputSerial", AttrValue::Str(header.orientation.input_serial.clone()));
+        }
+
+        // Film header
+        if header.film.frame_rate > 0.0 && header.film.frame_rate.is_finite() {
+            metadata.attrs.set("FrameRate", AttrValue::Float(header.film.frame_rate));
+        }
+        if header.film.shutter_angle > 0.0 && header.film.shutter_angle.is_finite() {
+            metadata.attrs.set("ShutterAngle", AttrValue::Float(header.film.shutter_angle));
+        }
+        if header.film.frame_position > 0 && header.film.frame_position != 0xFFFFFFFF {
+            metadata.attrs.set("FramePosition", AttrValue::UInt(header.film.frame_position));
+        }
+        if header.film.sequence_length > 0 && header.film.sequence_length != 0xFFFFFFFF {
+            metadata.attrs.set("SequenceLength", AttrValue::UInt(header.film.sequence_length));
+        }
+        if !header.film.format.is_empty() {
+            metadata.attrs.set("FilmFormat", AttrValue::Str(header.film.format.clone()));
+        }
+        if !header.film.frame_id.is_empty() {
+            metadata.attrs.set("FrameId", AttrValue::Str(header.film.frame_id.clone()));
+        }
+        if !header.film.slate_info.is_empty() {
+            metadata.attrs.set("SlateInfo", AttrValue::Str(header.film.slate_info.clone()));
+        }
+
+        // TV header
+        if header.tv.timecode != 0 && header.tv.timecode != 0xFFFFFFFF {
+            // Decode SMPTE timecode from packed BCD
+            let tc = header.tv.timecode;
+            let hours = ((tc >> 28) & 0xF) * 10 + ((tc >> 24) & 0xF);
+            let mins = ((tc >> 20) & 0xF) * 10 + ((tc >> 16) & 0xF);
+            let secs = ((tc >> 12) & 0xF) * 10 + ((tc >> 8) & 0xF);
+            let frames = ((tc >> 4) & 0xF) * 10 + (tc & 0xF);
+            let tc_str = format!("{:02}:{:02}:{:02}:{:02}", hours, mins, secs, frames);
+            metadata.attrs.set("Timecode", AttrValue::Str(tc_str));
+            metadata.attrs.set("TimecodeRaw", AttrValue::UInt(tc));
+        }
+        if header.tv.interlace != 0xFF {
+            metadata.attrs.set("Interlace", AttrValue::UInt(header.tv.interlace as u32));
+        }
+        if header.tv.field_number != 0xFF {
+            metadata.attrs.set("FieldNumber", AttrValue::UInt(header.tv.field_number as u32));
+        }
+        if header.tv.video_signal != 0xFF && header.tv.video_signal > 0 {
+            let signal_name = match header.tv.video_signal {
+                1 => "NTSC",
+                2 => "PAL",
+                3 => "PAL-M",
+                4 => "SECAM",
+                50 => "YCBCR_SMPTE_274M",
+                51 => "YCBCR_ITU-R_709-4",
+                100 => "Z_linear",
+                101 => "Z_homogeneous",
+                _ => "Unknown",
+            };
+            metadata.attrs.set("VideoSignal", AttrValue::Str(signal_name.to_string()));
+        }
+        if header.tv.gamma > 0.0 && header.tv.gamma.is_finite() {
+            metadata.attrs.set("Gamma", AttrValue::Float(header.tv.gamma));
+        }
+        if header.tv.temporal_sample_rate > 0.0 && header.tv.temporal_sample_rate.is_finite() {
+            metadata.attrs.set("TemporalSampleRate", AttrValue::Float(header.tv.temporal_sample_rate));
+        }
 
         Ok(ImageData {
             width: header.width,
@@ -722,6 +1045,32 @@ fn read_u32<R: Read>(reader: &mut R, big_endian: bool) -> IoResult<u32> {
         u32::from_le_bytes(buf)
     })
 }
+
+fn read_f32<R: Read>(reader: &mut R, big_endian: bool) -> IoResult<f32> {
+    let mut buf = [0u8; 4];
+    reader.read_exact(&mut buf)
+        .map_err(|e| IoError::DecodeError(e.to_string()))?;
+    Ok(if big_endian {
+        f32::from_be_bytes(buf)
+    } else {
+        f32::from_le_bytes(buf)
+    })
+}
+
+fn read_string<R: Read>(reader: &mut R, max_len: usize) -> IoResult<String> {
+    let mut buf = vec![0u8; max_len];
+    reader.read_exact(&mut buf)
+        .map_err(|e| IoError::DecodeError(e.to_string()))?;
+    // Trim null bytes and convert to string
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    String::from_utf8_lossy(&buf[..end]).trim().to_string().pipe(Ok)
+}
+
+/// Helper trait for pipe syntax.
+trait Pipe: Sized {
+    fn pipe<F, R>(self, f: F) -> R where F: FnOnce(Self) -> R { f(self) }
+}
+impl<T> Pipe for T {}
 
 fn read_8bit<R: Read>(reader: &mut R, pixel_count: usize) -> IoResult<Vec<f32>> {
     let mut buf = vec![0u8; pixel_count * 3];

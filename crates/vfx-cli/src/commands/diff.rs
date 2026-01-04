@@ -13,14 +13,23 @@ pub fn run(args: DiffArgs, verbose: bool) -> Result<()> {
             img_a.width, img_a.height, img_b.width, img_b.height);
     }
 
-    if img_a.channels != img_b.channels {
-        bail!("Channel count doesn't match: {} vs {}", img_a.channels, img_b.channels);
+    // Compare common channels (RGB even if one is RGBA)
+    let channels_a = img_a.channels as usize;
+    let channels_b = img_b.channels as usize;
+    let compare_channels = channels_a.min(channels_b);
+    
+    if channels_a != channels_b && verbose {
+        println!("Note: Channel count differs ({} vs {}), comparing {} common channels",
+            channels_a, channels_b, compare_channels);
     }
 
     let data_a = img_a.to_f32();
     let data_b = img_b.to_f32();
+    let pixels = (img_a.width * img_a.height) as usize;
     
-    let (max_diff, mean_diff, rms_diff, diff_pixels) = compute_diff(&data_a, &data_b, img_a.channels as usize);
+    let (max_diff, mean_diff, rms_diff, diff_pixels) = compute_diff(
+        &data_a, &data_b, pixels, channels_a, channels_b, compare_channels
+    );
 
     println!("Comparing {} vs {}", args.a.display(), args.b.display());
     println!("  Max difference:  {:.6}", max_diff);
@@ -32,8 +41,8 @@ pub fn run(args: DiffArgs, verbose: bool) -> Result<()> {
 
     // Save difference image if requested
     if let Some(ref output) = args.output {
-        let diff_data = create_diff_image(&data_a, &data_b);
-        let diff_image = ImageData::from_f32(img_a.width, img_a.height, img_a.channels, diff_data);
+        let diff_data = create_diff_image(&data_a, &data_b, pixels, channels_a, channels_b, compare_channels);
+        let diff_image = ImageData::from_f32(img_a.width, img_a.height, compare_channels as u32, diff_data);
         super::save_image(output, &diff_image)?;
         if verbose {
             println!("Difference image saved to {}", output.display());
@@ -55,45 +64,62 @@ pub fn run(args: DiffArgs, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn compute_diff(a: &[f32], b: &[f32], channels: usize) -> (f32, f32, f32, usize) {
+/// Compare images with potentially different channel counts.
+/// Only compares the first `compare_channels` channels of each pixel.
+fn compute_diff(
+    a: &[f32], b: &[f32],
+    pixels: usize,
+    channels_a: usize, channels_b: usize,
+    compare_channels: usize,
+) -> (f32, f32, f32, usize) {
     let mut max_diff = 0.0f32;
     let mut sum_diff = 0.0f64;
     let mut sum_sq = 0.0f64;
     let mut diff_pixels = 0usize;
+    let mut n = 0usize;
 
-    let pixels = a.len() / channels;
-
-    for i in 0..a.len() {
-        let d = (a[i] - b[i]).abs();
-        if d > max_diff { max_diff = d; }
-        sum_diff += d as f64;
-        sum_sq += (d * d) as f64;
-    }
-
-    // Count pixels that differ
     for p in 0..pixels {
-        let mut differs = false;
-        for c in 0..channels {
-            let idx = p * channels + c;
-            if (a[idx] - b[idx]).abs() > 1e-6 {
-                differs = true;
-                break;
-            }
+        let mut pixel_differs = false;
+        for c in 0..compare_channels {
+            let va = a[p * channels_a + c];
+            let vb = b[p * channels_b + c];
+            let d = (va - vb).abs();
+            
+            if d > max_diff { max_diff = d; }
+            sum_diff += d as f64;
+            sum_sq += (d * d) as f64;
+            n += 1;
+            
+            if d > 1e-6 { pixel_differs = true; }
         }
-        if differs { diff_pixels += 1; }
+        if pixel_differs { diff_pixels += 1; }
     }
 
-    let n = a.len() as f64;
+    let n = n as f64;
     let mean = (sum_diff / n) as f32;
     let rms = (sum_sq / n).sqrt() as f32;
 
     (max_diff, mean, rms, diff_pixels)
 }
 
-fn create_diff_image(a: &[f32], b: &[f32]) -> Vec<f32> {
+/// Create difference image from two images with potentially different channel counts.
+fn create_diff_image(
+    a: &[f32], b: &[f32],
+    pixels: usize,
+    channels_a: usize, channels_b: usize,
+    compare_channels: usize,
+) -> Vec<f32> {
     let scale = 10.0; // Amplify differences for visibility
-    a.iter()
-        .zip(b.iter())
-        .map(|(&va, &vb)| ((va - vb).abs() * scale).min(1.0))
-        .collect()
+    let mut result = Vec::with_capacity(pixels * compare_channels);
+    
+    for p in 0..pixels {
+        for c in 0..compare_channels {
+            let va = a[p * channels_a + c];
+            let vb = b[p * channels_b + c];
+            let d = ((va - vb).abs() * scale).min(1.0);
+            result.push(d);
+        }
+    }
+    
+    result
 }
