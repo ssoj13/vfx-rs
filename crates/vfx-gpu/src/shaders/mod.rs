@@ -1,7 +1,4 @@
 //! WGSL shader sources for GPU compute pipelines.
-//! These are used by the wgpu backend when the `wgpu` feature is enabled.
-
-#![allow(dead_code)] // Shaders used by wgpu backend
 
 /// Color matrix 4x4 transform.
 pub const COLOR_MATRIX: &str = r#"

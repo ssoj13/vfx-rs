@@ -18,7 +18,9 @@ pub use cpu_backend::{CpuBackend, CpuPrimitives};
 #[cfg(feature = "wgpu")]
 pub use wgpu_backend::{WgpuBackend, WgpuPrimitives};
 
-use crate::{GpuError, GpuResult};
+use crate::GpuResult;
+
+
 
 /// Available compute backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
