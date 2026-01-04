@@ -267,7 +267,7 @@ impl TextureSystem {
     }
 
     /// Fetches a single pixel from cache.
-    fn fetch_pixel(&self, path: &Path, info: &CachedImageInfo,
+    fn fetch_pixel(&self, path: &Path, _info: &CachedImageInfo,
                    x: u32, y: u32, mip: u32, opts: &TextureOptions) -> IoResult<[f32; 4]> {
         let tile_x = x / DEFAULT_TILE_SIZE;
         let tile_y = y / DEFAULT_TILE_SIZE;
