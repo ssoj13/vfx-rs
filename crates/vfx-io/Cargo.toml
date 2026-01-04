@@ -16,6 +16,23 @@ tiff = ["dep:tiff"]
 dpx = []
 hdr = []
 
+# HEIF/HEIC support (requires system libheif >= 1.17)
+# 
+# Windows (vcpkg):
+#   vcpkg install libheif:x64-windows
+#   set VCPKG_ROOT=C:\vcpkg
+#
+# Linux:
+#   apt install libheif-dev   # Debian/Ubuntu
+#   dnf install libheif-devel # Fedora
+#
+# macOS:
+#   brew install libheif
+#
+# Or use embedded-libheif to compile from source (slower build):
+#   heif = ["dep:libheif-rs", "libheif-rs/embedded-libheif"]
+heif = ["dep:libheif-rs"]
+
 [dependencies]
 vfx-core.workspace = true
 thiserror.workspace = true
@@ -32,6 +49,9 @@ jpeg-encoder = { version = "0.6", optional = true }
 
 # TIFF support
 tiff = { version = "0.10", optional = true }
+
+# HEIF/HEIC support (see feature comment for setup instructions)
+libheif-rs = { version = "2.5", optional = true }
 
 # For DPX (manual implementation)
 byteorder = "1.5"

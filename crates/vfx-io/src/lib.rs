@@ -91,6 +91,7 @@
 //! - `tiff` - TIFF support (default)
 //! - `dpx` - DPX support (default)
 //! - `hdr` - Radiance HDR support (default)
+//! - `heif` - HEIF/HEIC support (requires system libheif, see Cargo.toml)
 
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
@@ -119,6 +120,8 @@ pub mod dpx;
 
 #[cfg(feature = "hdr")]
 pub mod hdr;
+
+pub mod heif;
 
 pub mod sequence;
 pub mod cache;
