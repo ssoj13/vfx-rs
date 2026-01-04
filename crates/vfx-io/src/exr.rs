@@ -48,9 +48,13 @@
 //! writer.write("output.exr", &image)?;
 //! ```
 
-use crate::{AttrValue, FormatReader, FormatWriter, ImageData, IoError, IoResult, Metadata, PixelData, PixelFormat};
+use crate::{
+    AttrValue, ChannelSampleType, ChannelSamples, FormatReader, FormatWriter, ImageChannel,
+    ImageData, ImageLayer, IoError, IoResult, LayeredImage, Metadata, PixelData, PixelFormat,
+};
 use std::io::Cursor;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // ============================================================================
 // Compression
@@ -180,6 +184,7 @@ impl Default for ExrWriterOptions {
 /// # Features
 ///
 /// - Reads first RGBA layer from multi-layer files
+/// - Supports reading all layers and channels via `read_layers`
 /// - Extracts comprehensive metadata (chromaticities, timecode, etc.)
 /// - Supports reading from file or memory
 ///
@@ -266,6 +271,92 @@ impl ExrReader {
         self.extract_metadata(data, &mut result.metadata)?;
 
         Ok(result)
+    }
+
+    /// Reads all layers and channels from an EXR file.
+    pub fn read_layers<P: AsRef<Path>>(&self, path: P) -> IoResult<LayeredImage> {
+        use exr::image::read::read_all_flat_layers_from_file;
+        use exr::image::FlatSamples;
+
+        let path = path.as_ref();
+        let data = std::fs::read(path)?;
+
+        let image = read_all_flat_layers_from_file(path)
+            .map_err(|e| IoError::DecodeError(format!("EXR decode error: {}", e)))?;
+
+        let mut layered = LayeredImage {
+            layers: Vec::new(),
+            metadata: Metadata::default(),
+        };
+
+        layered.metadata.colorspace = Some("linear".to_string());
+        self.extract_metadata(&data, &mut layered.metadata)?;
+
+        for (idx, layer) in image.layer_data.iter().enumerate() {
+            let width = layer.size.width() as u32;
+            let height = layer.size.height() as u32;
+            let mut channels = Vec::with_capacity(layer.channel_data.list.len());
+
+            for channel in layer.channel_data.list.iter() {
+                let name = channel.name.to_string();
+                let sampling = (channel.sampling.0, channel.sampling.1);
+                let quantize_linearly = channel.quantize_linearly;
+
+                let (sample_type, samples) = match &channel.sample_data {
+                    FlatSamples::F16(values) => {
+                        let mut data = Vec::with_capacity(values.len());
+                        for value in values {
+                            data.push(f32::from(*value));
+                        }
+                        (ChannelSampleType::F16, ChannelSamples::F32(data))
+                    }
+                    FlatSamples::F32(values) => {
+                        (ChannelSampleType::F32, ChannelSamples::F32(values.clone()))
+                    }
+                    FlatSamples::U32(values) => {
+                        (ChannelSampleType::U32, ChannelSamples::U32(values.clone()))
+                    }
+                };
+
+                channels.push(ImageChannel {
+                    name,
+                    sample_type,
+                    samples,
+                    sampling,
+                    quantize_linearly,
+                });
+            }
+
+            let name = layer
+                .attributes
+                .layer_name
+                .as_ref()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| format!("Layer{}", idx));
+
+            layered.layers.push(ImageLayer {
+                name,
+                width,
+                height,
+                channels,
+            });
+        }
+
+        Ok(layered)
+    }
+
+    /// Reads all RGBA layers from an EXR byte slice.
+    pub fn read_layers_from_memory(&self, data: &[u8]) -> IoResult<LayeredImage> {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|t| t.as_nanos())
+            .unwrap_or(0);
+        let temp_path = std::env::temp_dir().join(format!("vfx_io_exr_layers_{}.exr", suffix));
+
+        std::fs::write(&temp_path, data)?;
+        let result = self.read_layers(&temp_path);
+        let _ = std::fs::remove_file(&temp_path);
+        result
     }
 
     /// Extracts metadata from EXR headers.
@@ -520,6 +611,137 @@ impl ExrWriter {
 
         Ok(buffer)
     }
+
+    /// Internal multi-layer write implementation.
+    fn write_layers_impl(&self, image: &LayeredImage) -> IoResult<Vec<u8>> {
+        use exr::image::FlatSamples;
+        use exr::meta::attribute::Text;
+        use exr::meta::header::ImageAttributes;
+        use exr::prelude::*;
+        use exr::math::Vec2;
+
+        let first = image.layers.first().ok_or_else(|| {
+            IoError::EncodeError("EXR encode error: no layers provided".into())
+        })?;
+
+        let width = first.width as usize;
+        let height = first.height as usize;
+
+        for layer in &image.layers {
+            if layer.width as usize != width || layer.height as usize != height {
+                return Err(IoError::EncodeError(
+                    "EXR encode error: all layers must share dimensions".into(),
+                ));
+            }
+        }
+
+        let encoding = Encoding {
+            compression: self.options.compression.to_exr(),
+            ..Encoding::default()
+        };
+
+        let mut layers = Vec::with_capacity(image.layers.len());
+        for (idx, layer) in image.layers.iter().enumerate() {
+                let name = if layer.name.is_empty() {
+                    format!("Layer{}", idx)
+                } else {
+                    layer.name.clone()
+                };
+
+                let mut list: SmallVec<[AnyChannel<FlatSamples>; 4]> = SmallVec::new();
+
+                for channel in &layer.channels {
+                    let expected = width * height;
+                    if channel.sampling == (1, 1) && channel.samples.len() != expected {
+                        return Err(IoError::EncodeError(format!(
+                            "EXR encode error: channel {} has {} samples, expected {}",
+                            channel.name,
+                            channel.samples.len(),
+                            expected
+                        )));
+                    }
+
+                    let samples = match channel.sample_type {
+                        ChannelSampleType::F16 => match &channel.samples {
+                            ChannelSamples::F32(values) => {
+                                let data: Vec<f16> = values.iter().map(|v| f16::from_f32(*v)).collect();
+                                FlatSamples::F16(data)
+                            }
+                            ChannelSamples::U32(_) => {
+                                return Err(IoError::EncodeError(format!(
+                                    "EXR encode error: channel {} expects F16 samples but has U32 data",
+                                    channel.name
+                                )));
+                            }
+                        },
+                        ChannelSampleType::F32 => match &channel.samples {
+                            ChannelSamples::F32(values) => FlatSamples::F32(values.clone()),
+                            ChannelSamples::U32(_) => {
+                                return Err(IoError::EncodeError(format!(
+                                    "EXR encode error: channel {} expects F32 samples but has U32 data",
+                                    channel.name
+                                )));
+                            }
+                        },
+                        ChannelSampleType::U32 => match &channel.samples {
+                            ChannelSamples::U32(values) => FlatSamples::U32(values.clone()),
+                            ChannelSamples::F32(_) => {
+                                return Err(IoError::EncodeError(format!(
+                                    "EXR encode error: channel {} expects U32 samples but has F32 data",
+                                    channel.name
+                                )));
+                            }
+                        },
+                    };
+
+                    let sampling = Vec2(channel.sampling.0, channel.sampling.1);
+                    let text_name = Text::new_or_none(&channel.name).ok_or_else(|| {
+                        IoError::EncodeError(format!(
+                            "EXR encode error: channel name contains unsupported characters: {}",
+                            channel.name
+                        ))
+                    })?;
+                    list.push(AnyChannel {
+                        name: text_name,
+                        sample_data: samples,
+                        quantize_linearly: channel.quantize_linearly,
+                        sampling,
+                    });
+                }
+
+                let channels = AnyChannels::sort(list);
+
+                let layer = Layer::new(
+                    (width, height),
+                    LayerAttributes::named(name.as_str()),
+                    encoding,
+                    channels,
+                );
+                layers.push(layer);
+            }
+
+        let exr_image = Image::from_layers(ImageAttributes::with_size((width, height)), layers);
+
+        let mut buffer = Vec::new();
+        exr_image
+            .write()
+            .to_buffered(Cursor::new(&mut buffer))
+            .map_err(|e| IoError::EncodeError(format!("EXR encode error: {}", e)))?;
+
+        Ok(buffer)
+    }
+
+    /// Writes a multi-layer EXR file to disk.
+    pub fn write_layers<P: AsRef<Path>>(&self, path: P, image: &LayeredImage) -> IoResult<()> {
+        let data = self.write_layers_impl(image)?;
+        std::fs::write(path.as_ref(), data)?;
+        Ok(())
+    }
+
+    /// Writes a multi-layer EXR to a byte vector.
+    pub fn write_layers_to_memory(&self, image: &LayeredImage) -> IoResult<Vec<u8>> {
+        self.write_layers_impl(image)
+    }
 }
 
 impl Default for ExrWriter {
@@ -578,6 +800,11 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
     ExrReader::new().read(path)
 }
 
+/// Reads all layers and channels from an EXR file.
+pub fn read_layers<P: AsRef<Path>>(path: P) -> IoResult<LayeredImage> {
+    ExrReader::new().read_layers(path)
+}
+
 /// Writes an EXR file with default options (ZIP compression).
 ///
 /// Convenience wrapper around [`ExrWriter`]. For custom options,
@@ -592,6 +819,11 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
 /// ```
 pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
     ExrWriter::new().write(path, image)
+}
+
+/// Writes a multi-layer EXR file with default options (ZIP compression).
+pub fn write_layers<P: AsRef<Path>>(path: P, image: &LayeredImage) -> IoResult<()> {
+    ExrWriter::new().write_layers(path, image)
 }
 
 // ============================================================================
@@ -646,6 +878,189 @@ mod tests {
 
         let loaded = read(&temp_path).expect("Read failed");
         assert_eq!(loaded.width, 32);
+
+        let _ = std::fs::remove_file(&temp_path);
+    }
+
+    /// Tests multi-layer read/write roundtrip.
+    #[test]
+    fn test_multi_layer_roundtrip() {
+        let layer_a = ImageLayer {
+            name: "beauty".to_string(),
+            width: 8,
+            height: 8,
+            channels: vec![
+                ImageChannel {
+                    name: "R".to_string(),
+                    sample_type: ChannelSampleType::F16,
+                    samples: ChannelSamples::F32(vec![0.25; 8 * 8]),
+                    sampling: (1, 1),
+                    quantize_linearly: false,
+                },
+                ImageChannel {
+                    name: "G".to_string(),
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![0.25; 8 * 8]),
+                    sampling: (1, 1),
+                    quantize_linearly: false,
+                },
+                ImageChannel {
+                    name: "B".to_string(),
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![0.25; 8 * 8]),
+                    sampling: (1, 1),
+                    quantize_linearly: false,
+                },
+                ImageChannel {
+                    name: "A".to_string(),
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![1.0; 8 * 8]),
+                    sampling: (1, 1),
+                    quantize_linearly: true,
+                },
+            ],
+        };
+        let layer_b = ImageLayer {
+            name: "spec".to_string(),
+            width: 8,
+            height: 8,
+            channels: vec![
+                ImageChannel {
+                    name: "R".to_string(),
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![0.75; 8 * 8]),
+                    sampling: (1, 1),
+                    quantize_linearly: false,
+                },
+                ImageChannel {
+                    name: "G".to_string(),
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![0.75; 8 * 8]),
+                    sampling: (1, 1),
+                    quantize_linearly: false,
+                },
+                ImageChannel {
+                    name: "B".to_string(),
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![0.75; 8 * 8]),
+                    sampling: (1, 1),
+                    quantize_linearly: false,
+                },
+                ImageChannel {
+                    name: "A".to_string(),
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![1.0; 8 * 8]),
+                    sampling: (1, 1),
+                    quantize_linearly: true,
+                },
+            ],
+        };
+
+        let layered = LayeredImage {
+            layers: vec![layer_a, layer_b],
+            metadata: Metadata::default(),
+        };
+
+        let temp_path = std::env::temp_dir().join("vfx_io_exr_layers_test.exr");
+        write_layers(&temp_path, &layered).expect("Write layers failed");
+
+        let loaded = read_layers(&temp_path).expect("Read layers failed");
+        assert_eq!(loaded.layers.len(), 2);
+        assert_eq!(loaded.layers[0].width, 8);
+        assert_eq!(loaded.layers[0].height, 8);
+        assert_eq!(loaded.layers[0].channels.len(), 4);
+        let r_channel = loaded.layers[0]
+            .channels
+            .iter()
+            .find(|ch| ch.name == "R")
+            .expect("Missing R channel");
+        assert_eq!(r_channel.sample_type, ChannelSampleType::F16);
+
+        let _ = std::fs::remove_file(&temp_path);
+    }
+
+    /// Tests roundtrip with non-RGBA channels (Z/ID).
+    #[test]
+    fn test_multi_layer_roundtrip_with_z_id() {
+        let width = 4;
+        let height = 4;
+        let pixel_count = (width * height) as usize;
+
+        let layer = ImageLayer {
+            name: "beauty".to_string(),
+            width,
+            height,
+            channels: vec![
+                ImageChannel {
+                    name: "R".to_string(),
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![0.1; pixel_count]),
+                    sampling: (1, 1),
+                    quantize_linearly: false,
+                },
+                ImageChannel {
+                    name: "G".to_string(),
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![0.2; pixel_count]),
+                    sampling: (1, 1),
+                    quantize_linearly: false,
+                },
+                ImageChannel {
+                    name: "B".to_string(),
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![0.3; pixel_count]),
+                    sampling: (1, 1),
+                    quantize_linearly: false,
+                },
+                ImageChannel {
+                    name: "A".to_string(),
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![1.0; pixel_count]),
+                    sampling: (1, 1),
+                    quantize_linearly: true,
+                },
+                ImageChannel {
+                    name: "Z".to_string(),
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32((0..pixel_count).map(|i| i as f32).collect()),
+                    sampling: (1, 1),
+                    quantize_linearly: true,
+                },
+                ImageChannel {
+                    name: "ID".to_string(),
+                    sample_type: ChannelSampleType::U32,
+                    samples: ChannelSamples::U32((0..pixel_count as u32).collect()),
+                    sampling: (1, 1),
+                    quantize_linearly: true,
+                },
+            ],
+        };
+
+        let layered = LayeredImage {
+            layers: vec![layer],
+            metadata: Metadata::default(),
+        };
+
+        let temp_path = std::env::temp_dir().join("vfx_io_exr_layers_zid_test.exr");
+        write_layers(&temp_path, &layered).expect("Write layers failed");
+
+        let loaded = read_layers(&temp_path).expect("Read layers failed");
+        assert_eq!(loaded.layers.len(), 1);
+        assert_eq!(loaded.layers[0].channels.len(), 6);
+
+        let z_channel = loaded.layers[0]
+            .channels
+            .iter()
+            .find(|ch| ch.name == "Z")
+            .expect("Missing Z channel");
+        assert_eq!(z_channel.sample_type, ChannelSampleType::F32);
+
+        let id_channel = loaded.layers[0]
+            .channels
+            .iter()
+            .find(|ch| ch.name == "ID")
+            .expect("Missing ID channel");
+        assert_eq!(id_channel.sample_type, ChannelSampleType::U32);
 
         let _ = std::fs::remove_file(&temp_path);
     }

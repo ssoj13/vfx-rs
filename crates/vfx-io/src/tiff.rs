@@ -570,7 +570,6 @@ fn apply_tiff_metadata<
     encoder: &mut tiff::encoder::ImageEncoder<'_, W, C, K>,
     image: &ImageData,
 ) -> IoResult<()> {
-    use tiff::encoder::Rational;
     use tiff::tags::{ResolutionUnit, Tag};
 
     let dir = encoder.encoder();

@@ -273,6 +273,74 @@ pub struct ImageData {
     pub metadata: Metadata,
 }
 
+/// The sample type stored for a channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelSampleType {
+    /// 16-bit float (stored as f32 values in memory).
+    F16,
+    /// 32-bit float.
+    F32,
+    /// 32-bit unsigned integer.
+    U32,
+}
+
+/// Channel sample storage.
+#[derive(Debug, Clone)]
+pub enum ChannelSamples {
+    /// Float sample storage (used for F16 and F32).
+    F32(Vec<f32>),
+    /// Integer sample storage.
+    U32(Vec<u32>),
+}
+
+impl ChannelSamples {
+    /// Number of samples in this channel.
+    #[inline]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::F32(data) => data.len(),
+            Self::U32(data) => data.len(),
+        }
+    }
+}
+
+/// A single image channel.
+#[derive(Debug, Clone)]
+pub struct ImageChannel {
+    /// Channel name (e.g., "R", "G", "B", "A", "Z", "ID").
+    pub name: String,
+    /// The intended sample type for serialization.
+    pub sample_type: ChannelSampleType,
+    /// Channel samples.
+    pub samples: ChannelSamples,
+    /// Channel subsampling (x, y).
+    pub sampling: (usize, usize),
+    /// Whether to quantize linearly (for lossy compression hints).
+    pub quantize_linearly: bool,
+}
+
+/// A single named image layer with arbitrary channels.
+#[derive(Debug, Clone)]
+pub struct ImageLayer {
+    /// Layer name (e.g., "beauty", "spec", "depth").
+    pub name: String,
+    /// Layer width in pixels.
+    pub width: u32,
+    /// Layer height in pixels.
+    pub height: u32,
+    /// Ordered list of channels in this layer.
+    pub channels: Vec<ImageChannel>,
+}
+
+/// A multi-layer image container.
+#[derive(Debug, Clone, Default)]
+pub struct LayeredImage {
+    /// Ordered list of layers.
+    pub layers: Vec<ImageLayer>,
+    /// Image-level metadata.
+    pub metadata: Metadata,
+}
+
 /// Pixel data format.
 ///
 /// Describes the numeric type and bit depth of pixel values.
