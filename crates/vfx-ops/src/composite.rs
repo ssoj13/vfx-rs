@@ -31,6 +31,7 @@
 //! ```
 
 use crate::{OpsError, OpsResult};
+use vfx_compute::{Processor, ComputeImage, backend::BlendMode as ComputeBlendMode};
 
 /// Blend mode for compositing operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -56,6 +57,25 @@ pub enum BlendMode {
     Difference,
     /// Exclusion.
     Exclusion,
+}
+
+impl BlendMode {
+    /// Convert to vfx-compute BlendMode
+    fn to_compute(self) -> ComputeBlendMode {
+        match self {
+            Self::Normal => ComputeBlendMode::Normal,
+            Self::Multiply => ComputeBlendMode::Multiply,
+            Self::Screen => ComputeBlendMode::Screen,
+            Self::Add => ComputeBlendMode::Add,
+            Self::Subtract => ComputeBlendMode::Subtract,
+            Self::Overlay => ComputeBlendMode::Overlay,
+            Self::SoftLight => ComputeBlendMode::SoftLight,
+            Self::HardLight => ComputeBlendMode::HardLight,
+            Self::Difference => ComputeBlendMode::Difference,
+            // Exclusion not in compute, fallback to Difference
+            Self::Exclusion => ComputeBlendMode::Difference,
+        }
+    }
 }
 
 /// Composites foreground over background (Porter-Duff Over).
@@ -241,8 +261,19 @@ pub fn over(
         )));
     }
 
-    let mut result = vec![0.0f32; size];
+    // Try GPU-accelerated composite via vfx-compute
+    if let Ok(proc) = Processor::auto() {
+        if let Ok(fg_img) = ComputeImage::from_f32(fg.to_vec(), width as u32, height as u32, 4) {
+            if let Ok(mut bg_img) = ComputeImage::from_f32(bg.to_vec(), width as u32, height as u32, 4) {
+                if proc.composite_over(&fg_img, &mut bg_img).is_ok() {
+                    return Ok(bg_img.data().to_vec());
+                }
+            }
+        }
+    }
 
+    // Fallback: CPU per-pixel
+    let mut result = vec![0.0f32; size];
     for i in 0..(width * height) {
         let idx = i * 4;
         let fg_px = [fg[idx], fg[idx + 1], fg[idx + 2], fg[idx + 3]];
@@ -253,7 +284,6 @@ pub fn over(
         result[idx + 2] = out[2];
         result[idx + 3] = out[3];
     }
-
     Ok(result)
 }
 
@@ -275,8 +305,21 @@ pub fn blend(
         )));
     }
 
-    let mut result = vec![0.0f32; size];
+    // Try GPU-accelerated blend via vfx-compute (except Exclusion)
+    if mode != BlendMode::Exclusion {
+        if let Ok(proc) = Processor::auto() {
+            if let Ok(fg_img) = ComputeImage::from_f32(a.to_vec(), width as u32, height as u32, 4) {
+                if let Ok(mut bg_img) = ComputeImage::from_f32(b.to_vec(), width as u32, height as u32, 4) {
+                    if proc.blend(&fg_img, &mut bg_img, mode.to_compute(), 1.0).is_ok() {
+                        return Ok(bg_img.data().to_vec());
+                    }
+                }
+            }
+        }
+    }
 
+    // Fallback: CPU per-pixel
+    let mut result = vec![0.0f32; size];
     for i in 0..(width * height) {
         let idx = i * 4;
         let a_px = [a[idx], a[idx + 1], a[idx + 2], a[idx + 3]];
@@ -287,7 +330,6 @@ pub fn blend(
         result[idx + 2] = out[2];
         result[idx + 3] = out[3];
     }
-
     Ok(result)
 }
 

@@ -1,7 +1,7 @@
 //! Unified compute processor combining color and image operations.
 
 use crate::image::ComputeImage;
-use crate::backend::{Backend, ProcessingBackend, create_backend};
+use crate::backend::{Backend, ProcessingBackend, BlendMode, create_backend};
 use crate::color::Cdl;
 use crate::ops::ResizeFilter;
 use crate::ComputeResult;
@@ -189,6 +189,65 @@ impl Processor {
         }
         
         Ok(())
+    }
+
+    // =========================================================================
+    // Composite Operations
+    // =========================================================================
+
+    /// Porter-Duff Over: foreground over background.
+    pub fn composite_over(&self, fg: &ComputeImage, bg: &mut ComputeImage) -> ComputeResult<()> {
+        let fg_handle = self.backend.upload(&fg.data, fg.width, fg.height, fg.channels)?;
+        let mut bg_handle = self.backend.upload(&bg.data, bg.width, bg.height, bg.channels)?;
+        self.backend.composite_over(fg_handle.as_ref(), bg_handle.as_mut())?;
+        bg.data = self.backend.download(bg_handle.as_ref())?;
+        Ok(())
+    }
+
+    /// Blend with mode and opacity.
+    pub fn blend(&self, fg: &ComputeImage, bg: &mut ComputeImage, mode: BlendMode, opacity: f32) -> ComputeResult<()> {
+        let fg_handle = self.backend.upload(&fg.data, fg.width, fg.height, fg.channels)?;
+        let mut bg_handle = self.backend.upload(&bg.data, bg.width, bg.height, bg.channels)?;
+        self.backend.blend(fg_handle.as_ref(), bg_handle.as_mut(), mode, opacity)?;
+        bg.data = self.backend.download(bg_handle.as_ref())?;
+        Ok(())
+    }
+
+    // =========================================================================
+    // Transform Operations
+    // =========================================================================
+
+    /// Crop region from image.
+    pub fn crop(&self, img: &ComputeImage, x: u32, y: u32, w: u32, h: u32) -> ComputeResult<ComputeImage> {
+        let handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
+        let cropped = self.backend.crop(handle.as_ref(), x, y, w, h)?;
+        let data = self.backend.download(cropped.as_ref())?;
+        ComputeImage::from_f32(data, w, h, img.channels)
+    }
+
+    /// Flip horizontal.
+    pub fn flip_h(&self, img: &mut ComputeImage) -> ComputeResult<()> {
+        let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
+        self.backend.flip_h(handle.as_mut())?;
+        img.data = self.backend.download(handle.as_ref())?;
+        Ok(())
+    }
+
+    /// Flip vertical.
+    pub fn flip_v(&self, img: &mut ComputeImage) -> ComputeResult<()> {
+        let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
+        self.backend.flip_v(handle.as_mut())?;
+        img.data = self.backend.download(handle.as_ref())?;
+        Ok(())
+    }
+
+    /// Rotate 90 degrees clockwise (n times).
+    pub fn rotate_90(&self, img: &ComputeImage, n: u32) -> ComputeResult<ComputeImage> {
+        let handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
+        let rotated = self.backend.rotate_90(handle.as_ref(), n)?;
+        let (w, h, c) = rotated.dimensions();
+        let data = self.backend.download(rotated.as_ref())?;
+        ComputeImage::from_f32(data, w, h, c)
     }
 }
 

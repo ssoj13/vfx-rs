@@ -25,6 +25,7 @@
 //! ```
 
 use crate::{OpsError, OpsResult};
+use vfx_compute::{Processor, ComputeImage};
 
 /// Crops a region from the image.
 ///
@@ -63,14 +64,22 @@ pub fn crop(
         )));
     }
 
-    let mut dst = Vec::with_capacity(w * h * channels);
+    // Try GPU-accelerated crop via vfx-compute
+    if let Ok(proc) = Processor::auto() {
+        if let Ok(img) = ComputeImage::from_f32(src.to_vec(), src_w as u32, src_h as u32, channels as u32) {
+            if let Ok(cropped) = proc.crop(&img, x as u32, y as u32, w as u32, h as u32) {
+                return Ok(cropped.data().to_vec());
+            }
+        }
+    }
 
+    // Fallback: CPU
+    let mut dst = Vec::with_capacity(w * h * channels);
     for row in y..(y + h) {
         let src_start = (row * src_w + x) * channels;
         let src_end = src_start + w * channels;
         dst.extend_from_slice(&src[src_start..src_end]);
     }
-
     Ok(dst)
 }
 
@@ -90,19 +99,26 @@ pub fn crop(
 /// assert_eq!(flipped[3], 1.0); // Was left, now right (red)
 /// ```
 pub fn flip_h(src: &[f32], width: usize, height: usize, channels: usize) -> Vec<f32> {
-    let mut dst = vec![0.0f32; src.len()];
+    // Try GPU-accelerated flip via vfx-compute
+    if let Ok(proc) = Processor::auto() {
+        if let Ok(mut img) = ComputeImage::from_f32(src.to_vec(), width as u32, height as u32, channels as u32) {
+            if proc.flip_h(&mut img).is_ok() {
+                return img.data().to_vec();
+            }
+        }
+    }
 
+    // Fallback: CPU
+    let mut dst = vec![0.0f32; src.len()];
     for y in 0..height {
         for x in 0..width {
             let src_idx = (y * width + x) * channels;
             let dst_idx = (y * width + (width - 1 - x)) * channels;
-
             for c in 0..channels {
                 dst[dst_idx + c] = src[src_idx + c];
             }
         }
     }
-
     dst
 }
 
@@ -122,15 +138,23 @@ pub fn flip_h(src: &[f32], width: usize, height: usize, channels: usize) -> Vec<
 /// assert_eq!(flipped[3], 1.0); // Was top, now bottom
 /// ```
 pub fn flip_v(src: &[f32], width: usize, height: usize, channels: usize) -> Vec<f32> {
+    // Try GPU-accelerated flip via vfx-compute
+    if let Ok(proc) = Processor::auto() {
+        if let Ok(mut img) = ComputeImage::from_f32(src.to_vec(), width as u32, height as u32, channels as u32) {
+            if proc.flip_v(&mut img).is_ok() {
+                return img.data().to_vec();
+            }
+        }
+    }
+
+    // Fallback: CPU
     let mut dst = vec![0.0f32; src.len()];
     let row_size = width * channels;
-
     for y in 0..height {
         let src_start = y * row_size;
         let dst_start = (height - 1 - y) * row_size;
         dst[dst_start..dst_start + row_size].copy_from_slice(&src[src_start..src_start + row_size]);
     }
-
     dst
 }
 
@@ -157,6 +181,17 @@ pub fn rotate_90_cw(
 ) -> (Vec<f32>, usize, usize) {
     let new_w = height;
     let new_h = width;
+
+    // Try GPU-accelerated rotate via vfx-compute
+    if let Ok(proc) = Processor::auto() {
+        if let Ok(img) = ComputeImage::from_f32(src.to_vec(), width as u32, height as u32, channels as u32) {
+            if let Ok(rotated) = proc.rotate_90(&img, 1) {
+                return (rotated.data().to_vec(), new_w, new_h);
+            }
+        }
+    }
+
+    // Fallback: CPU
     let mut dst = vec![0.0f32; new_w * new_h * channels];
 
     for y in 0..height {
@@ -185,6 +220,17 @@ pub fn rotate_90_ccw(
 ) -> (Vec<f32>, usize, usize) {
     let new_w = height;
     let new_h = width;
+
+    // Try GPU-accelerated rotate via vfx-compute (270° = 3 * 90°)
+    if let Ok(proc) = Processor::auto() {
+        if let Ok(img) = ComputeImage::from_f32(src.to_vec(), width as u32, height as u32, channels as u32) {
+            if let Ok(rotated) = proc.rotate_90(&img, 3) {
+                return (rotated.data().to_vec(), new_w, new_h);
+            }
+        }
+    }
+
+    // Fallback: CPU
     let mut dst = vec![0.0f32; new_w * new_h * channels];
 
     for y in 0..height {
@@ -210,6 +256,16 @@ pub fn rotate_180(
     height: usize,
     channels: usize,
 ) -> Vec<f32> {
+    // Try GPU-accelerated rotate via vfx-compute (180° = 2 * 90°)
+    if let Ok(proc) = Processor::auto() {
+        if let Ok(img) = ComputeImage::from_f32(src.to_vec(), width as u32, height as u32, channels as u32) {
+            if let Ok(rotated) = proc.rotate_90(&img, 2) {
+                return rotated.data().to_vec();
+            }
+        }
+    }
+
+    // Fallback: CPU
     let mut dst = vec![0.0f32; src.len()];
 
     for y in 0..height {
