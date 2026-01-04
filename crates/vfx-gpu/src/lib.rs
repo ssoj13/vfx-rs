@@ -30,7 +30,7 @@ pub mod color;
 pub mod ops;
 mod shaders;
 
-pub use backend::{Backend, GpuLimits, detect_backends, select_best_backend};
+pub use backend::{Backend, GpuLimits, detect_backends, select_best_backend, describe_backends};
 pub use image::GpuImage;
 pub use color::ColorProcessor;
 pub use ops::ImageProcessor;

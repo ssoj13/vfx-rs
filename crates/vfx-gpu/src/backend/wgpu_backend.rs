@@ -637,19 +637,19 @@ fn estimate_vram(info: &wgpu::AdapterInfo, max_buffer_bytes: u64) -> u64 {
     // Check env override
     if let Ok(mb) = std::env::var("VFX_GPU_MEMORY_MB") {
         if let Ok(mb) = mb.parse::<u64>() {
-            return mb * 1024 * 1024;
+            return mb.saturating_mul(1024 * 1024);
         }
     }
 
-    let from_buffer = max_buffer_bytes * 2;
+    let from_buffer = max_buffer_bytes.saturating_mul(2);
 
     let estimated = match info.device_type {
-        wgpu::DeviceType::DiscreteGpu => from_buffer.clamp(2 << 30, 24 << 30),
-        wgpu::DeviceType::IntegratedGpu => from_buffer.clamp(512 << 20, 4 << 30),
-        wgpu::DeviceType::VirtualGpu => from_buffer.clamp(1 << 30, 8 << 30),
-        _ => from_buffer.clamp(256 << 20, 2 << 30),
+        wgpu::DeviceType::DiscreteGpu => from_buffer.clamp(2u64 << 30, 24u64 << 30),
+        wgpu::DeviceType::IntegratedGpu => from_buffer.clamp(512u64 << 20, 4u64 << 30),
+        wgpu::DeviceType::VirtualGpu => from_buffer.clamp(1u64 << 30, 8u64 << 30),
+        _ => from_buffer.clamp(256u64 << 20, 2u64 << 30),
     };
 
     // 80% safe margin
-    estimated * 80 / 100
+    estimated.saturating_mul(80) / 100
 }

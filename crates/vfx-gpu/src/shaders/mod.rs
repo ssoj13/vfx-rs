@@ -1,5 +1,7 @@
 //! WGSL shader sources for GPU compute pipelines.
 
+#![cfg_attr(not(feature = "wgpu"), allow(dead_code))]
+
 /// Color matrix 4x4 transform.
 pub const COLOR_MATRIX: &str = r#"
 @group(0) @binding(0) var<storage, read> src: array<f32>;
