@@ -162,28 +162,28 @@ For >RAM images, need true tiled I/O (see P1.7).
 - [ ] JPEG2000 (JP2)
 
 ### P1.2 More Camera Curves
-- [ ] S-Log2 (Sony)
-- [ ] REDLog (RED)
-- [ ] BMDFilm Gen5 (Blackmagic)
+- [x] S-Log2 (Sony)  `crates/vfx-transfer/src/s_log2.rs`
+- [x] REDLog (RED)  `crates/vfx-transfer/src/red_log.rs`
+- [x] BMDFilm Gen5 (Blackmagic)  `crates/vfx-transfer/src/bmd_film.rs`
 
 ### P1.3 LUT Formats
-- [ ] .3DL (Lustre/Flame/Nuke)
-- [ ] .CTF (OCIO v2)
+- [x] .3DL (Lustre/Flame/Nuke)  `crates/vfx-lut/src/formats/threedl.rs`
+- [x] .CTF (OCIO v2)  `crates/vfx-lut/src/formats/clf.rs`
 
 ### P1.4 Image Processing
-- [ ] FFT/IFFT
-- [ ] Median filter
-- [ ] Morphology (dilate/erode)
+- [x] FFT/IFFT  `crates/vfx-ops/src/fft.rs`
+- [x] Median filter  `crates/vfx-ops/src/filter.rs`
+- [x] Morphology (dilate/erode/open/close/gradient)  `crates/vfx-ops/src/filter.rs`
 
 ### P1.5 OCIO Config Parsing (complete v2)
-- [ ] FixedFunction in config YAML (impl done in processor)
-- [ ] ExposureContrast in config YAML
-- [ ] LookTransform in config
-- [ ] DisplayViewTransform in config
+- [x] FixedFunction in config YAML  `crates/vfx-ocio/src/config.rs`
+- [x] ExposureContrast in config YAML  `crates/vfx-ocio/src/config.rs`
+- [x] LookTransform in config  `crates/vfx-ocio/src/config.rs`
+- [x] DisplayViewTransform in config  `crates/vfx-ocio/src/transform.rs`
 
 ### P1.6 ACES Verification
-- [ ] Create test suite comparing output vs ACES reference images
-- [ ] Bit-accurate validation (within tolerance)
+- [x] Test suite vs ACES reference  `crates/vfx-transfer/tests/aces_validation.rs`
+- [x] Bit-accurate validation (within tolerance)  12 tests covering ACEScct/ACEScc
 
 ### DONE - Streaming I/O (vfx-io/streaming)
 Implemented streaming for >RAM images:
@@ -197,10 +197,12 @@ Implemented streaming for >RAM images:
 - [x] Region::transform() for color pipeline  `crates/vfx-io/src/streaming/traits.rs`
 - [x] open_streaming(), create_streaming_output()  `crates/vfx-io/src/streaming/mod.rs`
 - [x] read_auto() + ImageOrStream  `crates/vfx-io/src/streaming/mod.rs`
+- [x] StreamingPipeline + double-buffering  `crates/vfx-io/src/streaming/pipeline.rs`
+- [x] tile_iterator, TileSpec, ProgressCallback  `crates/vfx-io/src/streaming/pipeline.rs`
 
-### P1.7 Streaming Optimizations (Future)
+### P1.7 Streaming Optimizations
 - [ ] EXR tiled block reading via `exr::block::FilteredChunksReader`
-- [ ] Double-buffered producer-consumer (overlap I/O and compute)
+- [x] Double-buffered producer-consumer  `crates/vfx-io/src/streaming/pipeline.rs`
 - [ ] VRAM-aware tile sizing
 
 ---
