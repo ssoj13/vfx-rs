@@ -12,14 +12,14 @@
 
 ## Phase 3: vfx-ops API Guard
 - [x] Move ensure_color_processing to vfx-ops
-- [ ] Ops accept LayeredImage or ImageLayer
+- [x] Ops accept LayeredImage or ImageLayer (layer_ops.rs)
 
 ## Phase 4: Channel Operations
-- [ ] `channel-shuffle` - reorder/rename channels
-- [ ] `channel-extract` - extract specific channels
+- [x] `channel-shuffle` - reorder/rename channels
+- [x] `channel-extract` - extract specific channels
 
 ## Phase 5: Continue todo11.md
-- [ ] paste op
-- [ ] rotate arbitrary
-- [ ] warp/distortion
-- [ ] ACES IDT/RRT/ODT
+- [x] paste op
+- [x] rotate arbitrary
+- [x] warp/distortion (barrel, pincushion, fisheye, twist, wave, spherize, ripple)
+- [x] ACES IDT/RRT/ODT
