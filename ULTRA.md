@@ -119,13 +119,13 @@
 | blend modes | ✅ | ✅ 10 modes | ✅ |
 | convolve | ✅ | ✅ Basic | Partial |
 | add/sub/mul/div | ✅ | ✅ | ✅ |
+| premult/unpremult | ✅ | ✅ | ✅ |
 
 ### 3.2 Отсутствующие операции (CRITICAL)
 
 | Операция | OIIO | vfx-rs | Priority |
 |----------|------|--------|----------|
 | **paste** | ✅ | ❌ | P0 |
-| **premult/unpremult** | ✅ | ❌ | P0 |
 | **warp/distortion** | ✅ | ❌ | P0 |
 | **rotate arbitrary** | ✅ | ❌ | P0 |
 | **deep operations** | ✅ | ❌ | P0 |
@@ -207,8 +207,8 @@ ImageBufAlgo функций в OIIO: ~80
 | Group | ✅ | ✅ | ✅ |
 | FileTransform | ✅ Full | ✅ Partial | Partial |
 | BuiltinTransform | ✅ 20+ | ✅ ACES | Partial |
-| **FixedFunction** | ✅ | ❌ | **MISSING** |
-| **ExposureContrast** | ✅ | ❌ | **MISSING** |
+| **FixedFunction** | ✅ | ⚠️ Basic | Partial |
+| **ExposureContrast** | ✅ | ⚠️ Basic | Partial |
 | Look | ✅ | ✅ | ✅ |
 | DisplayView | ✅ | ⚠️ Basic | Partial |
 
@@ -243,7 +243,7 @@ ImageBufAlgo функций в OIIO: ~80
 | ACES 1.0 | ✅ Full | ⚠️ Limited | Partial |
 | ACES 1.1 | ✅ Full | ⚠️ Limited | Partial |
 | ACES 1.2 | ✅ Full | ⚠️ Limited | Partial |
-| **ACES 1.3** | ✅ Full | ✅ Full | ✅ |
+| **ACES 1.3** | ✅ Full | ⚠️ Limited | Partial |
 
 ### 5.2 ACES Transforms
 
@@ -287,10 +287,9 @@ ImageBufAlgo функций в OIIO: ~80
 
 1. **Multi-layer EXR** - нельзя работать с compositing файлами
 2. **Deep EXR** - нельзя делать deep compositing
-3. **premult/unpremult** - неправильная alpha обработка
-4. **warp/distortion** - нет lens correction
-5. **paste** - нельзя вставлять элементы
-6. **ACES Input Transforms** - нет linearization камер
+3. **warp/distortion** - нет lens correction
+4. **paste** - нельзя вставлять элементы
+5. **ACES Input Transforms** - нет linearization камер
 
 ### P1 - IMPORTANT (Важно для production)
 

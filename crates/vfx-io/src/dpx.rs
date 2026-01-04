@@ -800,7 +800,12 @@ impl DpxWriter {
             ));
         }
 
-        let bit_depth = self.options.bit_depth;
+        let mut bit_depth = self.options.bit_depth;
+        if let Some(bits) = image.metadata.attrs.get("BitDepth").and_then(|v| v.as_u32()) {
+            if let Some(depth) = BitDepth::from_bits(bits as u8) {
+                bit_depth = depth;
+            }
+        }
         let is_be = self.options.endianness == Endianness::Big;
 
         // Calculate image data size

@@ -421,7 +421,7 @@ impl TiffWriter {
         match self.options.bit_depth {
             BitDepth::Eight => {
                 let u8_data = image.to_u8();
-                self.write_u8(encoder, width, height, channels, &u8_data)?;
+                self.write_u8(encoder, width, height, channels, &u8_data, image)?;
             }
             BitDepth::Sixteen => {
                 let f32_data = image.to_f32();
@@ -429,11 +429,11 @@ impl TiffWriter {
                     .iter()
                     .map(|&v| (v.clamp(0.0, 1.0) * 65535.0) as u16)
                     .collect();
-                self.write_u16(encoder, width, height, channels, &u16_data)?;
+                self.write_u16(encoder, width, height, channels, &u16_data, image)?;
             }
             BitDepth::ThirtyTwoFloat => {
                 let f32_data = image.to_f32();
-                self.write_f32(encoder, width, height, channels, &f32_data)?;
+                self.write_f32(encoder, width, height, channels, &f32_data, image)?;
             }
         }
 
@@ -448,26 +448,37 @@ impl TiffWriter {
         height: u32,
         channels: u8,
         data: &[u8],
+        image: &ImageData,
     ) -> IoResult<()> {
         use tiff::encoder::colortype;
 
+        let mut encoder = encoder.with_compression(self.options.compression.to_tiff());
         match channels {
             1 => {
-                encoder
-                    .with_compression(self.options.compression.to_tiff())
-                    .write_image::<colortype::Gray8>(width, height, data)
+                let mut image_encoder = encoder
+                    .new_image::<colortype::Gray8>(width, height)
+                    .map_err(|e| IoError::EncodeError(e.to_string()))?;
+                apply_tiff_metadata(&mut image_encoder, image)?;
+                image_encoder
+                    .write_data(data)
                     .map_err(|e| IoError::EncodeError(e.to_string()))?;
             }
             3 => {
-                encoder
-                    .with_compression(self.options.compression.to_tiff())
-                    .write_image::<colortype::RGB8>(width, height, data)
+                let mut image_encoder = encoder
+                    .new_image::<colortype::RGB8>(width, height)
+                    .map_err(|e| IoError::EncodeError(e.to_string()))?;
+                apply_tiff_metadata(&mut image_encoder, image)?;
+                image_encoder
+                    .write_data(data)
                     .map_err(|e| IoError::EncodeError(e.to_string()))?;
             }
             4 => {
-                encoder
-                    .with_compression(self.options.compression.to_tiff())
-                    .write_image::<colortype::RGBA8>(width, height, data)
+                let mut image_encoder = encoder
+                    .new_image::<colortype::RGBA8>(width, height)
+                    .map_err(|e| IoError::EncodeError(e.to_string()))?;
+                apply_tiff_metadata(&mut image_encoder, image)?;
+                image_encoder
+                    .write_data(data)
                     .map_err(|e| IoError::EncodeError(e.to_string()))?;
             }
             _ => {
@@ -488,26 +499,37 @@ impl TiffWriter {
         height: u32,
         channels: u8,
         data: &[u16],
+        image: &ImageData,
     ) -> IoResult<()> {
         use tiff::encoder::colortype;
 
+        let mut encoder = encoder.with_compression(self.options.compression.to_tiff());
         match channels {
             1 => {
-                encoder
-                    .with_compression(self.options.compression.to_tiff())
-                    .write_image::<colortype::Gray16>(width, height, data)
+                let mut image_encoder = encoder
+                    .new_image::<colortype::Gray16>(width, height)
+                    .map_err(|e| IoError::EncodeError(e.to_string()))?;
+                apply_tiff_metadata(&mut image_encoder, image)?;
+                image_encoder
+                    .write_data(data)
                     .map_err(|e| IoError::EncodeError(e.to_string()))?;
             }
             3 => {
-                encoder
-                    .with_compression(self.options.compression.to_tiff())
-                    .write_image::<colortype::RGB16>(width, height, data)
+                let mut image_encoder = encoder
+                    .new_image::<colortype::RGB16>(width, height)
+                    .map_err(|e| IoError::EncodeError(e.to_string()))?;
+                apply_tiff_metadata(&mut image_encoder, image)?;
+                image_encoder
+                    .write_data(data)
                     .map_err(|e| IoError::EncodeError(e.to_string()))?;
             }
             4 => {
-                encoder
-                    .with_compression(self.options.compression.to_tiff())
-                    .write_image::<colortype::RGBA16>(width, height, data)
+                let mut image_encoder = encoder
+                    .new_image::<colortype::RGBA16>(width, height)
+                    .map_err(|e| IoError::EncodeError(e.to_string()))?;
+                apply_tiff_metadata(&mut image_encoder, image)?;
+                image_encoder
+                    .write_data(data)
                     .map_err(|e| IoError::EncodeError(e.to_string()))?;
             }
             _ => {
@@ -528,6 +550,7 @@ impl TiffWriter {
         height: u32,
         channels: u8,
         data: &[f32],
+        image: &ImageData,
     ) -> IoResult<()> {
         // Note: tiff crate has limited f32 support
         // For now, convert to u16 as fallback
@@ -535,7 +558,63 @@ impl TiffWriter {
             .iter()
             .map(|&v| (v.clamp(0.0, 1.0) * 65535.0) as u16)
             .collect();
-        self.write_u16(encoder, width, height, channels, &u16_data)
+        self.write_u16(encoder, width, height, channels, &u16_data, image)
+    }
+}
+
+fn apply_tiff_metadata<
+    W: std::io::Write + Seek,
+    C: tiff::encoder::colortype::ColorType,
+    K: tiff::encoder::TiffKind,
+>(
+    encoder: &mut tiff::encoder::ImageEncoder<'_, W, C, K>,
+    image: &ImageData,
+) -> IoResult<()> {
+    use tiff::encoder::Rational;
+    use tiff::tags::{ResolutionUnit, Tag};
+
+    let dir = encoder.encoder();
+
+    if let Some(value) = image.metadata.attrs.get("Software").and_then(|v| v.as_str()) {
+        dir.write_tag(Tag::Software, value)
+            .map_err(|e| IoError::EncodeError(e.to_string()))?;
+    }
+    if let Some(value) = image.metadata.attrs.get("Artist").and_then(|v| v.as_str()) {
+        dir.write_tag(Tag::Artist, value)
+            .map_err(|e| IoError::EncodeError(e.to_string()))?;
+    }
+    if let Some(value) = image.metadata.attrs.get("DateTime").and_then(|v| v.as_str()) {
+        dir.write_tag(Tag::DateTime, value)
+            .map_err(|e| IoError::EncodeError(e.to_string()))?;
+    }
+
+    let x_res = attr_to_f32(image.metadata.attrs.get("XResolution")).or(image.metadata.dpi);
+    let y_res = attr_to_f32(image.metadata.attrs.get("YResolution")).or(image.metadata.dpi);
+
+    if let (Some(x_res), Some(y_res)) = (x_res, y_res) {
+        let x = rational_from_f32(x_res);
+        let y = rational_from_f32(y_res);
+        encoder.resolution_unit(ResolutionUnit::Inch);
+        encoder.x_resolution(x);
+        encoder.y_resolution(y);
+    }
+
+    Ok(())
+}
+
+fn attr_to_f32(value: Option<&AttrValue>) -> Option<f32> {
+    match value {
+        Some(AttrValue::Float(v)) => Some(*v),
+        Some(AttrValue::UInt(v)) => Some(*v as f32),
+        _ => None,
+    }
+}
+
+fn rational_from_f32(value: f32) -> tiff::encoder::Rational {
+    let scale = 10000u32;
+    tiff::encoder::Rational {
+        n: (value * scale as f32) as u32,
+        d: scale,
     }
 }
 

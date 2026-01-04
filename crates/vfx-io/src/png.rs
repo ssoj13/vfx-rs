@@ -505,9 +505,57 @@ impl PngWriter {
         encoder.set_depth(self.options.bit_depth.to_png());
         encoder.set_compression(self.options.compression.to_png());
 
-        // Add sRGB chunk if requested
-        if self.options.srgb {
-            encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+        // Add sRGB chunk if requested or present in metadata
+        let srgb_intent = image
+            .metadata
+            .attrs
+            .get("sRGBRendering")
+            .and_then(|v| v.as_str())
+            .and_then(parse_srgb_intent)
+            .or_else(|| {
+                if self.options.srgb {
+                    Some(png::SrgbRenderingIntent::Perceptual)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                image
+                    .metadata
+                    .colorspace
+                    .as_ref()
+                    .and_then(|cs| cs.eq_ignore_ascii_case("srgb").then_some(png::SrgbRenderingIntent::Perceptual))
+            });
+        if let Some(intent) = srgb_intent {
+            encoder.set_source_srgb(intent);
+        }
+
+        if let Some(gamma) = image
+            .metadata
+            .gamma
+            .or_else(|| image.metadata.attrs.get("Gamma").and_then(|v| v.as_f32()))
+        {
+            encoder.set_source_gamma(png::ScaledFloat::new(gamma));
+        }
+
+        if let Some((x_dpi, y_dpi)) = dpi_from_metadata(&image.metadata) {
+            let xppu = (x_dpi / 0.0254) as u32;
+            let yppu = (y_dpi / 0.0254) as u32;
+            if xppu > 0 && yppu > 0 {
+                encoder.set_pixel_dims(Some(png::PixelDimensions {
+                    xppu,
+                    yppu,
+                    unit: png::Unit::Meter,
+                }));
+            }
+        }
+
+        for (key, value) in image.metadata.attrs.iter() {
+            if let Some(text_key) = key.strip_prefix("Text:") {
+                if let AttrValue::Str(text) = value {
+                    let _ = encoder.add_text_chunk(text_key.to_string(), text.clone());
+                }
+            }
         }
 
         let mut png_writer = encoder
@@ -532,6 +580,37 @@ impl PngWriter {
         }
 
         Ok(())
+    }
+}
+
+fn dpi_from_metadata(metadata: &Metadata) -> Option<(f32, f32)> {
+    let x = metadata
+        .attrs
+        .get("XResolution")
+        .and_then(|v| v.as_f32())
+        .or(metadata.dpi);
+    let y = metadata
+        .attrs
+        .get("YResolution")
+        .and_then(|v| v.as_f32())
+        .or(metadata.dpi);
+    match (x, y) {
+        (Some(x), Some(y)) => Some((x, y)),
+        _ => None,
+    }
+}
+
+fn parse_srgb_intent(value: &str) -> Option<png::SrgbRenderingIntent> {
+    match value.to_lowercase().as_str() {
+        "perceptual" => Some(png::SrgbRenderingIntent::Perceptual),
+        "relative colorimetric" | "relativecolorimetric" => {
+            Some(png::SrgbRenderingIntent::RelativeColorimetric)
+        }
+        "saturation" => Some(png::SrgbRenderingIntent::Saturation),
+        "absolute colorimetric" | "absolutecolorimetric" => {
+            Some(png::SrgbRenderingIntent::AbsoluteColorimetric)
+        }
+        _ => None,
     }
 }
 
