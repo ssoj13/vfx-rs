@@ -1,6 +1,6 @@
 # VFX-RS: Project Status & Roadmap
 
-> Consolidated from docs/, docs2/. Last updated: 2026-01-04
+> Consolidated from docs/, docs2/, ANALYSIS.md. Last updated: 2026-01-04
 
 ## Architecture
 
@@ -22,12 +22,12 @@ vfx-compute    CPU (rayon) + wgpu backends
 Layer 2: High-Level APIs
 ------------------------
 vfx-color      Color pipeline builder, ColorProcessor
-vfx-ocio       OCIO config parsing, display pipeline
+vfx-ocio       OCIO config parsing (v1+v2), display pipeline
 vfx-icc        ICC profile support (lcms2)
 
 Layer 3: I/O & Applications
 ---------------------------
-vfx-io         Format readers/writers
+vfx-io         Format readers/writers, TextureSystem, ImageCache
 vfx-ops        CPU image operations
 vfx-cli        Command-line tools
 ```
@@ -81,15 +81,17 @@ vfx-cli        Command-line tools
 - [x] ACES RRT/ODT/IDT  `crates/vfx-color/src/aces.rs`
 
 ### DONE - OCIO Support (vfx-ocio)
-- [x] Config parsing (YAML)  `crates/vfx-ocio/src/config.rs`
+- [x] Config parsing v1 + v2  `crates/vfx-ocio/src/config.rs` (ConfigVersion::V1, V2)
 - [x] Colorspace definitions  
 - [x] Display/View pipeline  
+- [x] View transforms (v2)  `crates/vfx-ocio/src/display.rs`
 - [x] Looks  
-- [x] File rules  `crates/vfx-ocio/src/file_rules.rs`
+- [x] File rules (v2)  `crates/vfx-ocio/src/file_rules.rs`
+- [x] Context variables ($SHOT, $SEQ)  `crates/vfx-ocio/src/context.rs`
 - [x] Processor ops: Matrix, LUT1D/3D, CDL, Exponent, Log, Range, Group  `crates/vfx-ocio/src/processor.rs`
 - [x] FixedFunction (RGB<->HSV, ACES Gamut)  
 - [x] ExposureContrast  
-- [x] BuiltinTransform (ACES minimal)  `crates/vfx-ocio/src/builtin.rs`
+- [x] BuiltinTransform (ACES)  `crates/vfx-ocio/src/builtin.rs`
 
 ### DONE - ICC Profiles (vfx-icc)
 - [x] ICC v2/v4 via lcms2  `crates/vfx-icc/src/lib.rs`
@@ -106,6 +108,11 @@ vfx-cli        Command-line tools
 - [x] Metadata extraction  `crates/vfx-io/src/metadata.rs`
 - [x] Image sequences  `crates/vfx-io/src/sequence.rs`
 - [x] UDIM detection  `crates/vfx-io/src/udim.rs`
+- [x] ImageCache (LRU, tile-based)  `crates/vfx-io/src/cache.rs`
+- [x] TextureSystem (MIP, filtering, wrap modes)  `crates/vfx-io/src/texture.rs`
+
+**NOTE:** ImageCache/TextureSystem load full images then extract tiles.
+For >RAM images, need true tiled I/O (see P1.7).
 
 ### DONE - Image Operations (vfx-ops)
 - [x] Resize (Nearest, Bilinear, Lanczos3, Mitchell)  `crates/vfx-ops/src/resize.rs`
@@ -125,7 +132,7 @@ vfx-cli        Command-line tools
 - [x] CPU backend (rayon)  `crates/vfx-compute/src/backend/cpu_backend.rs`
 - [x] wgpu backend  `crates/vfx-compute/src/backend/wgpu_backend.rs`
 - [x] Tiling support  `crates/vfx-compute/src/backend/tiling.rs`
-- [x] Backend detection/auto-select  `crates/vfx-compute/src/backend/detect.rs`
+- [x] Backend detection (priority: wgpu > CPU)  `crates/vfx-compute/src/backend/detect.rs`
 - [x] Color matrix shader  `crates/vfx-compute/src/shaders/color_matrix.wgsl`
 - [x] CDL shader  `crates/vfx-compute/src/shaders/cdl.wgsl`
 - [x] LUT1D/3D shaders  `crates/vfx-compute/src/shaders/lut1d.wgsl`, `lut3d.wgsl`
@@ -149,47 +156,55 @@ vfx-cli        Command-line tools
 
 ## TODO - Priority 1 (Important)
 
-### P1.1 Deep EXR - POSTPONE FOR NOW, SKIP IT.
-- [ ] Deep data model (per-pixel sample arrays)
-- [ ] Deep EXR read/write (currently disabled via `.no_deep_data()`)
-- [ ] Deep composite operations
-
-### P1.2 Additional Formats
+### P1.1 Additional Formats
 - [ ] WebP (via image crate, feature gate)
 - [ ] AVIF (via image crate, feature gate)
 - [ ] JPEG2000 (JP2)
 
-### P1.3 More Camera Curves
+### P1.2 More Camera Curves
 - [ ] S-Log2 (Sony)
 - [ ] REDLog (RED)
 - [ ] BMDFilm Gen5 (Blackmagic)
 
-### P1.4 LUT Formats
+### P1.3 LUT Formats
 - [ ] .3DL (Lustre/Flame/Nuke)
 - [ ] .CTF (OCIO v2)
 
-### P1.5 Image Processing
+### P1.4 Image Processing
 - [ ] FFT/IFFT
 - [ ] Median filter
 - [ ] Morphology (dilate/erode)
 
-### P1.6 OCIO Config Parsing
-- [ ] FixedFunction in config (done in processor, not config parser)
-- [ ] ExposureContrast in config
-- [ ] LookTransform
-- [ ] DisplayViewTransform
+### P1.5 OCIO Config Parsing (complete v2)
+- [ ] FixedFunction in config YAML (impl done in processor)
+- [ ] ExposureContrast in config YAML
+- [ ] LookTransform in config
+- [ ] DisplayViewTransform in config
+
+### P1.6 ACES Verification
+- [ ] Create test suite comparing output vs ACES reference images
+- [ ] Bit-accurate validation (within tolerance)
+
+### P1.7 True Tiled I/O (CRITICAL for >RAM images)
+Current ImageCache loads full image then extracts tiles.
+For 8K+ EXR/TIFF that exceed RAM, need streaming I/O:
+- [ ] StreamingSource trait (random-access tile provider)
+- [ ] EXR tiled block reading via `exr::block::FilteredChunksReader`
+- [ ] Double-buffered producer-consumer (overlap I/O and compute)
+- [ ] Memory budgeting (auto-size tiles to fit VRAM)
 
 ---
 
 ## TODO - Priority 2 (Nice to Have)
 
-### P2.1 Caching & Textures
-- [ ] ImageCache system
-- [ ] TextureSystem
-- [ ] Full UDIM support (detection done, loading TODO)
+### P2.1 Deep EXR (niche but important for compositing)
+- [ ] Deep data model (per-pixel sample arrays)
+- [ ] Deep EXR read/write (currently `.no_deep_data()`)
+- [ ] Deep composite operations
 
-### P2.2 GPU
-- [ ] Shader generation (GLSL/HLSL export)
+### P2.2 GPU Shader Export
+- [ ] GLSL shader generation
+- [ ] HLSL shader generation
 - [ ] Real-time preview pipeline
 
 ### P2.3 Advanced I/O
@@ -197,17 +212,26 @@ vfx-cli        Command-line tools
 - [ ] RAW camera support (libraw)
 - [ ] PSD read-only
 
-### P2.4 Advanced Ops
+### P2.4 Advanced Ops (ImageBufAlgo parity)
 - [ ] Text rendering (Freetype)
 - [ ] Noise generation (Perlin)
 - [ ] Demosaic
 - [ ] Transpose
 - [ ] Reorient (EXIF)
+- [ ] Color matching
+- [ ] Feature detection
 
 ### P2.5 EXR Advanced
-- [ ] Tiled images
-- [ ] Mipmap levels
+- [ ] Tiled image write
 - [ ] Full mipchain maketx output
+
+### P2.6 Python Bindings
+- [ ] PyO3 bindings for pipeline integration
+- [ ] NumPy array interop
+
+### P2.7 Benchmarks
+- [ ] Use vfx-bench to measure throughput vs C++ references
+- [ ] Regression tests for performance
 
 ---
 
@@ -248,51 +272,58 @@ vfx-cli        Command-line tools
 4. **Warp operations** - 7 distortion types with bilinear interpolation
 
 5. **Backend selection** - Auto (best available), CPU (always), wgpu (feature)
+   - Priority system in detect.rs: wgpu (100) > CPU (10)
 
----
+6. **OCIO v1 + v2** - Both config versions supported, auto-detected from version field
 
-## File Reference
-
-| Module | Key Files |
-|--------|-----------|
-| Core types | `vfx-core/src/{colorspace,image,pixel}.rs` |
-| Math | `vfx-math/src/{vector,matrix,adaptation}.rs` |
-| LUT | `vfx-lut/src/{lut1d,lut3d}.rs`, `formats/{cube,clf,spi,cdl}.rs` |
-| Transfer | `vfx-transfer/src/{srgb,pq,hlg,logc,slog,vlog,acescct}.rs` |
-| Primaries | `vfx-primaries/src/lib.rs` |
-| Color | `vfx-color/src/{processor,pipeline,cdl,aces}.rs` |
-| OCIO | `vfx-ocio/src/{config,processor,builtin,file_rules}.rs` |
-| I/O | `vfx-io/src/{exr,dpx,hdr,heif,png,jpeg,tiff,detect}.rs` |
-| Ops | `vfx-ops/src/{resize,transform,composite,filter,warp}.rs` |
-| Compute | `vfx-compute/src/{backend,shaders,color,ops,processor}.rs` |
-| CLI | `vfx-cli/src/commands/*.rs` |
+7. **Context variables** - Full support for $SHOT, $SEQ etc. in file paths
 
 ---
 
 ## Comparison with OIIO/OCIO
 
-### Coverage vs OpenImageIO
-| Feature | Status |
-|---------|--------|
-| Basic formats (EXR/PNG/JPEG/TIFF/DPX/HDR) | DONE |
-| Multi-layer EXR | DONE |
-| Deep images | TODO |
-| Resize/transform/composite | DONE |
-| Blend modes | DONE |
-| Warp/distortion | DONE |
-| ImageCache | TODO |
-| TextureSystem | TODO |
+### Coverage vs OpenImageIO (~60%)
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Basic formats | DONE | EXR/PNG/JPEG/TIFF/DPX/HDR/HEIF |
+| Multi-layer EXR | DONE | read_layers/write_layers |
+| Deep images | TODO | P2.1 |
+| Resize/transform/composite | DONE | |
+| Blend modes | DONE | 10 modes |
+| Warp/distortion | DONE | 7 types |
+| ImageCache | PARTIAL | Exists but loads full image |
+| TextureSystem | PARTIAL | MIP/filtering done, no true tiled I/O |
+| ImageBufAlgo breadth | TODO | ~30% coverage |
 
-### Coverage vs OpenColorIO
-| Feature | Status |
-|---------|--------|
-| Config parsing | DONE |
-| Colorspaces/displays/looks | DONE |
-| Matrix/LUT/CDL/Exponent/Log | DONE |
-| ACES transforms | DONE |
-| File rules | DONE |
-| GPU processing | DONE (wgpu) |
-| Shader generation | TODO |
+### Coverage vs OpenColorIO (~85%)
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Config parsing v1/v2 | DONE | |
+| Colorspaces/displays/looks | DONE | |
+| Matrix/LUT/CDL/Exponent/Log | DONE | |
+| ACES transforms | DONE | RRT/ODT/IDT |
+| File rules (v2) | DONE | |
+| Context variables | DONE | $SHOT, $SEQ |
+| View transforms (v2) | DONE | |
+| GPU processing | DONE | wgpu backend |
+| Shader generation | TODO | P2.2 |
+| Dynamic properties | PARTIAL | Context done, runtime update TBD |
+
+---
+
+## ANALYSIS.md Verification Summary
+
+| Claim | Verified | Notes |
+|-------|----------|-------|
+| OCIO v1 + v2 parsing | YES | ConfigVersion::V1, V2 in config.rs |
+| Transform Engine complete | YES | Matrix, CDL, LUT, curves all in processor.rs |
+| TextureSystem with MIP | YES | texture.rs has bilinear/trilinear |
+| ImageCache I/O issue | YES | Loads full image, not true tiled |
+| Context variables | YES | context.rs with resolve() |
+| Unified Compute Backend | YES | vfx-compute with CPU+wgpu |
+| Backend detection priority | YES | detect.rs: wgpu=100, CPU=10 |
+| Deep Data missing | YES | .no_deep_data() in exr.rs |
+| Python bindings missing | YES | No PyO3 bindings yet |
 
 ---
 
