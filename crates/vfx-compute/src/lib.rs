@@ -32,11 +32,17 @@ pub mod ops;
 pub mod processor;
 mod shaders;
 
-pub use backend::{Backend, GpuLimits, detect_backends, select_best_backend, describe_backends};
+pub use backend::{
+    Backend, GpuLimits, ProcessingStrategy, TileWorkflow,
+    detect_backends, select_best_backend, describe_backends,
+};
 pub use image::ComputeImage;
 pub use color::{ColorProcessor, Cdl};
 pub use ops::{ImageProcessor, ResizeFilter};
-pub use processor::Processor;
+pub use processor::{
+    Processor, ProcessorBuilder, ProcessorConfig,
+    DEFAULT_TILE_SIZE, MIN_TILE_SIZE, MAX_TILE_SIZE, DEFAULT_RAM_PERCENT,
+};
 
 use thiserror::Error;
 
