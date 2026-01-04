@@ -18,6 +18,11 @@ pub mod maketx;
 pub mod grep;
 pub mod batch;
 pub mod layers;
+pub mod channels;
+pub mod paste;
+pub mod rotate;
+pub mod warp;
+pub mod aces;
 
 use vfx_io::ImageData;
 use vfx_io::exr::{ExrReader, ExrWriter};

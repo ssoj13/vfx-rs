@@ -319,6 +319,55 @@ impl ChannelSamples {
             Self::U32(data) => data.len(),
         }
     }
+
+    /// Returns true if no samples.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Get reference to F32 data if this variant.
+    #[inline]
+    pub fn as_f32(&self) -> Option<&Vec<f32>> {
+        match self {
+            Self::F32(data) => Some(data),
+            Self::U32(_) => None,
+        }
+    }
+
+    /// Get mutable reference to F32 data if this variant.
+    #[inline]
+    pub fn as_f32_mut(&mut self) -> Option<&mut Vec<f32>> {
+        match self {
+            Self::F32(data) => Some(data),
+            Self::U32(_) => None,
+        }
+    }
+
+    /// Get reference to U32 data if this variant.
+    #[inline]
+    pub fn as_u32(&self) -> Option<&Vec<u32>> {
+        match self {
+            Self::U32(data) => Some(data),
+            Self::F32(_) => None,
+        }
+    }
+
+    /// Convert to F32, casting U32 if needed.
+    pub fn to_f32(&self) -> Vec<f32> {
+        match self {
+            Self::F32(data) => data.clone(),
+            Self::U32(data) => data.iter().map(|&v| v as f32).collect(),
+        }
+    }
+
+    /// Consume and return F32 data, casting U32 if needed.
+    pub fn into_f32(self) -> Vec<f32> {
+        match self {
+            Self::F32(data) => data,
+            Self::U32(data) => data.into_iter().map(|v| v as f32).collect(),
+        }
+    }
 }
 
 /// A single image channel.

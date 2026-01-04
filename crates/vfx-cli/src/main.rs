@@ -106,6 +106,26 @@ enum Commands {
     /// Merge layers from multiple files into one EXR
     #[command(name = "merge-layers", visible_alias = "ml")]
     MergeLayers(MergeLayersArgs),
+
+    /// Shuffle/rearrange image channels
+    #[command(name = "channel-shuffle", visible_alias = "cs")]
+    ChannelShuffle(ChannelShuffleArgs),
+
+    /// Extract specific channels to new image
+    #[command(name = "channel-extract", visible_alias = "cx")]
+    ChannelExtract(ChannelExtractArgs),
+
+    /// Paste/overlay one image onto another
+    Paste(PasteArgs),
+
+    /// Rotate image by arbitrary angle
+    Rotate(RotateArgs),
+
+    /// Apply warp/distortion effect
+    Warp(WarpArgs),
+
+    /// Apply ACES color transforms (IDT/RRT/ODT)
+    Aces(AcesArgs),
 }
 
 #[derive(Args)]
@@ -482,6 +502,128 @@ struct MergeLayersArgs {
     names: Vec<String>,
 }
 
+/// Arguments for the `channel-shuffle` command.
+#[derive(Args)]
+struct ChannelShuffleArgs {
+    /// Input image
+    input: PathBuf,
+
+    /// Output image
+    #[arg(short, long)]
+    output: PathBuf,
+
+    /// Channel shuffle pattern (e.g., BGR, RGBA, RRR, RGB1)
+    /// R/G/B/A = copy that channel, 0 = black, 1 = white
+    #[arg(short, long)]
+    pattern: String,
+}
+
+/// Arguments for the `channel-extract` command.
+#[derive(Args)]
+struct ChannelExtractArgs {
+    /// Input image
+    input: PathBuf,
+
+    /// Output image
+    #[arg(short, long)]
+    output: PathBuf,
+
+    /// Channels to extract (by name R/G/B/A or index 0/1/2)
+    #[arg(short, long, required = true)]
+    channels: Vec<String>,
+}
+
+/// Arguments for the `paste` command.
+#[derive(Args)]
+struct PasteArgs {
+    /// Background image
+    background: PathBuf,
+
+    /// Foreground image to paste
+    foreground: PathBuf,
+
+    /// Output image
+    #[arg(short, long)]
+    output: PathBuf,
+
+    /// X offset (can be negative)
+    #[arg(short, long, default_value = "0")]
+    x: i32,
+
+    /// Y offset (can be negative)
+    #[arg(short, long, default_value = "0")]
+    y: i32,
+
+    /// Use alpha blending (if foreground has alpha)
+    #[arg(short, long)]
+    blend: bool,
+}
+
+/// Arguments for the `rotate` command.
+#[derive(Args)]
+struct RotateArgs {
+    /// Input image
+    input: PathBuf,
+
+    /// Output image
+    #[arg(short, long)]
+    output: PathBuf,
+
+    /// Rotation angle in degrees (counter-clockwise)
+    #[arg(short, long)]
+    angle: f32,
+
+    /// Background color R,G,B or R,G,B,A (default: 0,0,0)
+    #[arg(long, default_value = "0,0,0")]
+    bg_color: String,
+}
+
+/// Arguments for the `warp` command.
+#[derive(Args)]
+struct WarpArgs {
+    /// Input image
+    input: PathBuf,
+
+    /// Output image
+    #[arg(short, long)]
+    output: PathBuf,
+
+    /// Warp type: barrel, pincushion, fisheye, twist, wave, spherize, ripple
+    #[arg(short = 't', long = "type")]
+    warp_type: String,
+
+    /// Primary parameter (k1 for lens, strength for effects)
+    #[arg(short = 'k', long, default_value = "0.2")]
+    k1: f32,
+
+    /// Secondary parameter (k2 for lens, frequency for wave/ripple)
+    #[arg(long, default_value = "0.0")]
+    k2: f32,
+
+    /// Radius for effects (twist, spherize)
+    #[arg(short, long, default_value = "0.5")]
+    radius: f32,
+}
+
+/// Arguments for the `aces` command.
+#[derive(Args)]
+struct AcesArgs {
+    /// Input image
+    input: PathBuf,
+
+    /// Output image
+    #[arg(short, long)]
+    output: PathBuf,
+
+    /// Transform type: idt (sRGB->ACEScg), rrt (tonemap), odt (ACEScg->sRGB), rrt-odt (full output)
+    #[arg(short = 't', long = "transform", default_value = "rrt-odt")]
+    transform: String,
+
+    /// RRT variant: default, high-contrast
+    #[arg(long, default_value = "default")]
+    rrt_variant: String,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -515,5 +657,11 @@ fn main() -> Result<()> {
         Commands::Layers(args) => commands::layers::run_layers(args, cli.verbose),
         Commands::ExtractLayer(args) => commands::layers::run_extract_layer(args, cli.verbose),
         Commands::MergeLayers(args) => commands::layers::run_merge_layers(args, cli.verbose),
+        Commands::ChannelShuffle(args) => commands::channels::run_shuffle(args, cli.verbose),
+        Commands::ChannelExtract(args) => commands::channels::run_extract(args, cli.verbose),
+        Commands::Paste(args) => commands::paste::run(args, cli.verbose),
+        Commands::Rotate(args) => commands::rotate::run(args, cli.verbose),
+        Commands::Warp(args) => commands::warp::run(args, cli.verbose),
+        Commands::Aces(args) => commands::aces::run(args, cli.verbose),
     }
 }

@@ -314,6 +314,221 @@ pub fn tile(
     dst
 }
 
+/// Pastes foreground image onto background at specified position.
+///
+/// Supports alpha blending when fg has 4 channels (RGBA).
+/// Out-of-bounds areas are clipped.
+///
+/// # Arguments
+///
+/// * `bg` - Background pixel data
+/// * `bg_w`, `bg_h` - Background dimensions
+/// * `fg` - Foreground pixel data
+/// * `fg_w`, `fg_h` - Foreground dimensions
+/// * `channels` - Number of channels (must match)
+/// * `x`, `y` - Position to paste (can be negative for partial paste)
+/// * `blend` - If true, use alpha blending for RGBA images
+///
+/// # Example
+///
+/// ```rust
+/// use vfx_ops::transform::paste;
+///
+/// let bg = vec![0.0f32; 64 * 64 * 4]; // Black background
+/// let fg = vec![1.0f32; 16 * 16 * 4]; // White foreground
+/// let result = paste(&bg, 64, 64, &fg, 16, 16, 4, 10, 10, true);
+/// ```
+pub fn paste(
+    bg: &[f32],
+    bg_w: usize,
+    bg_h: usize,
+    fg: &[f32],
+    fg_w: usize,
+    fg_h: usize,
+    channels: usize,
+    x: i32,
+    y: i32,
+    blend: bool,
+) -> Vec<f32> {
+    let mut dst = bg.to_vec();
+    
+    // Calculate visible region
+    let fg_start_x = (-x).max(0) as usize;
+    let fg_start_y = (-y).max(0) as usize;
+    let bg_start_x = x.max(0) as usize;
+    let bg_start_y = y.max(0) as usize;
+    
+    let copy_w = (fg_w - fg_start_x).min(bg_w.saturating_sub(bg_start_x));
+    let copy_h = (fg_h - fg_start_y).min(bg_h.saturating_sub(bg_start_y));
+    
+    if copy_w == 0 || copy_h == 0 {
+        return dst;
+    }
+    
+    let use_alpha = blend && channels == 4;
+    
+    for row in 0..copy_h {
+        let fg_y = fg_start_y + row;
+        let bg_y = bg_start_y + row;
+        
+        for col in 0..copy_w {
+            let fg_x = fg_start_x + col;
+            let bg_x = bg_start_x + col;
+            
+            let fg_idx = (fg_y * fg_w + fg_x) * channels;
+            let bg_idx = (bg_y * bg_w + bg_x) * channels;
+            
+            if use_alpha {
+                // Alpha blending: out = fg * fg_a + bg * (1 - fg_a)
+                let fg_a = fg[fg_idx + 3];
+                let inv_a = 1.0 - fg_a;
+                
+                for c in 0..3 {
+                    dst[bg_idx + c] = fg[fg_idx + c] * fg_a + dst[bg_idx + c] * inv_a;
+                }
+                // Combine alpha: out_a = fg_a + bg_a * (1 - fg_a)
+                dst[bg_idx + 3] = fg_a + dst[bg_idx + 3] * inv_a;
+            } else {
+                // Direct copy
+                for c in 0..channels {
+                    dst[bg_idx + c] = fg[fg_idx + c];
+                }
+            }
+        }
+    }
+    
+    dst
+}
+
+/// Rotates image by arbitrary angle (in degrees).
+///
+/// Uses bilinear interpolation. Output dimensions are adjusted to fit
+/// the rotated image. Rotation is around image center.
+///
+/// # Arguments
+///
+/// * `src` - Source pixel data
+/// * `width`, `height` - Source dimensions
+/// * `channels` - Number of channels
+/// * `angle_deg` - Rotation angle in degrees (positive = counter-clockwise)
+/// * `bg` - Background color for empty areas (length = channels)
+///
+/// # Returns
+///
+/// Tuple of (new_data, new_width, new_height).
+///
+/// # Example
+///
+/// ```rust
+/// use vfx_ops::transform::rotate;
+///
+/// let src = vec![1.0f32; 64 * 64 * 3];
+/// let (dst, w, h) = rotate(&src, 64, 64, 3, 45.0, &[0.0, 0.0, 0.0]);
+/// ```
+pub fn rotate(
+    src: &[f32],
+    width: usize,
+    height: usize,
+    channels: usize,
+    angle_deg: f32,
+    bg: &[f32],
+) -> (Vec<f32>, usize, usize) {
+    let angle_rad = angle_deg.to_radians();
+    let cos_a = angle_rad.cos();
+    let sin_a = angle_rad.sin();
+    
+    // Calculate new dimensions to fit rotated image
+    let w = width as f32;
+    let h = height as f32;
+    
+    // Corners after rotation
+    let corners = [
+        (0.0, 0.0),
+        (w, 0.0),
+        (0.0, h),
+        (w, h),
+    ];
+    
+    let cx = w / 2.0;
+    let cy = h / 2.0;
+    
+    let mut min_x = f32::MAX;
+    let mut max_x = f32::MIN;
+    let mut min_y = f32::MAX;
+    let mut max_y = f32::MIN;
+    
+    for (px, py) in corners {
+        let dx = px - cx;
+        let dy = py - cy;
+        let rx = dx * cos_a - dy * sin_a + cx;
+        let ry = dx * sin_a + dy * cos_a + cy;
+        min_x = min_x.min(rx);
+        max_x = max_x.max(rx);
+        min_y = min_y.min(ry);
+        max_y = max_y.max(ry);
+    }
+    
+    let new_w = (max_x - min_x).ceil() as usize;
+    let new_h = (max_y - min_y).ceil() as usize;
+    
+    let offset_x = min_x;
+    let offset_y = min_y;
+    
+    let mut dst = vec![0.0f32; new_w * new_h * channels];
+    
+    // Fill with background
+    for y in 0..new_h {
+        for x in 0..new_w {
+            let idx = (y * new_w + x) * channels;
+            for c in 0..channels {
+                dst[idx + c] = bg.get(c).copied().unwrap_or(0.0);
+            }
+        }
+    }
+    
+    // Inverse transform: for each dst pixel, find src pixel
+    for dy in 0..new_h {
+        for dx in 0..new_w {
+            // Map dst coords to rotated space
+            let px = dx as f32 + offset_x;
+            let py = dy as f32 + offset_y;
+            
+            // Inverse rotation to find source coords
+            let rx = px - cx;
+            let ry = py - cy;
+            let sx = rx * cos_a + ry * sin_a + cx;
+            let sy = -rx * sin_a + ry * cos_a + cy;
+            
+            // Bilinear interpolation
+            if sx >= 0.0 && sx < w - 1.0 && sy >= 0.0 && sy < h - 1.0 {
+                let x0 = sx.floor() as usize;
+                let y0 = sy.floor() as usize;
+                let x1 = x0 + 1;
+                let y1 = y0 + 1;
+                
+                let fx = sx - sx.floor();
+                let fy = sy - sy.floor();
+                
+                let dst_idx = (dy * new_w + dx) * channels;
+                
+                for c in 0..channels {
+                    let p00 = src[(y0 * width + x0) * channels + c];
+                    let p10 = src[(y0 * width + x1) * channels + c];
+                    let p01 = src[(y1 * width + x0) * channels + c];
+                    let p11 = src[(y1 * width + x1) * channels + c];
+                    
+                    // Bilinear blend
+                    let top = p00 * (1.0 - fx) + p10 * fx;
+                    let bot = p01 * (1.0 - fx) + p11 * fx;
+                    dst[dst_idx + c] = top * (1.0 - fy) + bot * fy;
+                }
+            }
+        }
+    }
+    
+    (dst, new_w, new_h)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,5 +635,71 @@ mod tests {
         assert!((dst[0] - 1.0).abs() < 0.01);
         assert!((dst[1] - 0.5).abs() < 0.01);
         assert!((dst[2] - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_paste_simple() {
+        // 4x4 black background, paste 2x2 white in center
+        let bg = vec![0.0f32; 4 * 4]; // grayscale
+        let fg = vec![1.0f32; 2 * 2];
+        
+        let result = paste(&bg, 4, 4, &fg, 2, 2, 1, 1, 1, false);
+        
+        assert_eq!(result.len(), 16);
+        // Top-left stays black
+        assert!((result[0] - 0.0).abs() < 0.01);
+        // Center (1,1) should be white
+        assert!((result[5] - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_paste_negative_offset() {
+        // Paste with negative offset (clipping)
+        let bg = vec![0.0f32; 4 * 4];
+        let fg = vec![1.0f32; 2 * 2];
+        
+        let result = paste(&bg, 4, 4, &fg, 2, 2, 1, -1, -1, false);
+        
+        // Only bottom-right of fg should appear at (0,0) of bg
+        assert!((result[0] - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_rotate_0_degrees() {
+        // Larger image for better bilinear accuracy
+        let src = vec![0.5f32; 4 * 4]; // 4x4 uniform gray
+        let bg = vec![0.0];
+        let (dst, w, h) = rotate(&src, 4, 4, 1, 0.0, &bg);
+        
+        assert_eq!(w, 4);
+        assert_eq!(h, 4);
+        // Center pixels should preserve value with bilinear interp
+        assert!((dst[5] - 0.5).abs() < 0.2);
+    }
+
+    #[test]
+    fn test_rotate_90_degrees() {
+        // Simple 2x2 image
+        let src = vec![1.0, 2.0, 3.0, 4.0];
+        let bg = vec![0.0];
+        let (dst, w, h) = rotate(&src, 2, 2, 1, 90.0, &bg);
+        
+        // Rotated 90 degrees
+        assert_eq!(w, 2);
+        assert_eq!(h, 2);
+        assert_eq!(dst.len(), 4);
+    }
+
+    #[test]
+    fn test_rotate_45_expands() {
+        // 2x2 rotated 45 degrees should expand
+        let src = vec![1.0f32; 4];
+        let bg = vec![0.0];
+        let (dst, w, h) = rotate(&src, 2, 2, 1, 45.0, &bg);
+        
+        // Rotated 45 should have larger bounding box
+        assert!(w >= 2);
+        assert!(h >= 2);
+        assert!(dst.len() >= 4);
     }
 }

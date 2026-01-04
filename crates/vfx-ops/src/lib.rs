@@ -51,10 +51,12 @@
 
 mod error;
 pub mod guard;
+pub mod layer_ops;
 pub mod resize;
 pub mod composite;
 pub mod filter;
 pub mod transform;
+pub mod warp;
 
 #[cfg(feature = "parallel")]
 pub mod parallel;
