@@ -129,6 +129,7 @@ pub mod sequence;
 pub mod cache;
 pub mod texture;
 pub mod udim;
+pub mod streaming;
 
 // Re-exports
 pub use error::{IoError, IoResult};

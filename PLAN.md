@@ -185,13 +185,23 @@ For >RAM images, need true tiled I/O (see P1.7).
 - [ ] Create test suite comparing output vs ACES reference images
 - [ ] Bit-accurate validation (within tolerance)
 
-### P1.7 True Tiled I/O (CRITICAL for >RAM images)
-Current ImageCache loads full image then extracts tiles.
-For 8K+ EXR/TIFF that exceed RAM, need streaming I/O:
-- [ ] StreamingSource trait (random-access tile provider)
+### DONE - Streaming I/O (vfx-io/streaming)
+Implemented streaming for >RAM images:
+- [x] StreamingSource/StreamingOutput traits  `crates/vfx-io/src/streaming/traits.rs`
+- [x] TiffStreamingSource (true random access via read_chunk)  `crates/vfx-io/src/streaming/tiff.rs`
+- [x] TiffStreamingOutput (buffered write)  `crates/vfx-io/src/streaming/tiff.rs`
+- [x] ExrStreamingSource (lazy loading)  `crates/vfx-io/src/streaming/exr.rs`
+- [x] ExrStreamingOutput (buffered write)  `crates/vfx-io/src/streaming/exr.rs`
+- [x] MemorySource/MemoryOutput/FileOutput  `crates/vfx-io/src/streaming/source.rs`
+- [x] MemoryEstimate, ProcessingStrategy  `crates/vfx-io/src/streaming/format.rs`
+- [x] Region::transform() for color pipeline  `crates/vfx-io/src/streaming/traits.rs`
+- [x] open_streaming(), create_streaming_output()  `crates/vfx-io/src/streaming/mod.rs`
+- [x] read_auto() + ImageOrStream  `crates/vfx-io/src/streaming/mod.rs`
+
+### P1.7 Streaming Optimizations (Future)
 - [ ] EXR tiled block reading via `exr::block::FilteredChunksReader`
 - [ ] Double-buffered producer-consumer (overlap I/O and compute)
-- [ ] Memory budgeting (auto-size tiles to fit VRAM)
+- [ ] VRAM-aware tile sizing
 
 ---
 
@@ -348,6 +358,14 @@ Python bidings - только после стабилизации Rust API.
 ## STREAMING I/O MIGRATION PLAN
 
 > Based on analysis of `_ref/stool-rs`. Last updated: 2026-01-04
+> 
+> **Implementation Status:** Phases 1-4 DONE. Files created:
+> - `streaming/mod.rs` - re-exports, open_streaming(), open_streaming_auto()
+> - `streaming/traits.rs` - StreamingSource, StreamingOutput, Region
+> - `streaming/source.rs` - MemorySource, MemoryOutput
+> - `streaming/format.rs` - MemoryEstimate, ProcessingStrategy, estimate_memory()
+> - `streaming/tiff.rs` - TiffStreamingSource (true random access)
+> - `streaming/exr.rs` - ExrStreamingSource (lazy loading)
 
 ### Key Decisions
 
@@ -357,7 +375,7 @@ Python bidings - только после стабилизации Rust API.
 4. **Keep trait-based API** - adapt streaming to current style
 5. **Always rustdocs + comments** - explain what/why/where
 
-### Phase 1: Streaming Traits (vfx-io)
+### Phase 1: Streaming Traits (vfx-io) ✅ DONE
 
 Add streaming infrastructure to `vfx-io`:
 
@@ -422,7 +440,7 @@ pub trait StreamingOutput: Send {
 }
 ```
 
-### Phase 2: Format Detection (vfx-io)
+### Phase 2: Format Detection (vfx-io) ✅ DONE
 
 Add `format.rs` with memory estimation:
 
@@ -451,7 +469,7 @@ pub fn estimate_file_memory<P: AsRef<Path>>(path: P) -> Option<MemoryEstimate>;
 pub fn should_use_streaming(src_dims: (u32, u32), out_dims: (u32, u32)) -> bool;
 ```
 
-### Phase 3: TIFF Streaming (vfx-io)
+### Phase 3: TIFF Streaming (vfx-io) ✅ DONE
 
 True random access via `tiff::decoder::read_chunk()`:
 
@@ -471,7 +489,7 @@ pub struct TiffStreamingSource {
 }
 ```
 
-### Phase 4: EXR Streaming (vfx-io)
+### Phase 4: EXR Streaming (vfx-io) ✅ DONE
 
 Lazy loading (header-only until first read):
 
