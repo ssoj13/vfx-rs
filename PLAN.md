@@ -149,7 +149,7 @@ vfx-cli        Command-line tools
 
 ## TODO - Priority 1 (Important)
 
-### P1.1 Deep EXR
+### P1.1 Deep EXR - POSTPONE FOR NOW, SKIP IT.
 - [ ] Deep data model (per-pixel sample arrays)
 - [ ] Deep EXR read/write (currently disabled via `.no_deep_data()`)
 - [ ] Deep composite operations
