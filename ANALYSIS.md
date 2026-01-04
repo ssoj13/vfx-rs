@@ -58,4 +58,69 @@ The standout feature of `vfx-rs` is `vfx-compute`.
 1.  **Optimize ImageCache**: Prioritize "True Tiled I/O" to handle datasets larger than RAM.
 2.  **Verify ACES Parity**: Create a test suite that compares `vfx-ocio` output against the official ACES 1.x/2.x reference images bit-for-bit (within tolerance).
 3.  **Expand vfx-ops**: Systematically implement high-value `ImageBufAlgo` equivalents needed for compositing (e.g., unleveled crop, over, z-compose).
-4.  **Benchmarks**: Utilize `vfx-bench` to constantly measure throughput against the C++ references.
+4. **Benchmarks**: Utilize `vfx-bench` to constantly measure throughput against the C++ references.
+
+## 6. Integration Potential from References & Architectural Decisions
+
+Analysis of reference implementations (`_ref/`) provides concrete solutions for the identified gaps in `vfx-rs`. The following architectural patterns from `stool-rs` are selected for immediate porting to solve the "ImageCache" and "Unified Backend" challenges.
+
+### A. Tiled Streaming Architecture (from `_ref/stool-rs`)
+
+**Problem**: `vfx-io` currently loads entire images into memory. This causes OOM (Out Of Memory) errors for 8k+ EXR/TIFF files on consumer hardware.
+**Solution**: Adopt the **Streaming Executor** pattern from `stool-rs/warper`.
+
+1.  **The `StreamingSource` Trait**:
+    *   *Concept*: Abstract the image source not as a generic reader, but as a random-access tile provider.
+    *   *Implementation*: Port `stool-rs/warper/src/backend/streaming_io.rs`.
+    *   *Key Method*: `read_tile(tile_x, tile_y, mip_level) -> Result<Buffer>`.
+    *   *Zero-Copy*: For uncompressed formats or memory-mapped files, this trait should support returning references/views to avoid allocations.
+
+2.  **Double-Buffered Producer-Consumer Loop**:
+    *   *Concept*: Maximize hardware saturation by overlapping I/O and Compute.
+    *   *Mechanism*:
+        *   **Thread A (Producer)**: Reads *Next Tile* from disk (via `StreamingSource`) -> Writes to Pinned Memory (CPU/Staging).
+        *   **Thread B (Consumer/GPU)**: Uploads *Current Tile* to VRAM -> Executes Compute Kernel -> Downloads Result.
+    *   *Status*: `stool-rs` implements this in `streaming_executor.rs` and `double_buffer.rs`. This logic must be lifted into `vfx-compute`.
+
+### B. Unified Compute Backend (from `_ref/stool-rs`)
+
+**Problem**: Writing separate `resize_cpu`, `resize_cuda`, `resize_wgpu` functions leads to code duplication and maintenance nightmares (the N*M problem).
+**Solution**: Adopt the **Primitives & Executor** pattern.
+
+1.  **The `Primitives` Abstraction**:
+    *   *Concept*: Define a trait that exposes only the atomic operations needed for image processing (Alloc, CopyToDevice, RunKernel, CopyFromDevice).
+    *   *Structure*:
+        ```rust
+        trait ComputePrimitives {
+            type Buffer;
+            fn alloc(&self, size: usize) -> Self::Buffer;
+            fn copy_to(&self, src: &[u8], dst: &mut Self::Buffer);
+            fn run_kernel(&self, name: &str, buffers: &[&Self::Buffer], args: &Uniforms);
+        }
+        ```
+    *   *Adaptation*: Update `vfx-compute` to use this trait system. `stool-rs` demonstrates this with `GpuPrimitives` (wgpu/cuda) vs `CpuPrimitives` (rayon).
+
+2.  **The `WarpExecutor` (Generic Tiling Logic)**:
+    *   *Concept*: A single generic struct `WarpExecutor<P: ComputePrimitives>` that handles the *logic* of tiling (looping over x/y, handling edge padding, managing overlaps) once.
+    *   *Benefit*: You write the tiling loop once. The CPU backend runs it with `P=CpuPrimitives`, the GPU with `P=CudaPrimitives`.
+    *   *Components to Port*: `Planner`, `TileTriple` (defines a tile's input/output regions), and `SourceRegion`.
+
+### C. Hardware Awareness
+
+1.  **Backend Detection**:
+    *   `stool-rs/warper/src/backend/detect.rs` implements a priority system: `CUDA > Wgpu > CPU`.
+    *   It actively probes availability (is the driver loaded? is a device present?).
+    *   *Action*: Integrate this into `vfx-compute::Context::new(Auto)` to ensure the best device is always chosen without user configuration.
+
+2.  **Memory Budgeting**:
+    *   `vfx-io` must not just "cache everything". It needs a budget.
+    *   Port `available_memory()` logic. If VRAM is 4GB, the `Planner` must automatically size tiles (e.g., down to 512x512) to fit 2 tiles (double buffer) + overhead.
+
+### Summary of Integration Plan
+| Component | Source (`stool-rs`) | Destination (`vfx-rs`) | Goal |
+| :--- | :--- | :--- | :--- |
+| **Streaming I/O** | `streaming_io.rs` | `vfx-io::streaming` | Enable >RAM image processing |
+| **Tiled Exec** | `streaming_executor.rs` | `vfx-compute::tiling` | Overlap I/O and Compute |
+| **Backend Abs** | `backend/mod.rs` | `vfx-compute::backend` | Unify CPU/GPU implementations |
+| **Detection** | `backend/detect.rs` | `vfx-compute::detect` | Auto-select best hardware |
+
