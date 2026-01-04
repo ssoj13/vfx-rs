@@ -22,6 +22,8 @@ pub enum Format {
     Dpx,
     /// Radiance HDR format.
     Hdr,
+    /// HEIF/HEIC format.
+    Heif,
     /// Unknown/unsupported format.
     Unknown,
 }
@@ -59,6 +61,7 @@ impl Format {
             Some("tif") | Some("tiff") => Format::Tiff,
             Some("dpx") => Format::Dpx,
             Some("hdr") | Some("pic") | Some("rgbe") => Format::Hdr,
+            Some("heif") | Some("heic") | Some("hif") => Format::Heif,
             _ => Format::Unknown,
         }
     }
@@ -122,6 +125,14 @@ impl Format {
             return Format::Hdr;
         }
 
+        // HEIF/HEIC: ftyp at offset 4, with heic/heix/mif1/msf1 brand
+        if bytes.len() >= 12 && bytes[4..8] == [b'f', b't', b'y', b'p'] {
+            let brand = &bytes[8..12];
+            if brand == b"heic" || brand == b"heix" || brand == b"mif1" || brand == b"msf1" || brand == b"hevc" {
+                return Format::Heif;
+            }
+        }
+
         Format::Unknown
     }
     
@@ -134,6 +145,7 @@ impl Format {
             Format::Tiff => "tif",
             Format::Dpx => "dpx",
             Format::Hdr => "hdr",
+            Format::Heif => "heif",
             Format::Unknown => "",
         }
     }
@@ -147,18 +159,19 @@ impl Format {
             Format::Tiff => "image/tiff",
             Format::Dpx => "image/x-dpx",
             Format::Hdr => "image/vnd.radiance",
+            Format::Heif => "image/heif",
             Format::Unknown => "application/octet-stream",
         }
     }
     
     /// Returns true if this format supports HDR/float data.
     pub fn supports_hdr(&self) -> bool {
-        matches!(self, Format::Exr | Format::Tiff | Format::Hdr)
+        matches!(self, Format::Exr | Format::Tiff | Format::Hdr | Format::Heif)
     }
     
     /// Returns true if this format supports alpha channel.
     pub fn supports_alpha(&self) -> bool {
-        matches!(self, Format::Exr | Format::Png | Format::Tiff)
+        matches!(self, Format::Exr | Format::Png | Format::Tiff | Format::Heif)
     }
 }
 

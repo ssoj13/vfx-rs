@@ -209,7 +209,68 @@ vfx (binary)
 | TIFF | Y | Y | 8/16/32-bit |
 | HDR | Y | Y | RGBE format |
 | DPX | Y | Y | 10-bit log |
-| HEIF/HEIC | Y | - | HDR PQ/HLG, 10/12-bit (requires `heif` feature) |
+| HEIF/HEIC | Y | Y | HDR PQ/HLG, 8/10-bit, NCLX profiles (requires `heif` feature) |
+
+## HEIF/HEIC Support (vfx-io)
+
+Requires `heif` feature and system libheif >= 1.17.
+
+### Setup
+
+```bash
+# Windows (vcpkg)
+vcpkg install libheif:x64-windows
+set VCPKG_ROOT=C:\vcpkg
+set VCPKGRS_TRIPLET=x64-windows
+set VCPKGRS_DYNAMIC=1
+
+# Linux
+apt install libheif-dev
+
+# macOS
+brew install libheif
+```
+
+### HDR Metadata
+
+```rust
+HdrMetadata {
+    transfer: TransferCharacteristics,  // Pq, Hlg, Srgb, Linear, Bt709...
+    primaries: ColorPrimaries,          // Bt2020, DisplayP3, DciP3, Bt709...
+    matrix: MatrixCoefficients,         // Identity, Bt709, Bt2020Ncl...
+    full_range: bool,
+    bit_depth: u8,                      // 8, 10, 12
+}
+```
+
+### Usage
+
+```rust
+use vfx_io::heif::{read_heif, write_heif, HdrMetadata, TransferCharacteristics, ColorPrimaries};
+
+// Read with HDR metadata
+let (image, hdr_meta) = read_heif("photo.heic")?;
+if let Some(meta) = &hdr_meta {
+    if meta.is_hdr() {
+        println!("HDR: {:?} transfer, {:?} primaries", meta.transfer, meta.primaries);
+    }
+}
+
+// Write with HDR metadata
+let hdr = HdrMetadata {
+    transfer: TransferCharacteristics::Pq,
+    primaries: ColorPrimaries::Bt2020,
+    bit_depth: 10,
+    ..Default::default()
+};
+write_heif("output.heif", &image, Some(&hdr))?;
+```
+
+### Limitations
+
+- libheif-rs only exposes `set_color_primaries()` for NCLX profiles
+- Transfer characteristics and matrix coefficients use library defaults when writing
+- Gain map extraction not yet implemented
 
 ## Transfer Functions (vfx-transfer)
 
@@ -262,7 +323,6 @@ Located in `vfx-compute/src/shaders/mod.rs`:
 - No video I/O
 
 ### Planned
-- HEIF writing support
 - HEIF gain map extraction (iPhone HDR)
 - More GPU operations (arbitrary rotate, perspective warp)
 - Async GPU pipeline for batch processing

@@ -12,6 +12,8 @@
 //! ```bash
 //! vcpkg install libheif:x64-windows
 //! set VCPKG_ROOT=C:\vcpkg
+//! set VCPKGRS_TRIPLET=x64-windows
+//! set VCPKGRS_DYNAMIC=1
 //! ```
 //!
 //! ## Linux
@@ -55,10 +57,16 @@
 use libheif_rs::{
     ColorSpace, HeifContext, LibHeif, RgbChroma,
     CompressionFormat, EncoderQuality, Image as HeifImage,
+    ColorProfileNCLX,
 };
 
-use crate::{ImageData, IoError, IoResult, PixelData, PixelFormat, Metadata};
+use crate::{IoError, IoResult};
 use std::path::Path;
+
+use crate::ImageData;
+
+#[cfg(feature = "heif")]
+use crate::{PixelData, PixelFormat, Metadata};
 
 /// NCLX transfer characteristics (CICP / ITU-T H.273).
 ///
@@ -196,14 +204,14 @@ impl HdrMetadata {
 pub fn read_heif<P: AsRef<Path>>(path: P) -> IoResult<(ImageData, Option<HdrMetadata>)> {
     let path = path.as_ref();
     let path_str = path.to_str().ok_or_else(|| {
-        IoError::ReadError(format!("Invalid path: {:?}", path))
+        IoError::DecodeError(format!("Invalid path: {:?}", path))
     })?;
 
     let ctx = HeifContext::read_from_file(path_str)
-        .map_err(|e| IoError::ReadError(format!("HEIF read error: {}", e)))?;
+        .map_err(|e| IoError::DecodeError(format!("HEIF read error: {}", e)))?;
 
     let handle = ctx.primary_image_handle()
-        .map_err(|e| IoError::ReadError(format!("HEIF handle error: {}", e)))?;
+        .map_err(|e| IoError::DecodeError(format!("HEIF handle error: {}", e)))?;
 
     let width = handle.width() as u32;
     let height = handle.height() as u32;
@@ -220,11 +228,11 @@ pub fn read_heif<P: AsRef<Path>>(path: P) -> IoResult<(ImageData, Option<HdrMeta
     let color_space = ColorSpace::Rgb(chroma);
 
     let image = lib.decode(&handle, color_space, None)
-        .map_err(|e| IoError::ReadError(format!("HEIF decode error: {}", e)))?;
+        .map_err(|e| IoError::DecodeError(format!("HEIF decode error: {}", e)))?;
 
     // Get interleaved plane
     let plane = image.planes().interleaved
-        .ok_or_else(|| IoError::ReadError("No interleaved RGB plane".into()))?;
+        .ok_or_else(|| IoError::DecodeError("No interleaved RGB plane".into()))?;
 
     let stride = plane.stride;
     let src_data = plane.data;
@@ -298,33 +306,37 @@ pub fn read_heif<P: AsRef<Path>>(path: P) -> IoResult<(ImageData, Option<HdrMeta
 /// Extract NCLX color profile metadata from image handle.
 #[cfg(feature = "heif")]
 fn extract_nclx_metadata(handle: &libheif_rs::ImageHandle, bit_depth: u8) -> Option<HdrMetadata> {
-    let nclx = handle.color_profile_nclx().ok()?;
+    // color_profile_nclx() returns Option<ColorProfileNCLX>
+    let nclx = handle.color_profile_nclx()?;
 
+    // Map libheif-rs TransferCharacteristics to our enum
     let transfer = match nclx.transfer_characteristics() {
-        libheif_rs::TransferCharacteristics::Smpte2084 => TransferCharacteristics::Pq,
-        libheif_rs::TransferCharacteristics::HLG => TransferCharacteristics::Hlg,
-        libheif_rs::TransferCharacteristics::Srgb => TransferCharacteristics::Srgb,
+        libheif_rs::TransferCharacteristics::ITU_R_BT_2100_0_PQ => TransferCharacteristics::Pq,
+        libheif_rs::TransferCharacteristics::ITU_R_BT_2100_0_HLG => TransferCharacteristics::Hlg,
+        libheif_rs::TransferCharacteristics::IEC_61966_2_1 => TransferCharacteristics::Srgb,
         libheif_rs::TransferCharacteristics::Linear => TransferCharacteristics::Linear,
-        libheif_rs::TransferCharacteristics::BT709 => TransferCharacteristics::Bt709,
-        libheif_rs::TransferCharacteristics::BT601 => TransferCharacteristics::Bt601,
-        libheif_rs::TransferCharacteristics::BT2020_10bit => TransferCharacteristics::Bt202010,
-        libheif_rs::TransferCharacteristics::BT2020_12bit => TransferCharacteristics::Bt202012,
+        libheif_rs::TransferCharacteristics::ITU_R_BT_709_5 => TransferCharacteristics::Bt709,
+        libheif_rs::TransferCharacteristics::ITU_R_BT_601_6 => TransferCharacteristics::Bt601,
+        libheif_rs::TransferCharacteristics::ITU_R_BT_2020_2_10bit => TransferCharacteristics::Bt202010,
+        libheif_rs::TransferCharacteristics::ITU_R_BT_2020_2_12bit => TransferCharacteristics::Bt202012,
         _ => TransferCharacteristics::Unspecified,
     };
 
+    // Map libheif-rs ColorPrimaries to our enum
     let primaries = match nclx.color_primaries() {
-        libheif_rs::ColorPrimaries::BT709 => ColorPrimaries::Bt709,
-        libheif_rs::ColorPrimaries::BT2020 => ColorPrimaries::Bt2020,
-        libheif_rs::ColorPrimaries::SmpteEG4321 => ColorPrimaries::DciP3,
+        libheif_rs::ColorPrimaries::ITU_R_BT_709_5 => ColorPrimaries::Bt709,
+        libheif_rs::ColorPrimaries::ITU_R_BT_2020_2_and_2100_0 => ColorPrimaries::Bt2020,
+        libheif_rs::ColorPrimaries::SMPTE_EG_432_1 => ColorPrimaries::DciP3,
         _ => ColorPrimaries::Unspecified,
     };
 
+    // Map libheif-rs MatrixCoefficients to our enum
     let matrix = match nclx.matrix_coefficients() {
-        libheif_rs::MatrixCoefficients::Identity => MatrixCoefficients::Identity,
-        libheif_rs::MatrixCoefficients::BT709 => MatrixCoefficients::Bt709,
-        libheif_rs::MatrixCoefficients::BT601 => MatrixCoefficients::Bt601,
-        libheif_rs::MatrixCoefficients::BT2020Ncl => MatrixCoefficients::Bt2020Ncl,
-        libheif_rs::MatrixCoefficients::BT2020Cl => MatrixCoefficients::Bt2020Cl,
+        libheif_rs::MatrixCoefficients::RGB_GBR => MatrixCoefficients::Identity,
+        libheif_rs::MatrixCoefficients::ITU_R_BT_709_5 => MatrixCoefficients::Bt709,
+        libheif_rs::MatrixCoefficients::ITU_R_BT_601_6 => MatrixCoefficients::Bt601,
+        libheif_rs::MatrixCoefficients::ITU_R_BT_2020_2_NonConstantLuminance => MatrixCoefficients::Bt2020Ncl,
+        libheif_rs::MatrixCoefficients::ITU_R_BT_2020_2_ConstantLuminance => MatrixCoefficients::Bt2020Cl,
         libheif_rs::MatrixCoefficients::ICtCp => MatrixCoefficients::ICtCp,
         _ => MatrixCoefficients::Unspecified,
     };
@@ -333,7 +345,7 @@ fn extract_nclx_metadata(handle: &libheif_rs::ImageHandle, bit_depth: u8) -> Opt
         transfer,
         primaries,
         matrix,
-        full_range: nclx.full_range_flag(),
+        full_range: nclx.full_range_flag() != 0,  // u8 to bool
         max_cll: None,  // TODO: extract from MDCV/CLLI metadata boxes
         max_fall: None,
         bit_depth,
@@ -347,6 +359,12 @@ fn extract_nclx_metadata(handle: &libheif_rs::ImageHandle, bit_depth: u8) -> Opt
 /// * `path` - Output file path (.heif or .heic)
 /// * `image` - Image data to encode
 /// * `hdr` - Optional HDR metadata for NCLX color profile
+///
+/// # Note
+///
+/// Due to libheif-rs API limitations, only color primaries from HDR metadata
+/// are written to NCLX profile. Transfer characteristics and matrix coefficients
+/// use library defaults. For full HDR metadata support, use ICC profiles.
 ///
 /// # Example
 ///
@@ -373,7 +391,7 @@ pub fn write_heif<P: AsRef<Path>>(
 ) -> IoResult<()> {
     let path = path.as_ref();
     let path_str = path.to_str().ok_or_else(|| {
-        IoError::WriteError(format!("Invalid path: {:?}", path))
+        IoError::EncodeError(format!("Invalid path: {:?}", path))
     })?;
 
     let width = image.width;
@@ -385,13 +403,7 @@ pub fn write_heif<P: AsRef<Path>>(
     let bit_depth = hdr.map(|h| h.bit_depth).unwrap_or(8);
     let bit_depth = if bit_depth > 8 { 10 } else { 8 }; // libheif supports 8 or 10-bit
 
-    // Create HEIF image
-    let chroma = if has_alpha {
-        libheif_rs::Chroma::InterleavedRgba
-    } else {
-        libheif_rs::Chroma::InterleavedRgb
-    };
-
+    // Create HEIF image with appropriate colorspace
     let colorspace = if bit_depth > 8 {
         libheif_rs::ColorSpace::Rgb(if has_alpha { RgbChroma::HdrRgbaLe } else { RgbChroma::HdrRgbLe })
     } else {
@@ -399,7 +411,7 @@ pub fn write_heif<P: AsRef<Path>>(
     };
 
     let mut heif_image = HeifImage::new(width, height, colorspace)
-        .map_err(|e| IoError::WriteError(format!("Failed to create HEIF image: {}", e)))?;
+        .map_err(|e| IoError::EncodeError(format!("Failed to create HEIF image: {}", e)))?;
 
     // Add interleaved plane
     heif_image.create_plane(
@@ -407,11 +419,11 @@ pub fn write_heif<P: AsRef<Path>>(
         width,
         height,
         bit_depth,
-    ).map_err(|e| IoError::WriteError(format!("Failed to create plane: {}", e)))?;
+    ).map_err(|e| IoError::EncodeError(format!("Failed to create plane: {}", e)))?;
 
     // Get plane for writing
     let plane = heif_image.planes_mut().interleaved
-        .ok_or_else(|| IoError::WriteError("No interleaved plane".into()))?;
+        .ok_or_else(|| IoError::EncodeError("No interleaved plane".into()))?;
 
     let stride = plane.stride;
     let dst_data = plane.data;
@@ -451,60 +463,41 @@ pub fn write_heif<P: AsRef<Path>>(
     }
 
     // Set NCLX color profile if HDR metadata provided
+    // Note: libheif-rs only exposes set_color_primaries(), other NCLX fields
+    // cannot be set via the Rust API. For full HDR metadata, use ICC profiles.
     if let Some(hdr_meta) = hdr {
-        let transfer = match hdr_meta.transfer {
-            TransferCharacteristics::Pq => libheif_rs::TransferCharacteristics::Smpte2084,
-            TransferCharacteristics::Hlg => libheif_rs::TransferCharacteristics::HLG,
-            TransferCharacteristics::Srgb => libheif_rs::TransferCharacteristics::Srgb,
-            TransferCharacteristics::Linear => libheif_rs::TransferCharacteristics::Linear,
-            TransferCharacteristics::Bt601 => libheif_rs::TransferCharacteristics::BT601,
-            _ => libheif_rs::TransferCharacteristics::BT709,
-        };
-
         let primaries = match hdr_meta.primaries {
-            ColorPrimaries::Bt2020 => libheif_rs::ColorPrimaries::BT2020,
-            ColorPrimaries::DciP3 => libheif_rs::ColorPrimaries::SmpteEG4321,
-            ColorPrimaries::DisplayP3 => libheif_rs::ColorPrimaries::SmpteEG4321,
-            _ => libheif_rs::ColorPrimaries::BT709,
+            ColorPrimaries::Bt2020 => libheif_rs::ColorPrimaries::ITU_R_BT_2020_2_and_2100_0,
+            ColorPrimaries::DciP3 | ColorPrimaries::DisplayP3 => libheif_rs::ColorPrimaries::SMPTE_EG_432_1,
+            _ => libheif_rs::ColorPrimaries::ITU_R_BT_709_5,
         };
 
-        let matrix = match hdr_meta.matrix {
-            MatrixCoefficients::Identity => libheif_rs::MatrixCoefficients::Identity,
-            MatrixCoefficients::Bt601 => libheif_rs::MatrixCoefficients::BT601,
-            MatrixCoefficients::Bt2020Ncl => libheif_rs::MatrixCoefficients::BT2020Ncl,
-            MatrixCoefficients::Bt2020Cl => libheif_rs::MatrixCoefficients::BT2020Cl,
-            MatrixCoefficients::ICtCp => libheif_rs::MatrixCoefficients::ICtCp,
-            _ => libheif_rs::MatrixCoefficients::BT709,
-        };
-
-        let nclx = libheif_rs::ColorProfileNclx::new(
-            primaries,
-            transfer,
-            matrix,
-            hdr_meta.full_range,
-        );
-
-        heif_image.set_nclx_color_profile(&nclx)
-            .map_err(|e| IoError::WriteError(format!("Failed to set NCLX profile: {}", e)))?;
+        // Create NCLX profile and set primaries (only setter available in libheif-rs)
+        if let Some(mut nclx) = ColorProfileNCLX::new() {
+            nclx.set_color_primaries(primaries);
+            
+            heif_image.set_color_profile_nclx(&nclx)
+                .map_err(|e| IoError::EncodeError(format!("Failed to set NCLX profile: {}", e)))?;
+        }
     }
 
     // Create context and encode
     let mut ctx = HeifContext::new()
-        .map_err(|e| IoError::WriteError(format!("Failed to create context: {}", e)))?;
+        .map_err(|e| IoError::EncodeError(format!("Failed to create context: {}", e)))?;
 
     let lib = LibHeif::new();
     let mut encoder = lib.encoder_for_format(CompressionFormat::Hevc)
-        .map_err(|e| IoError::WriteError(format!("Failed to get HEVC encoder: {}", e)))?;
+        .map_err(|e| IoError::EncodeError(format!("Failed to get HEVC encoder: {}", e)))?;
 
     // Set quality (85 is good balance)
-    encoder.set_quality(EncoderQuality::LossyQuality(85))
-        .map_err(|e| IoError::WriteError(format!("Failed to set quality: {}", e)))?;
+    encoder.set_quality(EncoderQuality::Lossy(85))
+        .map_err(|e| IoError::EncodeError(format!("Failed to set quality: {}", e)))?;
 
     ctx.encode_image(&heif_image, &mut encoder, None)
-        .map_err(|e| IoError::WriteError(format!("HEIF encode error: {}", e)))?;
+        .map_err(|e| IoError::EncodeError(format!("HEIF encode error: {}", e)))?;
 
     ctx.write_to_file(path_str)
-        .map_err(|e| IoError::WriteError(format!("HEIF write error: {}", e)))?;
+        .map_err(|e| IoError::EncodeError(format!("HEIF write error: {}", e)))?;
 
     Ok(())
 }
@@ -530,7 +523,6 @@ pub fn write_heif<P: AsRef<Path>>(
 #[cfg(all(test, feature = "heif"))]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_hdr_metadata_is_hdr() {

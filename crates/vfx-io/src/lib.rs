@@ -11,6 +11,7 @@
 //! - **JPEG** - Lossy compression for previews
 //! - **TIFF** - Print/archival with LZW compression
 //! - **DPX** - Film scanning/output (10-bit log)
+//! - **HEIF/HEIC** - Modern HDR format with PQ/HLG (requires `heif` feature)
 //!
 //! # Architecture
 //!
@@ -82,6 +83,7 @@
 //! | JPEG | Yes | Yes | 8 | Quality setting |
 //! | TIFF | Yes | Yes | 8, 16, 32f | LZW, Deflate compression |
 //! | DPX | Yes | Yes | 8, 10, 12, 16 | Film metadata, log encoding |
+//! | HEIF | Yes | Yes | 8, 10 | HDR PQ/HLG, NCLX profiles |
 //!
 //! # Feature Flags
 //!
@@ -178,6 +180,12 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
 
         #[cfg(feature = "hdr")]
         Format::Hdr => hdr::read(path),
+
+        #[cfg(feature = "heif")]
+        Format::Heif => heif::read_heif(path).map(|(img, _hdr)| img),
+
+        #[cfg(not(feature = "heif"))]
+        Format::Heif => Err(IoError::UnsupportedFormat("HEIF support requires 'heif' feature".into())),
         
         Format::Unknown => Err(IoError::UnsupportedFormat(
             path.extension()
@@ -227,6 +235,12 @@ pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
 
         #[cfg(feature = "hdr")]
         Format::Hdr => hdr::write(path, image),
+
+        #[cfg(feature = "heif")]
+        Format::Heif => heif::write_heif(path, image, None),
+
+        #[cfg(not(feature = "heif"))]
+        Format::Heif => Err(IoError::UnsupportedFormat("HEIF support requires 'heif' feature".into())),
         
         Format::Unknown => Err(IoError::UnsupportedFormat(
             path.extension()
