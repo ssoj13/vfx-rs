@@ -12,7 +12,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::registry::FormatRegistry;
 //!
 //! let registry = FormatRegistry::global();
@@ -95,7 +95,7 @@ pub trait FormatWriterDyn: Send + Sync {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::registry::FormatRegistry;
 ///
 /// let registry = FormatRegistry::global();

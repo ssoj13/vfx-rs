@@ -28,7 +28,7 @@
 //! # Examples
 //!
 //! Simple usage:
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::png;
 //!
 //! let image = png::read("input.png")?;
@@ -36,7 +36,7 @@
 //! ```
 //!
 //! With options:
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::png::{PngWriter, PngWriterOptions, BitDepth, CompressionLevel};
 //! use vfx_io::FormatWriter;
 //!
@@ -122,7 +122,7 @@ impl CompressionLevel {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::png::{PngReader, PngReaderOptions};
 /// use vfx_io::FormatReader;
 ///
@@ -145,7 +145,7 @@ pub struct PngReaderOptions {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::png::{PngWriter, PngWriterOptions, BitDepth, CompressionLevel};
 /// use vfx_io::FormatWriter;
 ///
@@ -194,7 +194,7 @@ impl Default for PngWriterOptions {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::png::PngReader;
 /// use vfx_io::FormatReader;
 ///
@@ -466,7 +466,7 @@ impl FormatReader<PngReaderOptions> for PngReader {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::png::{PngWriter, PngWriterOptions, BitDepth};
 /// use vfx_io::FormatWriter;
 ///
@@ -582,7 +582,7 @@ impl FormatWriter<PngWriterOptions> for PngWriter {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::png;
 ///
 /// let image = png::read("photo.png")?;
@@ -598,7 +598,7 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::png;
 ///
 /// png::write("output.png", &image)?;

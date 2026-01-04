@@ -27,7 +27,7 @@
 //!
 //! # Quick Start
 //!
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::{read, write};
 //!
 //! // Read any supported format (auto-detected)
@@ -39,7 +39,7 @@
 //!
 //! # Format-Specific Usage
 //!
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::dpx::{DpxReader, DpxWriter, DpxWriterOptions, BitDepth};
 //!
 //! // Read with default options
@@ -58,7 +58,7 @@
 //!
 //! All formats extract metadata into [`Attrs`], a typed attribute container:
 //!
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::read;
 //!
 //! let image = read("photo.jpg")?;
@@ -137,7 +137,7 @@ use std::path::Path;
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::read;
 ///
 /// let image = read("input.exr")?;
@@ -186,7 +186,7 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::{read, write};
 ///
 /// let image = read("input.exr")?;
@@ -247,7 +247,7 @@ pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::{ImageData, PixelFormat};
 ///
 /// // Create a 1920x1080 RGB float image

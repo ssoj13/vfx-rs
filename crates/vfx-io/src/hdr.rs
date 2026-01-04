@@ -33,7 +33,7 @@
 //! # Examples
 //!
 //! Simple usage:
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::hdr;
 //!
 //! let image = hdr::read("environment.hdr")?;
@@ -41,7 +41,7 @@
 //! ```
 //!
 //! With options:
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::hdr::{HdrWriter, HdrWriterOptions};
 //! use vfx_io::FormatWriter;
 //!
@@ -70,7 +70,7 @@ const HDR_MAGIC: &str = "#?";
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::hdr::{HdrReader, HdrReaderOptions};
 /// use vfx_io::FormatReader;
 ///
@@ -93,7 +93,7 @@ pub struct HdrReaderOptions {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::hdr::{HdrWriter, HdrWriterOptions};
 /// use vfx_io::FormatWriter;
 ///
@@ -143,7 +143,7 @@ impl Default for HdrWriterOptions {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::hdr::HdrReader;
 /// use vfx_io::FormatReader;
 ///
@@ -449,7 +449,7 @@ impl FormatReader<HdrReaderOptions> for HdrReader {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::hdr::{HdrWriter, HdrWriterOptions};
 /// use vfx_io::FormatWriter;
 ///
@@ -635,7 +635,7 @@ impl FormatWriter<HdrWriterOptions> for HdrWriter {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::hdr;
 ///
 /// let image = hdr::read("environment.hdr")?;
@@ -651,7 +651,7 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::hdr;
 ///
 /// hdr::write("output.hdr", &image)?;

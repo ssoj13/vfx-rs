@@ -28,7 +28,7 @@
 //! # Examples
 //!
 //! Simple usage:
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::jpeg;
 //!
 //! let image = jpeg::read("photo.jpg")?;
@@ -36,7 +36,7 @@
 //! ```
 //!
 //! With quality control:
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::jpeg::{JpegWriter, JpegWriterOptions};
 //! use vfx_io::FormatWriter;
 //!
@@ -89,7 +89,7 @@ pub enum ColorType {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::jpeg::{JpegReader, JpegReaderOptions};
 /// use vfx_io::FormatReader;
 ///
@@ -112,7 +112,7 @@ pub struct JpegReaderOptions {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::jpeg::{JpegWriter, JpegWriterOptions};
 /// use vfx_io::FormatWriter;
 ///
@@ -159,7 +159,7 @@ impl Default for JpegWriterOptions {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::jpeg::JpegReader;
 /// use vfx_io::FormatReader;
 ///
@@ -489,7 +489,7 @@ impl FormatReader<JpegReaderOptions> for JpegReader {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::jpeg::{JpegWriter, JpegWriterOptions};
 /// use vfx_io::FormatWriter;
 ///
@@ -624,7 +624,7 @@ impl FormatWriter<JpegWriterOptions> for JpegWriter {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::jpeg;
 ///
 /// let image = jpeg::read("photo.jpg")?;
@@ -640,7 +640,7 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::jpeg;
 ///
 /// jpeg::write("output.jpg", &image)?;

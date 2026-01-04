@@ -28,7 +28,7 @@
 //! # Examples
 //!
 //! Simple usage:
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::tiff;
 //!
 //! let image = tiff::read("scan.tiff")?;
@@ -36,7 +36,7 @@
 //! ```
 //!
 //! With options:
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::tiff::{TiffWriter, TiffWriterOptions, BitDepth, Compression};
 //! use vfx_io::FormatWriter;
 //!
@@ -126,7 +126,7 @@ impl Compression {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::tiff::{TiffReader, TiffReaderOptions};
 /// use vfx_io::FormatReader;
 ///
@@ -149,7 +149,7 @@ pub struct TiffReaderOptions {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::tiff::{TiffWriter, TiffWriterOptions, BitDepth, Compression};
 /// use vfx_io::FormatWriter;
 ///
@@ -195,7 +195,7 @@ impl Default for TiffWriterOptions {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::tiff::TiffReader;
 /// use vfx_io::FormatReader;
 ///
@@ -385,7 +385,7 @@ impl FormatReader<TiffReaderOptions> for TiffReader {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::tiff::{TiffWriter, TiffWriterOptions, Compression};
 /// use vfx_io::FormatWriter;
 ///
@@ -586,7 +586,7 @@ impl FormatWriter<TiffWriterOptions> for TiffWriter {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::tiff;
 ///
 /// let image = tiff::read("scan.tiff")?;
@@ -602,7 +602,7 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::tiff;
 ///
 /// tiff::write("output.tiff", &image)?;

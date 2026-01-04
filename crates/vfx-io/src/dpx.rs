@@ -12,7 +12,7 @@
 //!
 //! # Quick Start
 //!
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::dpx;
 //!
 //! // Simple read/write
@@ -22,7 +22,7 @@
 //!
 //! # With Options
 //!
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::dpx::{DpxWriter, DpxWriterOptions, BitDepth};
 //!
 //! let writer = DpxWriter::with_options(DpxWriterOptions {
@@ -155,7 +155,7 @@ pub struct DpxReaderOptions {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::dpx::{DpxWriterOptions, BitDepth, Endianness};
 ///
 /// let options = DpxWriterOptions {
@@ -306,7 +306,7 @@ impl DpxHeader {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::dpx::DpxReader;
 /// use vfx_io::FormatReader;
 ///
@@ -430,7 +430,7 @@ impl FormatReader<DpxReaderOptions> for DpxReader {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::dpx::{DpxWriter, DpxWriterOptions, BitDepth};
 /// use vfx_io::FormatWriter;
 ///
@@ -666,7 +666,7 @@ impl FormatWriter<DpxWriterOptions> for DpxWriter {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::dpx;
 ///
 /// let image = dpx::read("frame.0001.dpx")?;
@@ -683,7 +683,7 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::dpx;
 ///
 /// dpx::write("output.0001.dpx", &image)?;

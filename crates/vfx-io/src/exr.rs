@@ -28,7 +28,7 @@
 //! # Examples
 //!
 //! Simple usage:
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::exr;
 //!
 //! let image = exr::read("render.exr")?;
@@ -36,7 +36,7 @@
 //! ```
 //!
 //! With options:
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::exr::{ExrWriter, ExrWriterOptions, Compression};
 //! use vfx_io::FormatWriter;
 //!
@@ -113,7 +113,7 @@ impl Compression {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::exr::{ExrReader, ExrReaderOptions};
 /// use vfx_io::FormatReader;
 ///
@@ -136,7 +136,7 @@ pub struct ExrReaderOptions {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::exr::{ExrWriter, ExrWriterOptions, Compression};
 /// use vfx_io::FormatWriter;
 ///
@@ -185,7 +185,7 @@ impl Default for ExrWriterOptions {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::exr::ExrReader;
 /// use vfx_io::FormatReader;
 ///
@@ -436,7 +436,7 @@ impl FormatReader<ExrReaderOptions> for ExrReader {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::exr::{ExrWriter, ExrWriterOptions, Compression};
 /// use vfx_io::FormatWriter;
 ///
@@ -568,7 +568,7 @@ impl FormatWriter<ExrWriterOptions> for ExrWriter {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::exr;
 ///
 /// let image = exr::read("render.exr")?;
@@ -585,7 +585,7 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::exr;
 ///
 /// exr::write("output.exr", &image)?;

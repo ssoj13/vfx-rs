@@ -26,7 +26,7 @@
 //!
 //! ## Simple (using free functions)
 //!
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::{read, write};
 //!
 //! let image = read("input.exr")?;
@@ -35,7 +35,7 @@
 //!
 //! ## With options (using structs)
 //!
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::dpx::{DpxWriter, DpxWriterOptions, BitDepth};
 //!
 //! let writer = DpxWriter::with_options(DpxWriterOptions {
@@ -47,7 +47,7 @@
 //!
 //! ## From memory
 //!
-//! ```rust,ignore
+//! ```ignore
 //! use vfx_io::png::PngReader;
 //!
 //! let data = std::fs::read("image.png")?;
@@ -90,7 +90,7 @@ impl<T: Write + Seek> WriteSeek for T {}
 ///
 /// # Example Implementation
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::{FormatReader, ImageData, IoResult};
 ///
 /// #[derive(Debug, Clone, Default)]
@@ -135,7 +135,7 @@ pub trait FormatReader<O: Default = ()>: Send + Sync {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```ignore
     /// fn extensions(&self) -> &'static [&'static str] {
     ///     &["dpx", "cin"] // DPX and Cineon
     /// }
@@ -201,7 +201,7 @@ pub trait FormatReader<O: Default = ()>: Send + Sync {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use vfx_io::dpx::{DpxWriter, DpxWriterOptions, BitDepth};
 ///
 /// // Writer with custom options
