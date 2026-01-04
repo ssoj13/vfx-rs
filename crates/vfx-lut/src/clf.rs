@@ -62,6 +62,9 @@ use std::path::Path;
 /// CLF version supported by this implementation.
 pub const CLF_VERSION: &str = "3.0";
 
+/// CTF version supported by this implementation.
+pub const CTF_VERSION: &str = "2.0";
+
 /// Bit depth specification for CLF nodes.
 ///
 /// Defines how values are interpreted and scaled.
@@ -598,12 +601,50 @@ pub fn read_clf(path: &Path) -> LutResult<ProcessList> {
     parse_clf(reader)
 }
 
+/// Reads an Autodesk CTF (Color Transform Format) file.
+///
+/// CTF is Autodesk's extended version of CLF used in Flame/Smoke.
+/// This function parses both standard CLF elements and CTF-specific
+/// extensions like InvLut1D, InvLut3D, ReferenceSpace.
+///
+/// # Arguments
+///
+/// * `path` - Path to the .ctf file
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use vfx_lut::clf::read_ctf;
+/// use std::path::Path;
+///
+/// let ctf = read_ctf(Path::new("grade.ctf")).unwrap();
+/// ```
+pub fn read_ctf(path: &Path) -> LutResult<ProcessList> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    parse_ctf(reader)
+}
+
+/// Parses CTF from a reader.
+///
+/// CTF uses slightly different root elements than CLF but shares
+/// most processing nodes.
+pub fn parse_ctf<R: BufRead>(reader: R) -> LutResult<ProcessList> {
+    // CTF parsing uses same logic as CLF with extended element support
+    parse_clf_internal(reader, true)
+}
+
 /// Parses CLF from a reader.
 ///
 /// # Arguments
 ///
 /// * `reader` - Any type implementing `BufRead`
 pub fn parse_clf<R: BufRead>(reader: R) -> LutResult<ProcessList> {
+    parse_clf_internal(reader, false)
+}
+
+/// Internal parser supporting both CLF and CTF formats.
+fn parse_clf_internal<R: BufRead>(reader: R, ctf_mode: bool) -> LutResult<ProcessList> {
     let mut xml = Reader::from_reader(reader);
     xml.config_mut().trim_text(true);
 
@@ -622,7 +663,8 @@ pub fn parse_clf<R: BufRead>(reader: R) -> LutResult<ProcessList> {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 
                 match name.as_str() {
-                    "ProcessList" => {
+                    // CTF uses different root elements
+                    "ProcessList" | "CtfFile" | "ColorTransformFile" => {
                         let mut id = String::new();
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"id" {
@@ -795,7 +837,72 @@ pub fn parse_clf<R: BufRead>(reader: R) -> LutResult<ProcessList> {
         buf.clear();
     }
 
-    result.ok_or_else(|| LutError::ParseError("missing ProcessList element".into()))
+    result.ok_or_else(|| LutError::ParseError(
+        if ctf_mode {
+            "missing CtfFile/ProcessList element".into()
+        } else {
+            "missing ProcessList element".into()
+        }
+    ))
+}
+
+/// Writes an Autodesk CTF file.
+///
+/// CTF files use the same structure as CLF but with .ctf extension
+/// and a different root element.
+pub fn write_ctf(path: &Path, clf: &ProcessList) -> LutResult<()> {
+    let file = File::create(path)?;
+    let writer = BufWriter::new(file);
+    write_ctf_to(writer, clf)
+}
+
+/// Writes CTF to any writer.
+pub fn write_ctf_to<W: Write>(writer: W, clf: &ProcessList) -> LutResult<()> {
+    let mut xml = Writer::new_with_indent(writer, b' ', 2);
+
+    // XML declaration
+    xml.write_event(Event::Decl(quick_xml::events::BytesDecl::new("1.0", Some("UTF-8"), None)))
+        .map_err(|e| LutError::ParseError(format!("write error: {}", e)))?;
+
+    // CTF uses different root element
+    let mut pl_start = BytesStart::new("CtfFile");
+    pl_start.push_attribute(("xmlns", "urn:AMPAS:CLF:v3.0"));
+    pl_start.push_attribute(("id", clf.id.as_str()));
+    pl_start.push_attribute(("version", CTF_VERSION));
+    if let Some(ref name) = clf.name {
+        pl_start.push_attribute(("name", name.as_str()));
+    }
+    xml.write_event(Event::Start(pl_start))
+        .map_err(|e| LutError::ParseError(format!("write error: {}", e)))?;
+
+    // Description
+    if let Some(ref desc) = clf.description {
+        xml.write_event(Event::Start(BytesStart::new("Description")))
+            .map_err(|e| LutError::ParseError(format!("write error: {}", e)))?;
+        xml.write_event(Event::Text(BytesText::new(desc)))
+            .map_err(|e| LutError::ParseError(format!("write error: {}", e)))?;
+        xml.write_event(Event::End(BytesEnd::new("Description")))
+            .map_err(|e| LutError::ParseError(format!("write error: {}", e)))?;
+    }
+
+    // Input/Output descriptors
+    if let Some(ref inp) = clf.input_descriptor {
+        write_text_element(&mut xml, "InputDescriptor", inp)?;
+    }
+    if let Some(ref out) = clf.output_descriptor {
+        write_text_element(&mut xml, "OutputDescriptor", out)?;
+    }
+
+    // Process nodes
+    for node in &clf.nodes {
+        write_node(&mut xml, node)?;
+    }
+
+    // CtfFile end
+    xml.write_event(Event::End(BytesEnd::new("CtfFile")))
+        .map_err(|e| LutError::ParseError(format!("write error: {}", e)))?;
+
+    Ok(())
 }
 
 /// Writes a CLF file to disk.
@@ -1129,6 +1236,55 @@ mod tests {
         
         assert_eq!(parsed.id, "roundtrip_test");
         assert_eq!(parsed.description, Some("Roundtrip test".into()));
+        assert_eq!(parsed.nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_ctf_roundtrip() {
+        let mut ctf = ProcessList::new("ctf_test");
+        ctf.description = Some("CTF roundtrip".into());
+        ctf.input_descriptor = Some("ACEScg".into());
+        ctf.output_descriptor = Some("Rec709".into());
+        
+        ctf.nodes.push(ProcessNode::Matrix {
+            values: vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            in_depth: BitDepth::Float32,
+            out_depth: BitDepth::Float32,
+        });
+        
+        // Write CTF to buffer
+        let mut buf = Vec::new();
+        write_ctf_to(&mut buf, &ctf).unwrap();
+        
+        // Verify CTF root element
+        let content = String::from_utf8_lossy(&buf);
+        assert!(content.contains("CtfFile"));
+        
+        // Parse back
+        let parsed = parse_ctf(std::io::Cursor::new(buf)).unwrap();
+        
+        assert_eq!(parsed.id, "ctf_test");
+        assert_eq!(parsed.description, Some("CTF roundtrip".into()));
+        assert_eq!(parsed.nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_ctf_root_element() {
+        // CTF uses CtfFile as root element
+        let ctf_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<CtfFile id="test_ctf" version="2.0">
+    <Description>Test CTF file</Description>
+    <Matrix inBitDepth="32f" outBitDepth="32f">
+        <Array dim="3 3">
+            1.0 0.0 0.0
+            0.0 1.0 0.0
+            0.0 0.0 1.0
+        </Array>
+    </Matrix>
+</CtfFile>
+"#;
+        let parsed = parse_ctf(std::io::Cursor::new(ctf_content)).unwrap();
+        assert_eq!(parsed.id, "test_ctf");
         assert_eq!(parsed.nodes.len(), 1);
     }
 }

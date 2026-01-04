@@ -55,11 +55,13 @@ mod error;
 pub mod cube;
 pub mod clf;
 pub mod spi;
+pub mod threedl;
 
 pub use lut1d::Lut1D;
 pub use lut3d::Lut3D;
 pub use interp::Interpolation;
 pub use error::{LutError, LutResult};
 pub use cube::{read_1d as read_cube_1d, read_3d as read_cube_3d, write_1d as write_cube_1d, write_3d as write_cube_3d};
-pub use clf::{ProcessList, ProcessNode, read_clf, write_clf};
+pub use clf::{ProcessList, ProcessNode, read_clf, write_clf, read_ctf, write_ctf, parse_ctf};
 pub use spi::{read_spi1d, read_spi3d, write_spi1d, write_spi3d};
+pub use threedl::{read_3dl, parse_3dl, write_3dl, write_3dl_with_depth};
