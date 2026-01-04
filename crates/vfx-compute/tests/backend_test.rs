@@ -1,6 +1,6 @@
-//! Backend tests for vfx-gpu.
+//! Backend tests for vfx-compute.
 
-use vfx_gpu::{Backend, ColorProcessor, ImageProcessor, GpuImage, describe_backends};
+use vfx_compute::{Backend, ColorProcessor, ImageProcessor, ComputeImage, describe_backends};
 
 #[test]
 fn test_cpu_backend_available() {
@@ -31,7 +31,7 @@ fn test_color_matrix_identity() {
         0.0, 0.0, 1.0,  // blue
         1.0, 1.0, 1.0,  // white
     ];
-    let mut img = GpuImage::from_f32(data.clone(), 2, 2, 3).unwrap();
+    let mut img = ComputeImage::from_f32(data.clone(), 2, 2, 3).unwrap();
     
     // Identity matrix
     let identity = [
@@ -44,8 +44,8 @@ fn test_color_matrix_identity() {
     processor.apply_matrix(&mut img, &identity).unwrap();
     
     // Should be unchanged
-    for (a, b) in img.data().iter().zip(data.iter()) {
-        assert!((a - b).abs() < 1e-5);
+    for (i, (a, b)) in img.data().iter().zip(data.iter()).enumerate() {
+        assert!((a - b).abs() < 1e-5, "mismatch at {}: {} vs {}", i, a, b);
     }
 }
 
@@ -54,13 +54,13 @@ fn test_cdl_identity() {
     let processor = ColorProcessor::new(Backend::Cpu).unwrap();
     
     let data = vec![0.5, 0.5, 0.5];
-    let mut img = GpuImage::from_f32(data.clone(), 1, 1, 3).unwrap();
+    let mut img = ComputeImage::from_f32(data.clone(), 1, 1, 3).unwrap();
     
-    let cdl = vfx_gpu::color::Cdl::default();
+    let cdl = vfx_compute::color::Cdl::default();
     processor.apply_cdl(&mut img, &cdl).unwrap();
     
-    for (a, b) in img.data().iter().zip(data.iter()) {
-        assert!((a - b).abs() < 1e-5);
+    for (i, (a, b)) in img.data().iter().zip(data.iter()).enumerate() {
+        assert!((a - b).abs() < 1e-5, "mismatch at {}: {} vs {}", i, a, b);
     }
 }
 
@@ -68,7 +68,7 @@ fn test_cdl_identity() {
 fn test_exposure() {
     let processor = ColorProcessor::new(Backend::Cpu).unwrap();
     
-    let mut img = GpuImage::from_f32(vec![0.5, 0.5, 0.5], 1, 1, 3).unwrap();
+    let mut img = ComputeImage::from_f32(vec![0.5, 0.5, 0.5], 1, 1, 3).unwrap();
     
     // +1 stop = 2x brightness
     processor.apply_exposure(&mut img, 1.0).unwrap();
@@ -82,7 +82,7 @@ fn test_resize_half() {
     
     // 4x4 image
     let data = vec![1.0; 4 * 4 * 3];
-    let img = GpuImage::from_f32(data, 4, 4, 3).unwrap();
+    let img = ComputeImage::from_f32(data, 4, 4, 3).unwrap();
     
     let resized = processor.resize_half(&img).unwrap();
     
@@ -101,7 +101,7 @@ fn test_blur() {
     data[12 * 3 + 1] = 1.0; // center G
     data[12 * 3 + 2] = 1.0; // center B
     
-    let mut img = GpuImage::from_f32(data, 5, 5, 3).unwrap();
+    let mut img = ComputeImage::from_f32(data, 5, 5, 3).unwrap();
     processor.blur(&mut img, 1.0).unwrap();
     
     // Center should be less bright after blur
@@ -124,7 +124,7 @@ fn test_lut1d() {
         lut.push(v); // B
     }
     
-    let mut img = GpuImage::from_f32(vec![0.25, 0.25, 0.25], 1, 1, 3).unwrap();
+    let mut img = ComputeImage::from_f32(vec![0.25, 0.25, 0.25], 1, 1, 3).unwrap();
     processor.apply_lut1d(&mut img, &lut, 3).unwrap();
     
     // sqrt(0.25) = 0.5

@@ -1,8 +1,8 @@
 //! GPU-accelerated image operations.
 
-use crate::image::GpuImage;
+use crate::image::ComputeImage;
 use crate::backend::{Backend, ProcessingBackend, create_backend};
-use crate::GpuResult;
+use crate::ComputeResult;
 
 /// Resize filter modes.
 #[derive(Debug, Clone, Copy, Default)]
@@ -28,7 +28,7 @@ pub struct ImageProcessor {
 
 impl ImageProcessor {
     /// Create with specified backend.
-    pub fn new(backend: Backend) -> GpuResult<Self> {
+    pub fn new(backend: Backend) -> ComputeResult<Self> {
         Ok(Self {
             backend: create_backend(backend)?,
         })
@@ -45,15 +45,15 @@ impl ImageProcessor {
     }
 
     /// Resize image.
-    pub fn resize(&self, img: &GpuImage, width: u32, height: u32, filter: ResizeFilter) -> GpuResult<GpuImage> {
+    pub fn resize(&self, img: &ComputeImage, width: u32, height: u32, filter: ResizeFilter) -> ComputeResult<ComputeImage> {
         let handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
         let resized = self.backend.resize(handle.as_ref(), width, height, filter as u32)?;
         let data = self.backend.download(resized.as_ref())?;
-        GpuImage::from_f32(data, width, height, img.channels)
+        ComputeImage::from_f32(data, width, height, img.channels)
     }
 
     /// Apply Gaussian blur.
-    pub fn blur(&self, img: &mut GpuImage, radius: f32) -> GpuResult<()> {
+    pub fn blur(&self, img: &mut ComputeImage, radius: f32) -> ComputeResult<()> {
         let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
         self.backend.blur(handle.as_mut(), radius)?;
         img.data = self.backend.download(handle.as_ref())?;
@@ -61,7 +61,7 @@ impl ImageProcessor {
     }
 
     /// Apply sharpening (unsharp mask).
-    pub fn sharpen(&self, img: &mut GpuImage, amount: f32) -> GpuResult<()> {
+    pub fn sharpen(&self, img: &mut ComputeImage, amount: f32) -> ComputeResult<()> {
         // Unsharp mask: sharp = original + amount * (original - blur)
         let original = img.data.clone();
         
@@ -79,7 +79,7 @@ impl ImageProcessor {
     }
 
     /// Resize to half size (useful for mipmap generation).
-    pub fn resize_half(&self, img: &GpuImage) -> GpuResult<GpuImage> {
+    pub fn resize_half(&self, img: &ComputeImage) -> ComputeResult<ComputeImage> {
         self.resize(img, img.width / 2, img.height / 2, ResizeFilter::Bilinear)
     }
 }

@@ -1,10 +1,10 @@
 //! GPU image representation.
 
-use crate::{GpuError, GpuResult};
+use crate::{ComputeError, ComputeResult};
 
 /// Image stored in GPU/CPU memory for processing.
 #[derive(Clone)]
-pub struct GpuImage {
+pub struct ComputeImage {
     /// Raw pixel data (f32).
     pub(crate) data: Vec<f32>,
     /// Width in pixels.
@@ -15,12 +15,12 @@ pub struct GpuImage {
     pub channels: u32,
 }
 
-impl GpuImage {
+impl ComputeImage {
     /// Create from f32 data.
-    pub fn from_f32(data: Vec<f32>, width: u32, height: u32, channels: u32) -> GpuResult<Self> {
+    pub fn from_f32(data: Vec<f32>, width: u32, height: u32, channels: u32) -> ComputeResult<Self> {
         let expected = (width as usize) * (height as usize) * (channels as usize);
         if data.len() != expected {
-            return Err(GpuError::BufferSizeMismatch { 
+            return Err(ComputeError::BufferSizeMismatch { 
                 expected, 
                 actual: data.len() 
             });
@@ -70,9 +70,9 @@ impl GpuImage {
     }
 }
 
-impl std::fmt::Debug for GpuImage {
+impl std::fmt::Debug for ComputeImage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GpuImage")
+        f.debug_struct("ComputeImage")
             .field("width", &self.width)
             .field("height", &self.height)
             .field("channels", &self.channels)

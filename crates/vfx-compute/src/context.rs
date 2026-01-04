@@ -3,28 +3,28 @@
 use std::sync::Arc;
 use wgpu::{Device, Queue, Instance, Adapter, DeviceDescriptor, Features, Limits};
 
-use crate::{GpuError, GpuResult};
+use crate::{ComputeError, ComputeResult};
 
 /// GPU context holding device and queue
-pub struct GpuContext {
+pub struct ComputeContext {
     pub(crate) device: Arc<Device>,
     pub(crate) queue: Arc<Queue>,
     adapter_info: wgpu::AdapterInfo,
 }
 
-impl GpuContext {
+impl ComputeContext {
     /// Create new GPU context with default settings
-    pub fn new() -> GpuResult<Self> {
+    pub fn new() -> ComputeResult<Self> {
         Self::with_power_preference(wgpu::PowerPreference::HighPerformance)
     }
 
     /// Create context with power preference
-    pub fn with_power_preference(power: wgpu::PowerPreference) -> GpuResult<Self> {
+    pub fn with_power_preference(power: wgpu::PowerPreference) -> ComputeResult<Self> {
         pollster::block_on(Self::new_async(power))
     }
 
     /// Async context creation
-    async fn new_async(power: wgpu::PowerPreference) -> GpuResult<Self> {
+    async fn new_async(power: wgpu::PowerPreference) -> ComputeResult<Self> {
         let instance = Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()
@@ -37,14 +37,14 @@ impl GpuContext {
                 force_fallback_adapter: false,
             })
             .await
-            .ok_or(GpuError::NoAdapter)?;
+            .ok_or(ComputeError::NoAdapter)?;
 
         let adapter_info = adapter.get_info();
 
         let (device, queue) = adapter
             .request_device(
                 &DeviceDescriptor {
-                    label: Some("vfx-gpu"),
+                    label: Some("vfx-compute"),
                     required_features: Features::empty(),
                     required_limits: Limits::default(),
                     memory_hints: Default::default(),
@@ -52,7 +52,7 @@ impl GpuContext {
                 None,
             )
             .await
-            .map_err(|e| GpuError::DeviceCreation(e.to_string()))?;
+            .map_err(|e| ComputeError::DeviceCreation(e.to_string()))?;
 
         Ok(Self {
             device: Arc::new(device),
@@ -82,7 +82,7 @@ impl GpuContext {
     }
 
     /// Create a compute shader module
-    pub(crate) fn create_shader(&self, source: &str) -> GpuResult<wgpu::ShaderModule> {
+    pub(crate) fn create_shader(&self, source: &str) -> ComputeResult<wgpu::ShaderModule> {
         Ok(self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("compute_shader"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -96,9 +96,9 @@ impl GpuContext {
     }
 }
 
-impl std::fmt::Debug for GpuContext {
+impl std::fmt::Debug for ComputeContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GpuContext")
+        f.debug_struct("ComputeContext")
             .field("device", &self.adapter_info.name)
             .field("backend", &self.adapter_info.backend)
             .finish()

@@ -11,7 +11,7 @@ members = [
     "crates/vfx-io",
     "crates/vfx-ops",
     "crates/vfx-icc",
-    "crates/vfx-gpu",
+    "crates/vfx-compute",
     "crates/vfx-cli",
     "crates/vfx-tests",
     "crates/vfx-bench",
@@ -35,6 +35,7 @@ vfx-primaries = { path = "crates/vfx-primaries" }
 vfx-color = { path = "crates/vfx-color" }
 vfx-io = { path = "crates/vfx-io" }
 vfx-ops = { path = "crates/vfx-ops" }
+vfx-compute = { path = "crates/vfx-compute" }
 
 # Math & SIMD
 glam = "0.30"

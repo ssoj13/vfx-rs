@@ -1,8 +1,8 @@
 //! GPU-accelerated color processing.
 
-use crate::image::GpuImage;
+use crate::image::ComputeImage;
 use crate::backend::{Backend, ProcessingBackend, create_backend};
-use crate::GpuResult;
+use crate::ComputeResult;
 
 /// CDL (Color Decision List) parameters.
 #[derive(Debug, Clone, Copy)]
@@ -34,7 +34,7 @@ pub struct ColorProcessor {
 
 impl ColorProcessor {
     /// Create with specified backend.
-    pub fn new(backend: Backend) -> GpuResult<Self> {
+    pub fn new(backend: Backend) -> ComputeResult<Self> {
         Ok(Self {
             backend: create_backend(backend)?,
         })
@@ -51,18 +51,18 @@ impl ColorProcessor {
     }
 
     /// Upload image to GPU memory.
-    pub fn upload(&self, img: &GpuImage) -> GpuResult<Box<dyn crate::backend::ImageHandle>> {
+    pub fn upload(&self, img: &ComputeImage) -> ComputeResult<Box<dyn crate::backend::ImageHandle>> {
         self.backend.upload(&img.data, img.width, img.height, img.channels)
     }
 
     /// Download image from GPU memory.
-    pub fn download(&self, handle: &dyn crate::backend::ImageHandle, width: u32, height: u32, channels: u32) -> GpuResult<GpuImage> {
+    pub fn download(&self, handle: &dyn crate::backend::ImageHandle, width: u32, height: u32, channels: u32) -> ComputeResult<ComputeImage> {
         let data = self.backend.download(handle)?;
-        GpuImage::from_f32(data, width, height, channels)
+        ComputeImage::from_f32(data, width, height, channels)
     }
 
     /// Apply 4x4 color matrix.
-    pub fn apply_matrix(&self, img: &mut GpuImage, matrix: &[f32; 16]) -> GpuResult<()> {
+    pub fn apply_matrix(&self, img: &mut ComputeImage, matrix: &[f32; 16]) -> ComputeResult<()> {
         let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
         self.backend.apply_matrix(handle.as_mut(), matrix)?;
         img.data = self.backend.download(handle.as_ref())?;
@@ -70,7 +70,7 @@ impl ColorProcessor {
     }
 
     /// Apply CDL transform.
-    pub fn apply_cdl(&self, img: &mut GpuImage, cdl: &Cdl) -> GpuResult<()> {
+    pub fn apply_cdl(&self, img: &mut ComputeImage, cdl: &Cdl) -> ComputeResult<()> {
         let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
         self.backend.apply_cdl(handle.as_mut(), cdl.slope, cdl.offset, cdl.power, cdl.saturation)?;
         img.data = self.backend.download(handle.as_ref())?;
@@ -78,7 +78,7 @@ impl ColorProcessor {
     }
 
     /// Apply 1D LUT.
-    pub fn apply_lut1d(&self, img: &mut GpuImage, lut: &[f32], channels: u32) -> GpuResult<()> {
+    pub fn apply_lut1d(&self, img: &mut ComputeImage, lut: &[f32], channels: u32) -> ComputeResult<()> {
         let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
         self.backend.apply_lut1d(handle.as_mut(), lut, channels)?;
         img.data = self.backend.download(handle.as_ref())?;
@@ -86,7 +86,7 @@ impl ColorProcessor {
     }
 
     /// Apply 3D LUT.
-    pub fn apply_lut3d(&self, img: &mut GpuImage, lut: &[f32], size: u32) -> GpuResult<()> {
+    pub fn apply_lut3d(&self, img: &mut ComputeImage, lut: &[f32], size: u32) -> ComputeResult<()> {
         let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
         self.backend.apply_lut3d(handle.as_mut(), lut, size)?;
         img.data = self.backend.download(handle.as_ref())?;
@@ -94,7 +94,7 @@ impl ColorProcessor {
     }
 
     /// Apply exposure adjustment (in stops).
-    pub fn apply_exposure(&self, img: &mut GpuImage, stops: f32) -> GpuResult<()> {
+    pub fn apply_exposure(&self, img: &mut ComputeImage, stops: f32) -> ComputeResult<()> {
         let mult = 2.0f32.powf(stops);
         let matrix = [
             mult, 0.0, 0.0, 0.0,
@@ -106,7 +106,7 @@ impl ColorProcessor {
     }
 
     /// Apply saturation adjustment.
-    pub fn apply_saturation(&self, img: &mut GpuImage, sat: f32) -> GpuResult<()> {
+    pub fn apply_saturation(&self, img: &mut ComputeImage, sat: f32) -> ComputeResult<()> {
         let cdl = Cdl {
             saturation: sat,
             ..Default::default()

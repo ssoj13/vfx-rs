@@ -1,11 +1,11 @@
 [package]
-name = "vfx-gpu"
+name = "vfx-compute"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "GPU-accelerated image processing for VFX workflows"
+description = "Unified compute backend for VFX workflows (CPU + GPU)"
 
 [features]
 default = []

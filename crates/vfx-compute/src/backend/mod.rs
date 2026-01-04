@@ -18,7 +18,9 @@ pub use cpu_backend::{CpuBackend, CpuPrimitives};
 #[cfg(feature = "wgpu")]
 pub use wgpu_backend::{WgpuBackend, WgpuPrimitives};
 
-use crate::{GpuError, GpuResult};
+#[cfg(not(feature = "wgpu"))]
+use crate::ComputeError;
+use crate::ComputeResult;
 
 
 /// Available compute backends.
@@ -59,32 +61,32 @@ pub trait ProcessingBackend: Send + Sync {
     fn limits(&self) -> &GpuLimits;
     
     /// Upload image to GPU memory.
-    fn upload(&self, data: &[f32], width: u32, height: u32, channels: u32) -> GpuResult<Box<dyn ImageHandle>>;
+    fn upload(&self, data: &[f32], width: u32, height: u32, channels: u32) -> ComputeResult<Box<dyn ImageHandle>>;
     
     /// Download image from GPU.
-    fn download(&self, handle: &dyn ImageHandle) -> GpuResult<Vec<f32>>;
+    fn download(&self, handle: &dyn ImageHandle) -> ComputeResult<Vec<f32>>;
     
     /// Apply 4x4 color matrix transform.
-    fn apply_matrix(&self, handle: &mut dyn ImageHandle, matrix: &[f32; 16]) -> GpuResult<()>;
+    fn apply_matrix(&self, handle: &mut dyn ImageHandle, matrix: &[f32; 16]) -> ComputeResult<()>;
     
     /// Apply CDL (slope, offset, power, saturation).
-    fn apply_cdl(&self, handle: &mut dyn ImageHandle, slope: [f32; 3], offset: [f32; 3], power: [f32; 3], sat: f32) -> GpuResult<()>;
+    fn apply_cdl(&self, handle: &mut dyn ImageHandle, slope: [f32; 3], offset: [f32; 3], power: [f32; 3], sat: f32) -> ComputeResult<()>;
     
     /// Apply 1D LUT.
-    fn apply_lut1d(&self, handle: &mut dyn ImageHandle, lut: &[f32], channels: u32) -> GpuResult<()>;
+    fn apply_lut1d(&self, handle: &mut dyn ImageHandle, lut: &[f32], channels: u32) -> ComputeResult<()>;
     
     /// Apply 3D LUT.
-    fn apply_lut3d(&self, handle: &mut dyn ImageHandle, lut: &[f32], size: u32) -> GpuResult<()>;
+    fn apply_lut3d(&self, handle: &mut dyn ImageHandle, lut: &[f32], size: u32) -> ComputeResult<()>;
     
     /// Resize image.
-    fn resize(&self, handle: &dyn ImageHandle, width: u32, height: u32, filter: u32) -> GpuResult<Box<dyn ImageHandle>>;
+    fn resize(&self, handle: &dyn ImageHandle, width: u32, height: u32, filter: u32) -> ComputeResult<Box<dyn ImageHandle>>;
     
     /// Apply Gaussian blur.
-    fn blur(&self, handle: &mut dyn ImageHandle, radius: f32) -> GpuResult<()>;
+    fn blur(&self, handle: &mut dyn ImageHandle, radius: f32) -> ComputeResult<()>;
 }
 
 /// Create a backend instance.
-pub fn create_backend(backend: Backend) -> GpuResult<Box<dyn ProcessingBackend>> {
+pub fn create_backend(backend: Backend) -> ComputeResult<Box<dyn ProcessingBackend>> {
     match backend {
         Backend::Auto => {
             let best = select_best_backend();
@@ -98,7 +100,7 @@ pub fn create_backend(backend: Backend) -> GpuResult<Box<dyn ProcessingBackend>>
             }
             #[cfg(not(feature = "wgpu"))]
             {
-                Err(GpuError::BackendNotAvailable(
+                Err(ComputeError::BackendNotAvailable(
                     "wgpu feature not enabled".to_string()
                 ))
             }

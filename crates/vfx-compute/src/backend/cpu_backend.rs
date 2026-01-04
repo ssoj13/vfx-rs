@@ -4,7 +4,7 @@ use rayon::prelude::*;
 
 use super::{GpuLimits, ProcessingBackend};
 use super::gpu_primitives::{ImageHandle, GpuPrimitives, AsAny};
-use crate::{GpuError, GpuResult};
+use crate::{ComputeError, ComputeResult};
 
 /// CPU image handle - data stored in RAM.
 pub struct CpuImage {
@@ -70,20 +70,20 @@ impl Default for CpuPrimitives {
 impl GpuPrimitives for CpuPrimitives {
     type Handle = CpuImage;
 
-    fn upload(&self, data: &[f32], width: u32, height: u32, channels: u32) -> GpuResult<Self::Handle> {
+    fn upload(&self, data: &[f32], width: u32, height: u32, channels: u32) -> ComputeResult<Self::Handle> {
         Ok(CpuImage::new(data.to_vec(), width, height, channels))
     }
 
-    fn download(&self, handle: &Self::Handle) -> GpuResult<Vec<f32>> {
+    fn download(&self, handle: &Self::Handle) -> ComputeResult<Vec<f32>> {
         Ok(handle.data.clone())
     }
 
-    fn allocate(&self, width: u32, height: u32, channels: u32) -> GpuResult<Self::Handle> {
+    fn allocate(&self, width: u32, height: u32, channels: u32) -> ComputeResult<Self::Handle> {
         let size = (width as usize) * (height as usize) * (channels as usize);
         Ok(CpuImage::new(vec![0.0; size], width, height, channels))
     }
 
-    fn exec_matrix(&self, src: &Self::Handle, dst: &mut Self::Handle, matrix: &[f32; 16]) -> GpuResult<()> {
+    fn exec_matrix(&self, src: &Self::Handle, dst: &mut Self::Handle, matrix: &[f32; 16]) -> ComputeResult<()> {
         let c = src.channels as usize;
 
         dst.data.par_chunks_mut(c)
@@ -106,7 +106,7 @@ impl GpuPrimitives for CpuPrimitives {
     }
 
     fn exec_cdl(&self, src: &Self::Handle, dst: &mut Self::Handle,
-                slope: [f32; 3], offset: [f32; 3], power: [f32; 3], sat: f32) -> GpuResult<()> {
+                slope: [f32; 3], offset: [f32; 3], power: [f32; 3], sat: f32) -> ComputeResult<()> {
         let c = src.channels as usize;
 
         dst.data.par_chunks_mut(c)
@@ -135,7 +135,7 @@ impl GpuPrimitives for CpuPrimitives {
     }
 
     fn exec_lut1d(&self, src: &Self::Handle, dst: &mut Self::Handle,
-                  lut: &[f32], lut_channels: u32) -> GpuResult<()> {
+                  lut: &[f32], lut_channels: u32) -> ComputeResult<()> {
         let c = src.channels as usize;
         let lut_size = lut.len() / (lut_channels as usize);
         let scale = (lut_size - 1) as f32;
@@ -162,7 +162,7 @@ impl GpuPrimitives for CpuPrimitives {
     }
 
     fn exec_lut3d(&self, src: &Self::Handle, dst: &mut Self::Handle,
-                  lut: &[f32], size: u32) -> GpuResult<()> {
+                  lut: &[f32], size: u32) -> ComputeResult<()> {
         let c = src.channels as usize;
         let s = size as usize;
         let scale = (s - 1) as f32;
@@ -218,7 +218,7 @@ impl GpuPrimitives for CpuPrimitives {
         Ok(())
     }
 
-    fn exec_resize(&self, src: &Self::Handle, dst: &mut Self::Handle, _filter: u32) -> GpuResult<()> {
+    fn exec_resize(&self, src: &Self::Handle, dst: &mut Self::Handle, _filter: u32) -> ComputeResult<()> {
         let (sw, sh, c) = src.dimensions();
         let (dw, dh, _) = dst.dimensions();
 
@@ -262,7 +262,7 @@ impl GpuPrimitives for CpuPrimitives {
         Ok(())
     }
 
-    fn exec_blur(&self, src: &Self::Handle, dst: &mut Self::Handle, radius: f32) -> GpuResult<()> {
+    fn exec_blur(&self, src: &Self::Handle, dst: &mut Self::Handle, radius: f32) -> ComputeResult<()> {
         let (w, h, c) = src.dimensions();
         let r = radius.ceil() as i32;
         let sigma = radius / 3.0;
@@ -363,20 +363,20 @@ impl ProcessingBackend for CpuBackend {
         &self.primitives.limits
     }
 
-    fn upload(&self, data: &[f32], width: u32, height: u32, channels: u32) -> GpuResult<Box<dyn ImageHandle>> {
+    fn upload(&self, data: &[f32], width: u32, height: u32, channels: u32) -> ComputeResult<Box<dyn ImageHandle>> {
         let handle = self.primitives.upload(data, width, height, channels)?;
         Ok(Box::new(handle))
     }
 
-    fn download(&self, handle: &dyn ImageHandle) -> GpuResult<Vec<f32>> {
+    fn download(&self, handle: &dyn ImageHandle) -> ComputeResult<Vec<f32>> {
         let cpu_handle = handle.as_any().downcast_ref::<CpuImage>()
-            .ok_or_else(|| GpuError::OperationFailed("Invalid handle type".into()))?;
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
         self.primitives.download(cpu_handle)
     }
 
-    fn apply_matrix(&self, handle: &mut dyn ImageHandle, matrix: &[f32; 16]) -> GpuResult<()> {
+    fn apply_matrix(&self, handle: &mut dyn ImageHandle, matrix: &[f32; 16]) -> ComputeResult<()> {
         let cpu_handle = handle.as_any_mut().downcast_mut::<CpuImage>()
-            .ok_or_else(|| GpuError::OperationFailed("Invalid handle type".into()))?;
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
 
         let mut dst = self.primitives.allocate(cpu_handle.width, cpu_handle.height, cpu_handle.channels)?;
         self.primitives.exec_matrix(cpu_handle, &mut dst, matrix)?;
@@ -384,9 +384,9 @@ impl ProcessingBackend for CpuBackend {
         Ok(())
     }
 
-    fn apply_cdl(&self, handle: &mut dyn ImageHandle, slope: [f32; 3], offset: [f32; 3], power: [f32; 3], sat: f32) -> GpuResult<()> {
+    fn apply_cdl(&self, handle: &mut dyn ImageHandle, slope: [f32; 3], offset: [f32; 3], power: [f32; 3], sat: f32) -> ComputeResult<()> {
         let cpu_handle = handle.as_any_mut().downcast_mut::<CpuImage>()
-            .ok_or_else(|| GpuError::OperationFailed("Invalid handle type".into()))?;
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
 
         let mut dst = self.primitives.allocate(cpu_handle.width, cpu_handle.height, cpu_handle.channels)?;
         self.primitives.exec_cdl(cpu_handle, &mut dst, slope, offset, power, sat)?;
@@ -394,9 +394,9 @@ impl ProcessingBackend for CpuBackend {
         Ok(())
     }
 
-    fn apply_lut1d(&self, handle: &mut dyn ImageHandle, lut: &[f32], channels: u32) -> GpuResult<()> {
+    fn apply_lut1d(&self, handle: &mut dyn ImageHandle, lut: &[f32], channels: u32) -> ComputeResult<()> {
         let cpu_handle = handle.as_any_mut().downcast_mut::<CpuImage>()
-            .ok_or_else(|| GpuError::OperationFailed("Invalid handle type".into()))?;
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
 
         let mut dst = self.primitives.allocate(cpu_handle.width, cpu_handle.height, cpu_handle.channels)?;
         self.primitives.exec_lut1d(cpu_handle, &mut dst, lut, channels)?;
@@ -404,9 +404,9 @@ impl ProcessingBackend for CpuBackend {
         Ok(())
     }
 
-    fn apply_lut3d(&self, handle: &mut dyn ImageHandle, lut: &[f32], size: u32) -> GpuResult<()> {
+    fn apply_lut3d(&self, handle: &mut dyn ImageHandle, lut: &[f32], size: u32) -> ComputeResult<()> {
         let cpu_handle = handle.as_any_mut().downcast_mut::<CpuImage>()
-            .ok_or_else(|| GpuError::OperationFailed("Invalid handle type".into()))?;
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
 
         let mut dst = self.primitives.allocate(cpu_handle.width, cpu_handle.height, cpu_handle.channels)?;
         self.primitives.exec_lut3d(cpu_handle, &mut dst, lut, size)?;
@@ -414,18 +414,18 @@ impl ProcessingBackend for CpuBackend {
         Ok(())
     }
 
-    fn resize(&self, handle: &dyn ImageHandle, width: u32, height: u32, filter: u32) -> GpuResult<Box<dyn ImageHandle>> {
+    fn resize(&self, handle: &dyn ImageHandle, width: u32, height: u32, filter: u32) -> ComputeResult<Box<dyn ImageHandle>> {
         let cpu_handle = handle.as_any().downcast_ref::<CpuImage>()
-            .ok_or_else(|| GpuError::OperationFailed("Invalid handle type".into()))?;
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
 
         let mut dst = self.primitives.allocate(width, height, cpu_handle.channels)?;
         self.primitives.exec_resize(cpu_handle, &mut dst, filter)?;
         Ok(Box::new(dst))
     }
 
-    fn blur(&self, handle: &mut dyn ImageHandle, radius: f32) -> GpuResult<()> {
+    fn blur(&self, handle: &mut dyn ImageHandle, radius: f32) -> ComputeResult<()> {
         let cpu_handle = handle.as_any_mut().downcast_mut::<CpuImage>()
-            .ok_or_else(|| GpuError::OperationFailed("Invalid handle type".into()))?;
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
 
         let mut dst = self.primitives.allocate(cpu_handle.width, cpu_handle.height, cpu_handle.channels)?;
         self.primitives.exec_blur(cpu_handle, &mut dst, radius)?;

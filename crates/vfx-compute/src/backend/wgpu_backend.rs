@@ -8,7 +8,7 @@ use wgpu::util::DeviceExt;
 
 use super::{GpuLimits, ProcessingBackend, ImageHandle};
 use super::gpu_primitives::{GpuPrimitives, AsAny};
-use crate::{GpuError, GpuResult};
+use crate::{ComputeError, ComputeResult};
 use crate::shaders;
 
 // =============================================================================
@@ -117,12 +117,12 @@ impl WgpuPrimitives {
     }
 
     /// Create new wgpu primitives.
-    pub fn new() -> GpuResult<Self> {
+    pub fn new() -> ComputeResult<Self> {
         pollster::block_on(Self::new_async())
     }
 
     /// Create new wgpu primitives asynchronously.
-    pub async fn new_async() -> GpuResult<Self> {
+    pub async fn new_async() -> ComputeResult<Self> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()
@@ -135,7 +135,7 @@ impl WgpuPrimitives {
                 force_fallback_adapter: false,
             })
             .await
-            .ok_or(GpuError::NoAdapter)?;
+            .ok_or(ComputeError::NoAdapter)?;
 
         let adapter_limits = adapter.limits();
         let (device, queue) = adapter
@@ -147,7 +147,7 @@ impl WgpuPrimitives {
                 ..Default::default()
             }, None)
             .await
-            .map_err(|e| GpuError::DeviceCreation(e.to_string()))?;
+            .map_err(|e| ComputeError::DeviceCreation(e.to_string()))?;
 
         let device = Arc::new(device);
         let queue = Arc::new(queue);
@@ -173,8 +173,8 @@ impl WgpuPrimitives {
         })
     }
 
-    fn create_pipelines(device: &wgpu::Device) -> GpuResult<Pipelines> {
-        let create_pipeline = |source: &str, label: &str| -> GpuResult<wgpu::ComputePipeline> {
+    fn create_pipelines(device: &wgpu::Device) -> ComputeResult<Pipelines> {
+        let create_pipeline = |source: &str, label: &str| -> ComputeResult<wgpu::ComputePipeline> {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(label),
                 source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -235,10 +235,10 @@ impl WgpuPrimitives {
 impl GpuPrimitives for WgpuPrimitives {
     type Handle = WgpuImage;
 
-    fn upload(&self, data: &[f32], width: u32, height: u32, channels: u32) -> GpuResult<Self::Handle> {
+    fn upload(&self, data: &[f32], width: u32, height: u32, channels: u32) -> ComputeResult<Self::Handle> {
         let expected = (width * height * channels) as usize;
         if data.len() != expected {
-            return Err(GpuError::BufferSizeMismatch { expected, actual: data.len() });
+            return Err(ComputeError::BufferSizeMismatch { expected, actual: data.len() });
         }
 
         let size_bytes = (data.len() * 4) as u64;
@@ -252,7 +252,7 @@ impl GpuPrimitives for WgpuPrimitives {
         Ok(WgpuImage { buffer, width, height, channels, size_bytes })
     }
 
-    fn download(&self, handle: &Self::Handle) -> GpuResult<Vec<f32>> {
+    fn download(&self, handle: &Self::Handle) -> ComputeResult<Vec<f32>> {
         let size = handle.size_bytes;
         
         // Create staging buffer
@@ -275,8 +275,8 @@ impl GpuPrimitives for WgpuPrimitives {
         self.device.poll(wgpu::Maintain::Wait);
 
         rx.recv()
-            .map_err(|_| GpuError::OperationFailed("Map channel closed".into()))?
-            .map_err(|e| GpuError::OperationFailed(format!("Map failed: {e}")))?;
+            .map_err(|_| ComputeError::OperationFailed("Map channel closed".into()))?
+            .map_err(|e| ComputeError::OperationFailed(format!("Map failed: {e}")))?;
 
         let data = slice.get_mapped_range();
         let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
@@ -286,7 +286,7 @@ impl GpuPrimitives for WgpuPrimitives {
         Ok(result)
     }
 
-    fn allocate(&self, width: u32, height: u32, channels: u32) -> GpuResult<Self::Handle> {
+    fn allocate(&self, width: u32, height: u32, channels: u32) -> ComputeResult<Self::Handle> {
         let size_bytes = (width as u64) * (height as u64) * (channels as u64) * 4;
         
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -299,7 +299,7 @@ impl GpuPrimitives for WgpuPrimitives {
         Ok(WgpuImage { buffer, width, height, channels, size_bytes })
     }
 
-    fn exec_matrix(&self, src: &Self::Handle, dst: &mut Self::Handle, matrix: &[f32; 16]) -> GpuResult<()> {
+    fn exec_matrix(&self, src: &Self::Handle, dst: &mut Self::Handle, matrix: &[f32; 16]) -> ComputeResult<()> {
         let (w, h, c) = src.dimensions();
         let total = w * h;
 
@@ -328,7 +328,7 @@ impl GpuPrimitives for WgpuPrimitives {
         Ok(())
     }
 
-    fn exec_cdl(&self, src: &Self::Handle, dst: &mut Self::Handle, slope: [f32; 3], offset: [f32; 3], power: [f32; 3], sat: f32) -> GpuResult<()> {
+    fn exec_cdl(&self, src: &Self::Handle, dst: &mut Self::Handle, slope: [f32; 3], offset: [f32; 3], power: [f32; 3], sat: f32) -> ComputeResult<()> {
         let (w, h, c) = src.dimensions();
         let total = w * h;
 
@@ -362,7 +362,7 @@ impl GpuPrimitives for WgpuPrimitives {
         Ok(())
     }
 
-    fn exec_lut1d(&self, src: &Self::Handle, dst: &mut Self::Handle, lut: &[f32], channels: u32) -> GpuResult<()> {
+    fn exec_lut1d(&self, src: &Self::Handle, dst: &mut Self::Handle, lut: &[f32], channels: u32) -> ComputeResult<()> {
         let (w, h, c) = src.dimensions();
         let total = w * h;
         let lut_size = lut.len() as u32 / channels;
@@ -392,7 +392,7 @@ impl GpuPrimitives for WgpuPrimitives {
         Ok(())
     }
 
-    fn exec_lut3d(&self, src: &Self::Handle, dst: &mut Self::Handle, lut: &[f32], size: u32) -> GpuResult<()> {
+    fn exec_lut3d(&self, src: &Self::Handle, dst: &mut Self::Handle, lut: &[f32], size: u32) -> ComputeResult<()> {
         let (w, h, c) = src.dimensions();
         let total = w * h;
 
@@ -421,7 +421,7 @@ impl GpuPrimitives for WgpuPrimitives {
         Ok(())
     }
 
-    fn exec_resize(&self, src: &Self::Handle, dst: &mut Self::Handle, _filter: u32) -> GpuResult<()> {
+    fn exec_resize(&self, src: &Self::Handle, dst: &mut Self::Handle, _filter: u32) -> ComputeResult<()> {
         let (sw, sh, c) = src.dimensions();
         let (dw, dh, _) = dst.dimensions();
 
@@ -446,7 +446,7 @@ impl GpuPrimitives for WgpuPrimitives {
         Ok(())
     }
 
-    fn exec_blur(&self, src: &Self::Handle, dst: &mut Self::Handle, radius: f32) -> GpuResult<()> {
+    fn exec_blur(&self, src: &Self::Handle, dst: &mut Self::Handle, radius: f32) -> ComputeResult<()> {
         let (w, h, c) = src.dimensions();
         let total = w * h;
         let r = radius.ceil() as i32;
@@ -526,7 +526,7 @@ impl WgpuBackend {
     }
 
     /// Create new wgpu backend.
-    pub fn new() -> GpuResult<Self> {
+    pub fn new() -> ComputeResult<Self> {
         Ok(Self { primitives: WgpuPrimitives::new()? })
     }
 }
@@ -538,22 +538,22 @@ impl ProcessingBackend for WgpuBackend {
     
     fn limits(&self) -> &GpuLimits { &self.primitives.limits }
 
-    fn upload(&self, data: &[f32], width: u32, height: u32, channels: u32) -> GpuResult<Box<dyn ImageHandle>> {
+    fn upload(&self, data: &[f32], width: u32, height: u32, channels: u32) -> ComputeResult<Box<dyn ImageHandle>> {
         let handle = self.primitives.upload(data, width, height, channels)?;
         Ok(Box::new(handle))
     }
 
-    fn download(&self, handle: &dyn ImageHandle) -> GpuResult<Vec<f32>> {
+    fn download(&self, handle: &dyn ImageHandle) -> ComputeResult<Vec<f32>> {
         let wgpu_handle = handle.as_any()
             .downcast_ref::<WgpuImage>()
-            .ok_or_else(|| GpuError::OperationFailed("Invalid handle type".into()))?;
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
         self.primitives.download(wgpu_handle)
     }
 
-    fn apply_matrix(&self, handle: &mut dyn ImageHandle, matrix: &[f32; 16]) -> GpuResult<()> {
+    fn apply_matrix(&self, handle: &mut dyn ImageHandle, matrix: &[f32; 16]) -> ComputeResult<()> {
         let wgpu_handle = handle.as_any_mut()
             .downcast_mut::<WgpuImage>()
-            .ok_or_else(|| GpuError::OperationFailed("Invalid handle type".into()))?;
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
         
         let (w, h, c) = wgpu_handle.dimensions();
         let mut dst = self.primitives.allocate(w, h, c)?;
@@ -564,10 +564,10 @@ impl ProcessingBackend for WgpuBackend {
         Ok(())
     }
 
-    fn apply_cdl(&self, handle: &mut dyn ImageHandle, slope: [f32; 3], offset: [f32; 3], power: [f32; 3], sat: f32) -> GpuResult<()> {
+    fn apply_cdl(&self, handle: &mut dyn ImageHandle, slope: [f32; 3], offset: [f32; 3], power: [f32; 3], sat: f32) -> ComputeResult<()> {
         let wgpu_handle = handle.as_any_mut()
             .downcast_mut::<WgpuImage>()
-            .ok_or_else(|| GpuError::OperationFailed("Invalid handle type".into()))?;
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
         
         let (w, h, c) = wgpu_handle.dimensions();
         let mut dst = self.primitives.allocate(w, h, c)?;
@@ -577,10 +577,10 @@ impl ProcessingBackend for WgpuBackend {
         Ok(())
     }
 
-    fn apply_lut1d(&self, handle: &mut dyn ImageHandle, lut: &[f32], channels: u32) -> GpuResult<()> {
+    fn apply_lut1d(&self, handle: &mut dyn ImageHandle, lut: &[f32], channels: u32) -> ComputeResult<()> {
         let wgpu_handle = handle.as_any_mut()
             .downcast_mut::<WgpuImage>()
-            .ok_or_else(|| GpuError::OperationFailed("Invalid handle type".into()))?;
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
         
         let (w, h, c) = wgpu_handle.dimensions();
         let mut dst = self.primitives.allocate(w, h, c)?;
@@ -590,10 +590,10 @@ impl ProcessingBackend for WgpuBackend {
         Ok(())
     }
 
-    fn apply_lut3d(&self, handle: &mut dyn ImageHandle, lut: &[f32], size: u32) -> GpuResult<()> {
+    fn apply_lut3d(&self, handle: &mut dyn ImageHandle, lut: &[f32], size: u32) -> ComputeResult<()> {
         let wgpu_handle = handle.as_any_mut()
             .downcast_mut::<WgpuImage>()
-            .ok_or_else(|| GpuError::OperationFailed("Invalid handle type".into()))?;
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
         
         let (w, h, c) = wgpu_handle.dimensions();
         let mut dst = self.primitives.allocate(w, h, c)?;
@@ -603,10 +603,10 @@ impl ProcessingBackend for WgpuBackend {
         Ok(())
     }
 
-    fn resize(&self, handle: &dyn ImageHandle, width: u32, height: u32, filter: u32) -> GpuResult<Box<dyn ImageHandle>> {
+    fn resize(&self, handle: &dyn ImageHandle, width: u32, height: u32, filter: u32) -> ComputeResult<Box<dyn ImageHandle>> {
         let wgpu_handle = handle.as_any()
             .downcast_ref::<WgpuImage>()
-            .ok_or_else(|| GpuError::OperationFailed("Invalid handle type".into()))?;
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
         
         let (_, _, c) = wgpu_handle.dimensions();
         let mut dst = self.primitives.allocate(width, height, c)?;
@@ -615,10 +615,10 @@ impl ProcessingBackend for WgpuBackend {
         Ok(Box::new(dst))
     }
 
-    fn blur(&self, handle: &mut dyn ImageHandle, radius: f32) -> GpuResult<()> {
+    fn blur(&self, handle: &mut dyn ImageHandle, radius: f32) -> ComputeResult<()> {
         let wgpu_handle = handle.as_any_mut()
             .downcast_mut::<WgpuImage>()
-            .ok_or_else(|| GpuError::OperationFailed("Invalid handle type".into()))?;
+            .ok_or_else(|| ComputeError::OperationFailed("Invalid handle type".into()))?;
         
         let (w, h, c) = wgpu_handle.dimensions();
         let mut dst = self.primitives.allocate(w, h, c)?;
