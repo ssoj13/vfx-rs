@@ -20,11 +20,10 @@
 //! let proc = config.processor("ACEScg", "sRGB")?;
 //! ```
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use serde::Deserialize;
 use glob::Pattern;
 use regex::Regex;
+use saphyr::{Yaml, LoadableYamlNode, Scalar};
 
 use crate::colorspace::{ColorSpace, Encoding, Family};
 use crate::context::Context;
@@ -159,29 +158,41 @@ impl Config {
     }
 
     /// Loads configuration from YAML string.
-    pub fn from_yaml_str(yaml: &str, working_dir: PathBuf) -> OcioResult<Self> {
-        let raw: RawConfig = serde_yaml::from_str(yaml)?;
-        Self::from_raw(raw, working_dir)
+    pub fn from_yaml_str(yaml_str: &str, working_dir: PathBuf) -> OcioResult<Self> {
+        let docs = Yaml::load_from_str(yaml_str)
+            .map_err(|e| OcioError::Yaml(format!("{}", e)))?;
+        
+        if docs.is_empty() {
+            return Err(OcioError::Yaml("empty YAML document".into()));
+        }
+        
+        let root = &docs[0];
+        Self::from_yaml(root, working_dir)
     }
 
-    /// Constructs config from parsed raw data.
-    fn from_raw(raw: RawConfig, working_dir: PathBuf) -> OcioResult<Self> {
-        let version = if raw.ocio_profile_version.starts_with('2') {
+    /// Constructs config from parsed YAML.
+    fn from_yaml<'a>(root: &'a Yaml<'a>, working_dir: PathBuf) -> OcioResult<Self> {
+        let version_str = yaml_get(root, "ocio_profile_version")
+            .and_then(yaml_to_string)
+            .ok_or_else(|| OcioError::Yaml("missing ocio_profile_version".into()))?;
+        
+        let version = if version_str.starts_with('2') {
             ConfigVersion::V2
-        } else if raw.ocio_profile_version.starts_with('1') {
+        } else if version_str.starts_with('1') {
             ConfigVersion::V1
         } else {
             return Err(OcioError::UnsupportedVersion {
-                version: raw.ocio_profile_version.clone(),
+                version: version_str.to_string(),
             });
         };
 
+        let strict_parsing = yaml_bool(root, "strictparsing").unwrap_or(true);
+
         let mut config = Self {
-            name: raw.name.unwrap_or_default(),
+            name: yaml_str(root, "name").unwrap_or("").to_string(),
             version,
             working_dir: working_dir.clone(),
-            search_paths: raw
-                .search_path
+            search_paths: yaml_str(root, "search_path")
                 .map(|s| {
                     s.split(':')
                         .filter(|p| !p.is_empty())
@@ -193,184 +204,179 @@ impl Config {
             roles: Roles::new(),
             displays: DisplayManager::new(),
             looks: LookManager::new(),
-            active_displays: raw.active_displays.unwrap_or_default(),
-            active_views: raw.active_views.unwrap_or_default(),
-            inactive_colorspaces: raw.inactive_colorspaces.unwrap_or_default(),
+            active_displays: yaml_str_list(root, "active_displays"),
+            active_views: yaml_str_list(root, "active_views"),
+            inactive_colorspaces: yaml_str_list(root, "inactive_colorspaces"),
             file_rules: Vec::new(),
             context: Context::new(),
-            strict_parsing: raw.strictparsing.unwrap_or(true),
+            strict_parsing,
         };
 
         // Parse roles
-        if let Some(roles) = raw.roles {
-            for (role, cs) in roles {
-                config.roles.define(role, cs);
+        if let Some(roles) = yaml_get(root, "roles") {
+            if let Yaml::Mapping(map) = unwrap_tagged(roles) {
+                for (k, v) in map.iter() {
+                    if let (Some(role), Some(cs)) = (yaml_as_str(k), yaml_as_str(v)) {
+                        config.roles.define(role, cs);
+                    }
+                }
             }
         }
 
         // Parse color spaces
-        if let Some(colorspaces) = raw.colorspaces {
-            for raw_cs in colorspaces {
-                let cs = config.parse_colorspace(raw_cs)?;
-                config.colorspaces.push(cs);
+        if let Some(colorspaces) = yaml_get(root, "colorspaces") {
+            if let Yaml::Sequence(seq) = unwrap_tagged(colorspaces) {
+                for cs_yaml in seq {
+                    match config.parse_colorspace(cs_yaml) {
+                        Ok(cs) => config.colorspaces.push(cs),
+                        Err(e) => {
+                            if strict_parsing {
+                                return Err(e);
+                            }
+                        }
+                    }
+                }
             }
         }
 
         // Parse displays
-        if let Some(displays) = raw.displays {
-            for (name, views) in displays {
-                let mut display = Display::new(&name);
-                for raw_view in views {
-                    let view = View::new(&raw_view.name, &raw_view.colorspace)
-                        .with_look(raw_view.looks.unwrap_or_default());
-                    display.add_view(view);
+        if let Some(displays) = yaml_get(root, "displays") {
+            if let Yaml::Mapping(map) = unwrap_tagged(displays) {
+                for (name_yaml, views_yaml) in map.iter() {
+                    if let Some(name) = yaml_as_str(name_yaml) {
+                        let mut display = Display::new(name);
+                        if let Yaml::Sequence(views) = unwrap_tagged(views_yaml) {
+                            for view_yaml in views {
+                                let view_yaml = unwrap_tagged(view_yaml);
+                                if let (Some(vname), Some(vcs)) = (
+                                    yaml_str(view_yaml, "name"),
+                                    yaml_str(view_yaml, "colorspace"),
+                                ) {
+                                    let view = View::new(vname, vcs)
+                                        .with_look(yaml_str(view_yaml, "looks").unwrap_or("").to_string());
+                                    display.add_view(view);
+                                }
+                            }
+                        }
+                        config.displays.add_display(display);
+                    }
                 }
-                config.displays.add_display(display);
             }
         }
 
         // Parse looks
-        if let Some(looks) = raw.looks {
-            for raw_look in looks {
-                let mut look = Look::new(&raw_look.name)
-                    .process_space(raw_look.process_space.unwrap_or_default())
-                    .description(raw_look.description.unwrap_or_default());
+        if let Some(looks) = yaml_get(root, "looks") {
+            if let Yaml::Sequence(seq) = unwrap_tagged(looks) {
+                for look_yaml in seq {
+                    let look_yaml = unwrap_tagged(look_yaml);
+                    if let Some(name) = yaml_str(look_yaml, "name") {
+                        let mut look = Look::new(name)
+                            .process_space(yaml_str(look_yaml, "process_space").unwrap_or("").to_string())
+                            .description(yaml_str(look_yaml, "description").unwrap_or("").to_string());
 
-                if let Some(t) = raw_look.transform {
-                    match config.parse_raw_transform(&t) {
-                        Ok(parsed) => {
-                            look = look.transform(parsed);
-                        }
-                        Err(e) => {
-                            if config.strict_parsing {
-                                return Err(e);
+                        if let Some(t) = yaml_get(look_yaml, "transform") {
+                            if let Ok(parsed) = config.parse_transform(t) {
+                                look = look.transform(parsed);
                             }
                         }
-                    }
-                }
 
-                if let Some(t) = raw_look.inverse_transform {
-                    match config.parse_raw_transform(&t) {
-                        Ok(parsed) => {
-                            look = look.inverse_transform(parsed);
-                        }
-                        Err(e) => {
-                            if config.strict_parsing {
-                                return Err(e);
+                        if let Some(t) = yaml_get(look_yaml, "inverse_transform") {
+                            if let Ok(parsed) = config.parse_transform(t) {
+                                look = look.inverse_transform(parsed);
                             }
                         }
+
+                        config.looks.add(look);
                     }
                 }
-                config.looks.add(look);
             }
         }
 
         // Parse view transforms (v2)
-        if let Some(view_transforms) = raw.view_transforms {
-            for raw_vt in view_transforms {
-                let mut vt = ViewTransform::new(&raw_vt.name)
-                    .with_description(raw_vt.description.unwrap_or_default());
+        if let Some(view_transforms) = yaml_get(root, "view_transforms") {
+            if let Yaml::Sequence(seq) = unwrap_tagged(view_transforms) {
+                for vt_yaml in seq {
+                    let vt_yaml = unwrap_tagged(vt_yaml);
+                    if let Some(name) = yaml_str(vt_yaml, "name") {
+                        let mut vt = ViewTransform::new(name)
+                            .with_description(yaml_str(vt_yaml, "description").unwrap_or("").to_string());
 
-                if let Some(family) = raw_vt.family {
-                    vt = vt.with_family(family);
-                }
-
-                if let Some(t) = raw_vt.from_scene_reference {
-                    match config.parse_raw_transform(&t) {
-                        Ok(parsed) => {
-                            vt = vt.with_from_scene_reference(parsed);
+                        if let Some(family) = yaml_str(vt_yaml, "family") {
+                            vt = vt.with_family(family.to_string());
                         }
-                        Err(e) => {
-                            if config.strict_parsing {
-                                return Err(e);
+
+                        if let Some(t) = yaml_get(vt_yaml, "from_scene_reference") {
+                            if let Ok(parsed) = config.parse_transform(t) {
+                                vt = vt.with_from_scene_reference(parsed);
                             }
                         }
-                    }
-                }
-
-                if let Some(t) = raw_vt.to_scene_reference {
-                    match config.parse_raw_transform(&t) {
-                        Ok(parsed) => {
-                            vt = vt.with_to_scene_reference(parsed);
-                        }
-                        Err(e) => {
-                            if config.strict_parsing {
-                                return Err(e);
+                        if let Some(t) = yaml_get(vt_yaml, "to_scene_reference") {
+                            if let Ok(parsed) = config.parse_transform(t) {
+                                vt = vt.with_to_scene_reference(parsed);
                             }
                         }
-                    }
-                }
-
-                if let Some(t) = raw_vt.from_display_reference {
-                    match config.parse_raw_transform(&t) {
-                        Ok(parsed) => {
-                            vt = vt.with_from_display_reference(parsed);
-                        }
-                        Err(e) => {
-                            if config.strict_parsing {
-                                return Err(e);
+                        if let Some(t) = yaml_get(vt_yaml, "from_display_reference") {
+                            if let Ok(parsed) = config.parse_transform(t) {
+                                vt = vt.with_from_display_reference(parsed);
                             }
                         }
-                    }
-                }
-
-                if let Some(t) = raw_vt.to_display_reference {
-                    match config.parse_raw_transform(&t) {
-                        Ok(parsed) => {
-                            vt = vt.with_to_display_reference(parsed);
-                        }
-                        Err(e) => {
-                            if config.strict_parsing {
-                                return Err(e);
+                        if let Some(t) = yaml_get(vt_yaml, "to_display_reference") {
+                            if let Ok(parsed) = config.parse_transform(t) {
+                                vt = vt.with_to_display_reference(parsed);
                             }
                         }
+
+                        config.displays.add_view_transform(vt);
                     }
                 }
-                config.displays.add_view_transform(vt);
             }
         }
 
         // Parse file rules (OCIO v2)
-        if let Some(file_rules) = raw.file_rules {
-            for raw_rule in file_rules {
-                let name = raw_rule.name;
-                let colorspace = raw_rule.colorspace;
-
-                let kind = if name.eq_ignore_ascii_case("Default") {
-                    FileRuleKind::Default
-                } else if let Some(regex_str) = raw_rule.regex {
-                    let regex = Regex::new(&regex_str).map_err(|e| {
-                        OcioError::Validation(format!("invalid regex rule '{}': {}", name, e),)
-                    })?;
-                    FileRuleKind::Regex { regex }
-                } else {
-                    let pattern = raw_rule.pattern.unwrap_or_default();
-                    if !pattern.is_empty() {
-                        Pattern::new(&pattern).map_err(|e| {
-                            OcioError::Validation(format!("invalid glob pattern '{}': {}", name, e),)
-                        })?;
-                    }
-                    if let Some(ext) = raw_rule.extension.as_deref() {
-                        if has_glob_chars(ext) {
-                            Pattern::new(ext).map_err(|e| {
-                                OcioError::Validation(format!("invalid extension glob '{}': {}", name, e),)
+        if let Some(file_rules) = yaml_get(root, "file_rules") {
+            if let Yaml::Sequence(seq) = unwrap_tagged(file_rules) {
+                for rule_yaml in seq {
+                    let rule_yaml = unwrap_tagged(rule_yaml);
+                    if let (Some(name), Some(colorspace)) = (
+                        yaml_str(rule_yaml, "name"),
+                        yaml_str(rule_yaml, "colorspace"),
+                    ) {
+                        let kind = if name.eq_ignore_ascii_case("Default") {
+                            FileRuleKind::Default
+                        } else if let Some(regex_str) = yaml_str(rule_yaml, "regex") {
+                            let regex = Regex::new(regex_str).map_err(|e| {
+                                OcioError::Validation(format!("invalid regex rule '{}': {}", name, e))
                             })?;
-                        }
-                    }
-                    FileRuleKind::Basic {
-                        pattern,
-                        extension: raw_rule.extension,
-                    }
-                };
+                            FileRuleKind::Regex { regex }
+                        } else {
+                            let pattern = yaml_str(rule_yaml, "pattern").unwrap_or("").to_string();
+                            if !pattern.is_empty() {
+                                Pattern::new(&pattern).map_err(|e| {
+                                    OcioError::Validation(format!("invalid glob pattern '{}': {}", name, e))
+                                })?;
+                            }
+                            let extension = yaml_str(rule_yaml, "extension").map(|s| s.to_string());
+                            if let Some(ext) = extension.as_deref() {
+                                if has_glob_chars(ext) {
+                                    Pattern::new(ext).map_err(|e| {
+                                        OcioError::Validation(format!("invalid extension glob '{}': {}", name, e))
+                                    })?;
+                                }
+                            }
+                            FileRuleKind::Basic { pattern, extension }
+                        };
 
-                config.file_rules.push(FileRule {
-                    name,
-                    colorspace,
-                    kind,
-                });
+                        config.file_rules.push(FileRule {
+                            name: name.to_string(),
+                            colorspace: colorspace.to_string(),
+                            kind,
+                        });
+                    }
+                }
             }
 
-            if config.strict_parsing {
+            // Validate file rules
+            if strict_parsing {
                 let default_idx = config
                     .file_rules
                     .iter()
@@ -393,94 +399,61 @@ impl Config {
         Ok(config)
     }
 
-    /// Parses a raw colorspace definition.
-    fn parse_colorspace(&self, raw: RawColorSpace) -> OcioResult<ColorSpace> {
-        let mut builder = ColorSpace::builder(&raw.name);
-        let strict = self.strict_parsing;
+    /// Parses a colorspace from YAML.
+    fn parse_colorspace(&self, yaml: &Yaml) -> OcioResult<ColorSpace> {
+        let yaml = unwrap_tagged(yaml);
+        let name = yaml_str(yaml, "name")
+            .ok_or_else(|| OcioError::Yaml("colorspace missing name".into()))?;
+        
+        let mut builder = ColorSpace::builder(name);
 
-        if let Some(desc) = raw.description {
+        if let Some(desc) = yaml_str(yaml, "description") {
             builder = builder.description(desc);
         }
 
-        if let Some(family) = raw.family {
-            builder = builder.family(Family::parse(&family));
+        if let Some(family) = yaml_str(yaml, "family") {
+            builder = builder.family(Family::parse(family));
         }
 
-        if let Some(encoding) = raw.encoding {
-            builder = builder.encoding(Encoding::parse(&encoding));
+        if let Some(encoding) = yaml_str(yaml, "encoding") {
+            builder = builder.encoding(Encoding::parse(encoding));
         }
 
-        if raw.isdata == Some(true) {
+        if yaml_bool(yaml, "isdata") == Some(true) {
             builder = builder.is_data(true);
         }
 
-        if let Some(aliases) = raw.aliases {
-            for alias in aliases {
-                builder = builder.alias(alias);
-            }
-        }
-
-        // Parse transforms (to_reference, from_reference)
-        // OCIO v1 uses to_reference/from_reference
-        // OCIO v2 adds to_scene_reference/from_scene_reference and display variants
-        if let Some(raw_t) = raw.to_reference {
-            match self.parse_raw_transform(&raw_t) {
-                Ok(t) => builder = builder.to_reference(t),
-                Err(e) => {
-                    if strict {
-                        return Err(e);
-                    }
-                }
-            }
-        } else if let Some(raw_t) = raw.to_scene_reference {
-            match self.parse_raw_transform(&raw_t) {
-                Ok(t) => builder = builder.to_reference(t),
-                Err(e) => {
-                    if strict {
-                        return Err(e);
+        if let Some(aliases) = yaml_get(yaml, "aliases") {
+            if let Yaml::Sequence(seq) = unwrap_tagged(aliases) {
+                for alias in seq {
+                    if let Some(s) = yaml_as_str(alias) {
+                        builder = builder.alias(s);
                     }
                 }
             }
         }
 
-        if let Some(raw_t) = raw.from_reference {
-            match self.parse_raw_transform(&raw_t) {
-                Ok(t) => builder = builder.from_reference(t),
-                Err(e) => {
-                    if strict {
-                        return Err(e);
-                    }
-                }
-            }
-        } else if let Some(raw_t) = raw.from_scene_reference {
-            match self.parse_raw_transform(&raw_t) {
-                Ok(t) => builder = builder.from_reference(t),
-                Err(e) => {
-                    if strict {
-                        return Err(e);
-                    }
-                }
-            }
-        }
+        // Parse transforms - OCIO v1: to_reference/from_reference
+        // OCIO v2: to_scene_reference/from_scene_reference + display variants
+        let transform_fields = [
+            ("to_reference", "to_ref"),
+            ("to_scene_reference", "to_ref"),
+            ("from_reference", "from_ref"),
+            ("from_scene_reference", "from_ref"),
+            ("to_display_reference", "to_disp"),
+            ("from_display_reference", "from_disp"),
+        ];
 
-        if let Some(raw_t) = raw.to_display_reference {
-            match self.parse_raw_transform(&raw_t) {
-                Ok(t) => builder = builder.to_display_reference(t),
-                Err(e) => {
-                    if strict {
-                        return Err(e);
-                    }
-                }
-            }
-        }
-
-        if let Some(raw_t) = raw.from_display_reference {
-            match self.parse_raw_transform(&raw_t) {
-                Ok(t) => builder = builder.from_display_reference(t),
-                Err(e) => {
-                    if strict {
-                        return Err(e);
-                    }
+        for (field, kind) in transform_fields {
+            if let Some(t) = yaml_get(yaml, field) {
+                if let Ok(parsed) = self.parse_transform(t) {
+                    builder = match kind {
+                        "to_ref" => builder.to_reference(parsed),
+                        "from_ref" => builder.from_reference(parsed),
+                        "to_disp" => builder.to_display_reference(parsed),
+                        "from_disp" => builder.from_display_reference(parsed),
+                        _ => builder,
+                    };
                 }
             }
         }
@@ -488,131 +461,191 @@ impl Config {
         Ok(builder.build())
     }
 
-    /// Parses a RawTransform into a Transform.
-    fn parse_raw_transform(&self, raw: &RawTransform) -> OcioResult<Transform> {
-        match raw {
-            RawTransform::Single(def) => self.parse_raw_transform_def(def.as_ref()),
-            RawTransform::Group(defs) => {
+    /// Parses a transform from YAML (handles tags like !<MatrixTransform>).
+    fn parse_transform(&self, yaml: &Yaml) -> OcioResult<Transform> {
+        // Check if it's a sequence (group of transforms)
+        if let Yaml::Sequence(seq) = yaml {
+            let mut transforms = Vec::new();
+            for item in seq {
+                transforms.push(self.parse_transform(item)?);
+            }
+            return Ok(Transform::group(transforms));
+        }
+
+        // Check for tagged value
+        if let Yaml::Tagged(tag, inner) = yaml {
+            let tag_name = &tag.suffix;
+            return self.parse_tagged_transform(tag_name, inner.as_ref());
+        }
+
+        // Check for GroupTransform with children
+        if let Some(children) = yaml_get(yaml, "children") {
+            if let Yaml::Sequence(seq) = unwrap_tagged(children) {
                 let mut transforms = Vec::new();
-                for def in defs {
-                    match self.parse_raw_transform_def(def) {
-                        Ok(t) => transforms.push(t),
-                        Err(e) => {
-                            if self.strict_parsing {
-                                return Err(e);
-                            }
-                        }
-                    }
+                for item in seq {
+                    transforms.push(self.parse_transform(item)?);
                 }
-                if transforms.is_empty() {
-                    return Err(OcioError::Validation(
-                        "empty transform group".into(),
-                    ));
-                }
-                Ok(Transform::group(transforms))
+                return Ok(Transform::group(transforms));
             }
         }
+
+        Err(OcioError::Yaml("unknown transform format".into()))
     }
 
-    /// Parses a single transform definition.
-    fn parse_raw_transform_def(&self, def: &RawTransformDef) -> OcioResult<Transform> {
-        // MatrixTransform
-        if let Some(m) = &def.matrix {
-            return Ok(Transform::Matrix(MatrixTransform {
-                matrix: parse_matrix_16(&m.matrix),
-                offset: parse_offset_4(&m.offset),
-                direction: parse_direction(&m.direction),
-            }));
-        }
+    /// Parses a tagged transform (e.g., !<MatrixTransform>).
+    fn parse_tagged_transform(&self, tag: &str, yaml: &Yaml) -> OcioResult<Transform> {
+        let yaml = unwrap_tagged(yaml);
+        
+        match tag {
+            "MatrixTransform" => {
+                Ok(Transform::Matrix(MatrixTransform {
+                    matrix: parse_matrix_16(yaml_f64_list(yaml, "matrix")),
+                    offset: parse_offset_4(yaml_f64_list(yaml, "offset")),
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
 
-        // FileTransform (LUT files)
-        if let Some(f) = &def.file {
-            let resolved = self.context.resolve(&f.src);
-            let resolved_path = self
-                .resolve_file(&resolved)
-                .unwrap_or_else(|| self.working_dir.join(&resolved));
-            return Ok(Transform::FileTransform(FileTransform {
-                src: resolved_path,
-                ccc_id: f.cccid.clone(),
-                interpolation: parse_interpolation(&f.interpolation),
-                direction: parse_direction(&f.direction),
-            }));
-        }
+            "FileTransform" => {
+                let src = yaml_str(yaml, "src")
+                    .ok_or_else(|| OcioError::Yaml("FileTransform missing src".into()))?;
+                let resolved = self.context.resolve(src);
+                let resolved_path = self
+                    .resolve_file(&resolved)
+                    .unwrap_or_else(|| self.working_dir.join(&resolved));
+                Ok(Transform::FileTransform(FileTransform {
+                    src: resolved_path,
+                    ccc_id: yaml_str(yaml, "cccid").map(|s| s.to_string()),
+                    interpolation: parse_interpolation(yaml_str(yaml, "interpolation")),
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
 
-        // ExponentTransform
-        if let Some(e) = &def.exponent {
-            let val = &e.value;
-            let value = match val.len() {
-                4 => [val[0], val[1], val[2], val[3]],
-                3 => [val[0], val[1], val[2], 1.0],
-                1 => [val[0], val[0], val[0], 1.0],
-                _ => [1.0, 1.0, 1.0, 1.0],
-            };
-            return Ok(Transform::Exponent(ExponentTransform {
-                value,
-                negative_style: NegativeStyle::Clamp,
-                direction: parse_direction(&e.direction),
-            }));
-        }
+            "ExponentTransform" => {
+                let values = yaml_f64_list(yaml, "value");
+                let value = match values.len() {
+                    4 => [values[0], values[1], values[2], values[3]],
+                    3 => [values[0], values[1], values[2], 1.0],
+                    1 => [values[0], values[0], values[0], 1.0],
+                    _ => [1.0, 1.0, 1.0, 1.0],
+                };
+                Ok(Transform::Exponent(ExponentTransform {
+                    value,
+                    negative_style: NegativeStyle::Clamp,
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
 
-        // LogTransform
-        if let Some(l) = &def.log {
-            return Ok(Transform::Log(LogTransform {
-                base: l.base.unwrap_or(2.0),
-                direction: parse_direction(&l.direction),
-            }));
-        }
+            "LogTransform" => {
+                Ok(Transform::Log(LogTransform {
+                    base: yaml_f64(yaml, "base").unwrap_or(2.0),
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
 
-        // CDLTransform
-        if let Some(c) = &def.cdl {
-            return Ok(Transform::Cdl(CdlTransform {
-                slope: parse_rgb(&c.slope, 1.0),
-                offset: parse_rgb(&c.offset, 0.0),
-                power: parse_rgb(&c.power, 1.0),
-                saturation: c.saturation.unwrap_or(1.0),
-                style: CdlStyle::AscCdl,
-                direction: parse_direction(&c.direction),
-            }));
-        }
+            "CDLTransform" => {
+                Ok(Transform::Cdl(CdlTransform {
+                    slope: parse_rgb(yaml_f64_list(yaml, "slope"), 1.0),
+                    offset: parse_rgb(yaml_f64_list(yaml, "offset"), 0.0),
+                    power: parse_rgb(yaml_f64_list(yaml, "power"), 1.0),
+                    saturation: yaml_f64(yaml, "saturation").unwrap_or(1.0),
+                    style: CdlStyle::AscCdl,
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
 
-        // ColorSpaceTransform
-        if let Some(cs) = &def.colorspace {
-            return Ok(Transform::ColorSpace(ColorSpaceTransform {
-                src: cs.src.clone(),
-                dst: cs.dst.clone(),
-                direction: parse_direction(&cs.direction),
-            }));
-        }
+            "ColorSpaceTransform" => {
+                let src = yaml_str(yaml, "src")
+                    .ok_or_else(|| OcioError::Yaml("ColorSpaceTransform missing src".into()))?;
+                let dst = yaml_str(yaml, "dst")
+                    .ok_or_else(|| OcioError::Yaml("ColorSpaceTransform missing dst".into()))?;
+                Ok(Transform::ColorSpace(ColorSpaceTransform {
+                    src: src.to_string(),
+                    dst: dst.to_string(),
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
 
-        // BuiltinTransform
-        if let Some(b) = &def.builtin {
-            return Ok(Transform::Builtin(BuiltinTransform {
-                style: b.style.clone(),
-                direction: parse_direction(&b.direction),
-            }));
-        }
+            "BuiltinTransform" => {
+                let style = yaml_str(yaml, "style")
+                    .ok_or_else(|| OcioError::Yaml("BuiltinTransform missing style".into()))?;
+                Ok(Transform::Builtin(BuiltinTransform {
+                    style: style.to_string(),
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
 
-        // RangeTransform
-        if let Some(r) = &def.range {
-            let style = match r.style.as_deref() {
-                Some("noClamp") | Some("noclamp") | Some("NoClamp") | Some("NOCLAMP") => {
-                    RangeStyle::NoClamp
+            "RangeTransform" => {
+                let style = match yaml_str(yaml, "style") {
+                    Some("noClamp") | Some("noclamp") | Some("NoClamp") | Some("NOCLAMP") => {
+                        RangeStyle::NoClamp
+                    }
+                    _ => RangeStyle::Clamp,
+                };
+                Ok(Transform::Range(RangeTransform {
+                    min_in: yaml_f64(yaml, "min_in_value"),
+                    max_in: yaml_f64(yaml, "max_in_value"),
+                    min_out: yaml_f64(yaml, "min_out_value"),
+                    max_out: yaml_f64(yaml, "max_out_value"),
+                    style,
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
+
+            "FixedFunctionTransform" => {
+                let style_str = yaml_str(yaml, "style")
+                    .ok_or_else(|| OcioError::Yaml("FixedFunctionTransform missing style".into()))?;
+                let style = parse_fixed_function_style(style_str);
+                Ok(Transform::FixedFunction(FixedFunctionTransform {
+                    style,
+                    params: yaml_f64_list(yaml, "params"),
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
+
+            "ExposureContrastTransform" => {
+                let style = match yaml_str(yaml, "style") {
+                    Some("video") | Some("Video") | Some("VIDEO") => ExposureContrastStyle::Video,
+                    Some("log") | Some("Log") | Some("LOG") => ExposureContrastStyle::Logarithmic,
+                    _ => ExposureContrastStyle::Linear,
+                };
+                Ok(Transform::ExposureContrast(ExposureContrastTransform {
+                    exposure: yaml_f64(yaml, "exposure").unwrap_or(0.0),
+                    contrast: yaml_f64(yaml, "contrast").unwrap_or(1.0),
+                    gamma: yaml_f64(yaml, "gamma").unwrap_or(1.0),
+                    pivot: yaml_f64(yaml, "pivot").unwrap_or(0.18),
+                    style,
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
+
+            "LookTransform" => {
+                let src = yaml_str(yaml, "src")
+                    .ok_or_else(|| OcioError::Yaml("LookTransform missing src".into()))?;
+                let dst = yaml_str(yaml, "dst")
+                    .ok_or_else(|| OcioError::Yaml("LookTransform missing dst".into()))?;
+                Ok(Transform::Look(LookTransform {
+                    src: src.to_string(),
+                    dst: dst.to_string(),
+                    looks: yaml_str(yaml, "looks").unwrap_or("").to_string(),
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
+
+            "GroupTransform" => {
+                if let Some(children) = yaml_get(yaml, "children") {
+                    if let Yaml::Sequence(seq) = unwrap_tagged(children) {
+                        let mut transforms = Vec::new();
+                        for item in seq {
+                            transforms.push(self.parse_transform(item)?);
+                        }
+                        return Ok(Transform::group(transforms));
+                    }
                 }
-                _ => RangeStyle::Clamp,
-            };
-            return Ok(Transform::Range(RangeTransform {
-                min_in: r.min_in_value,
-                max_in: r.max_in_value,
-                min_out: r.min_out_value,
-                max_out: r.max_out_value,
-                style,
-                direction: parse_direction(&r.direction),
-            }));
-        }
+                Err(OcioError::Yaml("GroupTransform missing children".into()))
+            }
 
-        Err(OcioError::Validation(
-            "unknown transform type".into(),
-        ))
+            _ => Err(OcioError::Yaml(format!("unknown transform type: {}", tag))),
+        }
     }
 
     /// Returns config name.
@@ -834,15 +867,6 @@ impl Config {
     }
 
     /// Creates a processor with looks applied.
-    ///
-    /// Looks are applied in the look's process space between src and dst.
-    /// Multiple looks can be specified as comma-separated string.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let proc = config.processor_with_looks("ACEScg", "sRGB", "ShowLUT, ShotGrade")?;
-    /// ```
     pub fn processor_with_looks(
         &self,
         src: &str,
@@ -1027,188 +1051,117 @@ impl Config {
 }
 
 // ============================================================================
-// Raw YAML structures for serde (WIP - for full OCIO config parsing)
+// YAML helper functions for saphyr
 // ============================================================================
 
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct RawConfig {
-    ocio_profile_version: String,
-    name: Option<String>,
-    description: Option<String>,
-    search_path: Option<String>,
-    strictparsing: Option<bool>,
-    roles: Option<HashMap<String, String>>,
-    colorspaces: Option<Vec<RawColorSpace>>,
-    displays: Option<HashMap<String, Vec<RawView>>>,
-    active_displays: Option<Vec<String>>,
-    active_views: Option<Vec<String>>,
-    inactive_colorspaces: Option<Vec<String>>,
-    looks: Option<Vec<RawLook>>,
-    view_transforms: Option<Vec<RawViewTransform>>,
-    file_rules: Option<Vec<RawFileRule>>,
+/// Unwraps a tagged value, returning the inner value.
+fn unwrap_tagged<'a>(yaml: &'a Yaml<'a>) -> &'a Yaml<'a> {
+    match yaml {
+        Yaml::Tagged(_, inner) => inner.as_ref(),
+        _ => yaml,
+    }
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct RawColorSpace {
-    name: String,
-    description: Option<String>,
-    family: Option<String>,
-    encoding: Option<String>,
-    bitdepth: Option<String>,
-    isdata: Option<bool>,
-    aliases: Option<Vec<String>>,
-    to_reference: Option<RawTransform>,
-    from_reference: Option<RawTransform>,
-    to_scene_reference: Option<RawTransform>,
-    from_scene_reference: Option<RawTransform>,
-    to_display_reference: Option<RawTransform>,
-    from_display_reference: Option<RawTransform>,
+/// Gets a string value from a YAML mapping.
+fn yaml_str<'a>(yaml: &'a Yaml<'a>, key: &str) -> Option<&'a str> {
+    yaml_get(yaml, key).and_then(|v| yaml_as_str(v))
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct RawView {
-    name: String,
-    colorspace: String,
-    looks: Option<String>,
-    view_transform: Option<String>,
-    rule: Option<String>,
+/// Gets a boolean value from a YAML mapping.
+fn yaml_bool<'a>(yaml: &'a Yaml<'a>, key: &str) -> Option<bool> {
+    yaml_get(yaml, key).and_then(|v| {
+        match unwrap_tagged(v) {
+            Yaml::Value(Scalar::Boolean(b)) => Some(*b),
+            _ => None,
+        }
+    })
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct RawLook {
-    name: String,
-    process_space: Option<String>,
-    description: Option<String>,
-    transform: Option<RawTransform>,
-    inverse_transform: Option<RawTransform>,
+/// Gets a f64 value from a YAML mapping.
+fn yaml_f64<'a>(yaml: &'a Yaml<'a>, key: &str) -> Option<f64> {
+    yaml_get(yaml, key).and_then(|v| yaml_as_f64(v))
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct RawViewTransform {
-    name: String,
-    description: Option<String>,
-    family: Option<String>,
-    from_scene_reference: Option<RawTransform>,
-    to_scene_reference: Option<RawTransform>,
-    from_display_reference: Option<RawTransform>,
-    to_display_reference: Option<RawTransform>,
+/// Gets a list of f64 values from a YAML mapping.
+fn yaml_f64_list<'a>(yaml: &'a Yaml<'a>, key: &str) -> Vec<f64> {
+    yaml_get(yaml, key)
+        .map(|v| match unwrap_tagged(v) {
+            Yaml::Sequence(seq) => seq.iter().filter_map(|x| yaml_as_f64(x)).collect(),
+            _ => Vec::new(),
+        })
+        .unwrap_or_default()
 }
 
-#[derive(Debug, Deserialize)]
-struct RawFileRule {
-    name: String,
-    pattern: Option<String>,
-    extension: Option<String>,
-    regex: Option<String>,
-    colorspace: String,
+/// Gets a list of strings from a YAML mapping.
+fn yaml_str_list<'a>(yaml: &'a Yaml<'a>, key: &str) -> Vec<String> {
+    yaml_get(yaml, key)
+        .map(|v| match unwrap_tagged(v) {
+            Yaml::Sequence(seq) => seq.iter().filter_map(|x| yaml_as_str(x).map(|s: &str| s.to_string())).collect(),
+            _ => Vec::new(),
+        })
+        .unwrap_or_default()
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum RawTransform {
-    Single(Box<RawTransformDef>),
-    Group(Vec<RawTransformDef>),
+/// Gets a value from a YAML mapping by key.
+fn yaml_get<'a>(yaml: &'a Yaml<'a>, key: &str) -> Option<&'a Yaml<'a>> {
+    match unwrap_tagged(yaml) {
+        Yaml::Mapping(map) => {
+            for (k, v) in map.iter() {
+                if yaml_as_str(k) == Some(key) {
+                    return Some(v);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
-#[derive(Debug, Deserialize)]
-struct RawTransformDef {
-    #[serde(rename = "!<MatrixTransform>")]
-    matrix: Option<RawMatrixTransform>,
-    #[serde(rename = "!<FileTransform>")]
-    file: Option<RawFileTransform>,
-    #[serde(rename = "!<ExponentTransform>")]
-    exponent: Option<RawExponentTransform>,
-    #[serde(rename = "!<LogTransform>")]
-    log: Option<RawLogTransform>,
-    #[serde(rename = "!<CDLTransform>")]
-    cdl: Option<RawCdlTransform>,
-    #[serde(rename = "!<ColorSpaceTransform>")]
-    colorspace: Option<RawColorSpaceTransform>,
-    #[serde(rename = "!<BuiltinTransform>")]
-    builtin: Option<RawBuiltinTransform>,
-    #[serde(rename = "!<RangeTransform>")]
-    range: Option<RawRangeTransform>,
+/// Converts a YAML value to a string.
+fn yaml_as_str<'a>(yaml: &'a Yaml<'a>) -> Option<&'a str> {
+    match unwrap_tagged(yaml) {
+        Yaml::Value(Scalar::String(s)) => Some(s.as_ref()),
+        // Handle raw representation (unresolved scalars)
+        Yaml::Representation(s, _, _) => Some(s.as_ref()),
+        _ => None,
+    }
 }
 
-#[derive(Debug, Deserialize)]
-struct RawMatrixTransform {
-    matrix: Option<Vec<f64>>,
-    offset: Option<Vec<f64>>,
-    direction: Option<String>,
+/// Converts a YAML value to a String (owned), handling numbers too.
+fn yaml_to_string<'a>(yaml: &'a Yaml<'a>) -> Option<String> {
+    match unwrap_tagged(yaml) {
+        Yaml::Value(Scalar::String(s)) => Some(s.to_string()),
+        Yaml::Value(Scalar::Integer(i)) => Some(i.to_string()),
+        Yaml::Value(Scalar::FloatingPoint(f)) => Some(f.to_string()),
+        Yaml::Representation(s, _, _) => Some(s.to_string()),
+        _ => None,
+    }
 }
 
-#[derive(Debug, Deserialize)]
-struct RawFileTransform {
-    src: String,
-    cccid: Option<String>,
-    interpolation: Option<String>,
-    direction: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawExponentTransform {
-    value: Vec<f64>,
-    direction: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawLogTransform {
-    base: Option<f64>,
-    direction: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawCdlTransform {
-    slope: Option<Vec<f64>>,
-    offset: Option<Vec<f64>>,
-    power: Option<Vec<f64>>,
-    saturation: Option<f64>,
-    direction: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawColorSpaceTransform {
-    src: String,
-    dst: String,
-    direction: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawBuiltinTransform {
-    style: String,
-    direction: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawRangeTransform {
-    min_in_value: Option<f64>,
-    max_in_value: Option<f64>,
-    min_out_value: Option<f64>,
-    max_out_value: Option<f64>,
-    style: Option<String>,
-    direction: Option<String>,
+/// Converts a YAML value to f64.
+fn yaml_as_f64<'a>(yaml: &'a Yaml<'a>) -> Option<f64> {
+    match unwrap_tagged(yaml) {
+        Yaml::Value(Scalar::Integer(i)) => Some(*i as f64),
+        Yaml::Value(Scalar::FloatingPoint(f)) => Some(f.into_inner()),
+        _ => None,
+    }
 }
 
 // ============================================================================
-// Helper functions for parsing raw transform data
+// Helper functions for parsing transform data
 // ============================================================================
 
 /// Parses direction string to TransformDirection.
-fn parse_direction(dir: &Option<String>) -> TransformDirection {
-    match dir.as_deref() {
+fn parse_direction(dir: Option<&str>) -> TransformDirection {
+    match dir {
         Some("inverse") | Some("Inverse") | Some("INVERSE") => TransformDirection::Inverse,
         _ => TransformDirection::Forward,
     }
 }
 
 /// Parses interpolation string.
-fn parse_interpolation(interp: &Option<String>) -> Interpolation {
-    match interp.as_deref() {
+fn parse_interpolation(interp: Option<&str>) -> Interpolation {
+    match interp {
         Some("nearest") | Some("Nearest") | Some("NEAREST") => Interpolation::Nearest,
         Some("tetrahedral") | Some("Tetrahedral") | Some("TETRAHEDRAL") => Interpolation::Tetrahedral,
         Some("best") | Some("Best") | Some("BEST") => Interpolation::Best,
@@ -1216,24 +1169,44 @@ fn parse_interpolation(interp: &Option<String>) -> Interpolation {
     }
 }
 
+/// Parses FixedFunction style string.
+fn parse_fixed_function_style(style: &str) -> FixedFunctionStyle {
+    match style.to_uppercase().as_str() {
+        "ACES_REDMOD03" | "ACES_RED_MOD_03" => FixedFunctionStyle::AcesRedMod03,
+        "ACES_REDMOD10" | "ACES_RED_MOD_10" => FixedFunctionStyle::AcesRedMod10,
+        "ACES_GLOW03" | "ACES_GLOW_03" => FixedFunctionStyle::AcesGlow03,
+        "ACES_GLOW10" | "ACES_GLOW_10" => FixedFunctionStyle::AcesGlow10,
+        "ACES_GAMUTCOMP13" | "ACES_GAMUT_COMP_13" => FixedFunctionStyle::AcesGamutComp13,
+        "RGB_TO_HSV" | "RGBTOHSV" => FixedFunctionStyle::RgbToHsv,
+        "HSV_TO_RGB" | "HSVTORGB" => FixedFunctionStyle::HsvToRgb,
+        "XYZ_TO_XYY" | "XYZTOYXY" => FixedFunctionStyle::XyzToXyy,
+        "XYY_TO_XYZ" | "XYYTOXYZ" => FixedFunctionStyle::XyyToXyz,
+        "XYZ_TO_UVY" | "XYZTOUVY" => FixedFunctionStyle::XyzToUvy,
+        "UVY_TO_XYZ" | "UVYTOXYZ" => FixedFunctionStyle::UvyToXyz,
+        "XYZ_TO_LUV" | "XYZTOLUV" => FixedFunctionStyle::XyzToLuv,
+        "LUV_TO_XYZ" | "LUVTOXYZ" => FixedFunctionStyle::LuvToXyz,
+        _ => FixedFunctionStyle::AcesRedMod03, // default fallback
+    }
+}
+
 /// Parses 16-element matrix, pads with identity if needed.
-fn parse_matrix_16(m: &Option<Vec<f64>>) -> [f64; 16] {
+fn parse_matrix_16(v: Vec<f64>) -> [f64; 16] {
     let identity = MatrixTransform::IDENTITY;
-    match m {
-        Some(v) if v.len() >= 16 => [
+    match v.len() {
+        n if n >= 16 => [
             v[0], v[1], v[2], v[3],
             v[4], v[5], v[6], v[7],
             v[8], v[9], v[10], v[11],
             v[12], v[13], v[14], v[15],
         ],
-        Some(v) if v.len() >= 12 => [
+        n if n >= 12 => [
             // 3x4 matrix (common in OCIO)
             v[0], v[1], v[2], 0.0,
             v[3], v[4], v[5], 0.0,
             v[6], v[7], v[8], 0.0,
             v[9], v[10], v[11], 1.0,
         ],
-        Some(v) if v.len() >= 9 => [
+        n if n >= 9 => [
             // 3x3 matrix
             v[0], v[1], v[2], 0.0,
             v[3], v[4], v[5], 0.0,
@@ -1245,19 +1218,19 @@ fn parse_matrix_16(m: &Option<Vec<f64>>) -> [f64; 16] {
 }
 
 /// Parses 4-element offset.
-fn parse_offset_4(o: &Option<Vec<f64>>) -> [f64; 4] {
-    match o {
-        Some(v) if v.len() >= 4 => [v[0], v[1], v[2], v[3]],
-        Some(v) if v.len() >= 3 => [v[0], v[1], v[2], 0.0],
+fn parse_offset_4(v: Vec<f64>) -> [f64; 4] {
+    match v.len() {
+        n if n >= 4 => [v[0], v[1], v[2], v[3]],
+        n if n >= 3 => [v[0], v[1], v[2], 0.0],
         _ => [0.0, 0.0, 0.0, 0.0],
     }
 }
 
 /// Parses RGB values with default.
-fn parse_rgb(v: &Option<Vec<f64>>, default: f64) -> [f64; 3] {
-    match v {
-        Some(vec) if vec.len() >= 3 => [vec[0], vec[1], vec[2]],
-        Some(vec) if vec.len() == 1 => [vec[0], vec[0], vec[0]],
+fn parse_rgb(v: Vec<f64>, default: f64) -> [f64; 3] {
+    match v.len() {
+        n if n >= 3 => [v[0], v[1], v[2]],
+        1 => [v[0], v[0], v[0]],
         _ => [default, default, default],
     }
 }
@@ -1346,5 +1319,89 @@ displays:
 
         let result = config.processor("NonExistent", "sRGB");
         assert!(matches!(result, Err(OcioError::ColorSpaceNotFound { .. })));
+    }
+
+    #[test]
+    fn parse_matrix_transform() {
+        let yaml = r#"
+ocio_profile_version: 2.1
+roles:
+  default: raw
+colorspaces:
+  - name: raw
+    family: raw
+  - name: WithMatrix
+    from_scene_reference: !<MatrixTransform> {matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]}
+displays:
+  sRGB:
+    - name: Raw
+      colorspace: raw
+"#;
+        let config = Config::from_yaml_str(yaml, PathBuf::from(".")).unwrap();
+        let cs = config.colorspace("WithMatrix").unwrap();
+        assert!(cs.from_reference().is_some());
+    }
+
+    #[test]
+    fn parse_fixed_function_transform() {
+        let yaml = r#"
+ocio_profile_version: 2.1
+roles:
+  default: raw
+colorspaces:
+  - name: raw
+    family: raw
+  - name: ACES_with_RedMod
+    from_scene_reference: !<FixedFunctionTransform> {style: ACES_RedMod10}
+displays:
+  sRGB:
+    - name: Raw
+      colorspace: raw
+"#;
+        let config = Config::from_yaml_str(yaml, PathBuf::from(".")).unwrap();
+        let cs = config.colorspace("ACES_with_RedMod").unwrap();
+        assert!(cs.from_reference().is_some());
+    }
+
+    #[test]
+    fn parse_exposure_contrast_transform() {
+        let yaml = r#"
+ocio_profile_version: 2.1
+roles:
+  default: raw
+colorspaces:
+  - name: raw
+    family: raw
+  - name: Graded
+    from_scene_reference: !<ExposureContrastTransform> {exposure: 1.0, contrast: 1.2, gamma: 0.9, pivot: 0.18, style: linear}
+displays:
+  sRGB:
+    - name: Raw
+      colorspace: raw
+"#;
+        let config = Config::from_yaml_str(yaml, PathBuf::from(".")).unwrap();
+        let cs = config.colorspace("Graded").unwrap();
+        assert!(cs.from_reference().is_some());
+    }
+
+    #[test]
+    fn parse_look_transform() {
+        let yaml = r#"
+ocio_profile_version: 2.1
+roles:
+  default: raw
+colorspaces:
+  - name: raw
+    family: raw
+  - name: WithLook
+    from_scene_reference: !<LookTransform> {src: raw, dst: raw, looks: +FilmGrade}
+displays:
+  sRGB:
+    - name: Raw
+      colorspace: raw
+"#;
+        let config = Config::from_yaml_str(yaml, PathBuf::from(".")).unwrap();
+        let cs = config.colorspace("WithLook").unwrap();
+        assert!(cs.from_reference().is_some());
     }
 }

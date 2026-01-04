@@ -19,6 +19,7 @@ thiserror = { workspace = true }
 glam = { workspace = true }
 glob = { workspace = true }
 regex = { workspace = true }
+saphyr = "0.0.6"
 
 [dev-dependencies]
 tempfile = { workspace = true }

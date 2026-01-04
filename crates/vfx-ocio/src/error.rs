@@ -21,7 +21,7 @@ pub enum OcioError {
 
     /// YAML parsing error.
     #[error("YAML parse error: {0}")]
-    Yaml(#[from] serde_yaml::Error),
+    Yaml(String),
 
     /// Config file not found.
     #[error("config file not found: {path}")]
