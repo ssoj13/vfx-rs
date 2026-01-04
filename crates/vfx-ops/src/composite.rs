@@ -314,6 +314,121 @@ pub fn unpremultiply(rgba: [f32; 4]) -> [f32; 4] {
     }
 }
 
+/// Premultiplies alpha for entire RGBA image.
+///
+/// Converts straight alpha to premultiplied: `RGB *= A` for each pixel.
+///
+/// # Arguments
+///
+/// * `data` - RGBA pixel data (4 floats per pixel)
+/// * `width` - Image width
+/// * `height` - Image height
+///
+/// # Returns
+///
+/// New image with premultiplied alpha.
+pub fn premultiply_image(
+    data: &[f32],
+    width: usize,
+    height: usize,
+) -> OpsResult<Vec<f32>> {
+    let size = width * height * 4;
+    if data.len() != size {
+        return Err(OpsError::SizeMismatch(format!(
+            "expected {} values, got {}",
+            size,
+            data.len()
+        )));
+    }
+
+    let mut result = vec![0.0f32; size];
+
+    for i in 0..(width * height) {
+        let idx = i * 4;
+        let px = [data[idx], data[idx + 1], data[idx + 2], data[idx + 3]];
+        let out = premultiply(px);
+        result[idx] = out[0];
+        result[idx + 1] = out[1];
+        result[idx + 2] = out[2];
+        result[idx + 3] = out[3];
+    }
+
+    Ok(result)
+}
+
+/// Unpremultiplies alpha for entire RGBA image.
+///
+/// Converts premultiplied to straight alpha: `RGB /= A` for each pixel.
+///
+/// # Arguments
+///
+/// * `data` - RGBA pixel data (4 floats per pixel)
+/// * `width` - Image width
+/// * `height` - Image height
+///
+/// # Returns
+///
+/// New image with straight (unpremultiplied) alpha.
+pub fn unpremultiply_image(
+    data: &[f32],
+    width: usize,
+    height: usize,
+) -> OpsResult<Vec<f32>> {
+    let size = width * height * 4;
+    if data.len() != size {
+        return Err(OpsError::SizeMismatch(format!(
+            "expected {} values, got {}",
+            size,
+            data.len()
+        )));
+    }
+
+    let mut result = vec![0.0f32; size];
+
+    for i in 0..(width * height) {
+        let idx = i * 4;
+        let px = [data[idx], data[idx + 1], data[idx + 2], data[idx + 3]];
+        let out = unpremultiply(px);
+        result[idx] = out[0];
+        result[idx + 1] = out[1];
+        result[idx + 2] = out[2];
+        result[idx + 3] = out[3];
+    }
+
+    Ok(result)
+}
+
+/// Premultiplies alpha in-place for RGBA image.
+///
+/// More efficient than `premultiply_image` when original data isn't needed.
+pub fn premultiply_inplace(data: &mut [f32]) {
+    for chunk in data.chunks_exact_mut(4) {
+        let a = chunk[3];
+        chunk[0] *= a;
+        chunk[1] *= a;
+        chunk[2] *= a;
+    }
+}
+
+/// Unpremultiplies alpha in-place for RGBA image.
+///
+/// More efficient than `unpremultiply_image` when original data isn't needed.
+pub fn unpremultiply_inplace(data: &mut [f32]) {
+    for chunk in data.chunks_exact_mut(4) {
+        let a = chunk[3];
+        if a > 1e-8 {
+            let inv_a = 1.0 / a;
+            chunk[0] *= inv_a;
+            chunk[1] *= inv_a;
+            chunk[2] *= inv_a;
+        } else {
+            chunk[0] = 0.0;
+            chunk[1] = 0.0;
+            chunk[2] = 0.0;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
