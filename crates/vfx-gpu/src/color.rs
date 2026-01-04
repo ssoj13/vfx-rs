@@ -2,7 +2,7 @@
 
 use crate::image::GpuImage;
 use crate::backend::{Backend, CpuPrimitives, GpuLimits};
-use crate::backend::gpu_primitives::GpuPrimitives;
+use crate::backend::GpuPrimitives;
 use crate::GpuResult;
 
 /// CDL (Color Decision List) parameters.

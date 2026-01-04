@@ -11,6 +11,7 @@ members = [
     "crates/vfx-io",
     "crates/vfx-ops",
     "crates/vfx-icc",
+    "crates/vfx-gpu",
     "crates/vfx-cli",
     "crates/vfx-tests",
     "crates/vfx-bench",

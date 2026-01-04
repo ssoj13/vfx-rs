@@ -7,14 +7,24 @@ repository.workspace = true
 rust-version.workspace = true
 description = "GPU-accelerated image processing for VFX workflows"
 
+[features]
+default = []
+wgpu = ["dep:wgpu", "dep:pollster"]
+
 [dependencies]
-# GPU compute
-wgpu = "24"
+# GPU compute (optional)
+wgpu = { version = "24", optional = true }
 bytemuck = { version = "1.21", features = ["derive"] }
-pollster = "0.4"
+pollster = { version = "0.4", optional = true }
 
 # Internal
 vfx-core = { workspace = true }
+
+# Parallelism
+rayon = { workspace = true }
+
+# System info
+sys-info = "0.9"
 
 # Error handling
 thiserror = { workspace = true }
