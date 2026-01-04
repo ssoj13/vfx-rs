@@ -1,0 +1,23 @@
+[package]
+name = "vfx-gpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "GPU-accelerated image processing for VFX workflows"
+
+[dependencies]
+# GPU compute
+wgpu = "24"
+bytemuck = { version = "1.21", features = ["derive"] }
+pollster = "0.4"
+
+# Internal
+vfx-core = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
