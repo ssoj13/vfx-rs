@@ -12,6 +12,8 @@ mod processor;
 mod lut;
 mod format;
 mod layered;
+#[cfg(feature = "viewer")]
+mod viewer;
 
 pub use image::Image;
 pub use processor::Processor;
@@ -91,6 +93,12 @@ fn vfx_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let lut_module = PyModule::new(m.py(), "lut")?;
     lut::register(&lut_module)?;
     m.add_submodule(&lut_module)?;
+    
+    // Viewer (optional)
+    #[cfg(feature = "viewer")]
+    {
+        m.add_function(wrap_pyfunction!(viewer::view, m)?)?;
+    }
     
     Ok(())
 }

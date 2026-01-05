@@ -19,6 +19,7 @@ vfx-io = { path = "../vfx-io", features = ["exr", "png", "jpeg", "tiff", "dpx", 
 vfx-compute = { path = "../vfx-compute", features = ["io"] }
 vfx-lut = { path = "../vfx-lut" }
 vfx-ops = { path = "../vfx-ops" }
+vfx-view = { path = "../vfx-view", optional = true }
 
 [features]
 default = []
@@ -28,3 +29,4 @@ webp = ["vfx-io/webp"]
 avif = ["vfx-io/avif"]
 jp2 = ["vfx-io/jp2"]
 all-formats = ["heif", "webp", "avif", "jp2"]
+viewer = ["vfx-view"]
