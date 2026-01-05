@@ -758,6 +758,181 @@ impl Roi3D {
             (r.y + r.height) as i32,
         )
     }
+
+    // =========================================================================
+    // Additional Utility Methods (OIIO Parity)
+    // =========================================================================
+
+    /// Returns true if this ROI overlaps with another.
+    #[inline]
+    pub fn overlaps(&self, other: &Roi3D) -> bool {
+        self.intersection(other).is_some()
+    }
+
+    /// Translates the ROI by the given offset.
+    #[inline]
+    pub fn translate(&self, dx: i32, dy: i32, dz: i32) -> Self {
+        if self.is_all() {
+            return *self;
+        }
+        Self {
+            xbegin: self.xbegin.saturating_add(dx),
+            xend: self.xend.saturating_add(dx),
+            ybegin: self.ybegin.saturating_add(dy),
+            yend: self.yend.saturating_add(dy),
+            zbegin: self.zbegin.saturating_add(dz),
+            zend: self.zend.saturating_add(dz),
+            chbegin: self.chbegin,
+            chend: self.chend,
+        }
+    }
+
+    /// Expands the ROI by the given amount on all sides.
+    ///
+    /// Negative values shrink the ROI.
+    #[inline]
+    pub fn expand(&self, amount: i32) -> Self {
+        self.expand_xy(amount, amount)
+    }
+
+    /// Expands the ROI by different amounts in X and Y.
+    #[inline]
+    pub fn expand_xy(&self, x_amount: i32, y_amount: i32) -> Self {
+        if self.is_all() {
+            return *self;
+        }
+        Self {
+            xbegin: self.xbegin.saturating_sub(x_amount),
+            xend: self.xend.saturating_add(x_amount),
+            ybegin: self.ybegin.saturating_sub(y_amount),
+            yend: self.yend.saturating_add(y_amount),
+            zbegin: self.zbegin,
+            zend: self.zend,
+            chbegin: self.chbegin,
+            chend: self.chend,
+        }
+    }
+
+    /// Expands the ROI in all dimensions.
+    #[inline]
+    pub fn expand_3d(&self, x_amount: i32, y_amount: i32, z_amount: i32) -> Self {
+        if self.is_all() {
+            return *self;
+        }
+        Self {
+            xbegin: self.xbegin.saturating_sub(x_amount),
+            xend: self.xend.saturating_add(x_amount),
+            ybegin: self.ybegin.saturating_sub(y_amount),
+            yend: self.yend.saturating_add(y_amount),
+            zbegin: self.zbegin.saturating_sub(z_amount),
+            zend: self.zend.saturating_add(z_amount),
+            chbegin: self.chbegin,
+            chend: self.chend,
+        }
+    }
+
+    /// Clamps the ROI to the given image bounds.
+    pub fn clamp(&self, image_width: i32, image_height: i32, image_depth: i32) -> Self {
+        if self.is_all() {
+            return Self::new(0, image_width, 0, image_height, 0, image_depth, self.chbegin, self.chend);
+        }
+        Self {
+            xbegin: self.xbegin.max(0).min(image_width),
+            xend: self.xend.max(0).min(image_width),
+            ybegin: self.ybegin.max(0).min(image_height),
+            yend: self.yend.max(0).min(image_height),
+            zbegin: self.zbegin.max(0).min(image_depth),
+            zend: self.zend.max(0).min(image_depth),
+            chbegin: self.chbegin,
+            chend: self.chend,
+        }
+    }
+
+    /// Returns true if the ROI is empty (zero area).
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.xbegin >= self.xend || self.ybegin >= self.yend || self.zbegin >= self.zend
+    }
+
+    /// Returns the center point of the ROI as (x, y, z).
+    #[inline]
+    pub fn center(&self) -> (i32, i32, i32) {
+        (
+            (self.xbegin + self.xend) / 2,
+            (self.ybegin + self.yend) / 2,
+            (self.zbegin + self.zend) / 2,
+        )
+    }
+
+    /// Sets the channel range.
+    #[inline]
+    pub fn with_channels(mut self, chbegin: i32, chend: i32) -> Self {
+        self.chbegin = chbegin;
+        self.chend = chend;
+        self
+    }
+
+    /// Sets the Z range.
+    #[inline]
+    pub fn with_depth(mut self, zbegin: i32, zend: i32) -> Self {
+        self.zbegin = zbegin;
+        self.zend = zend;
+        self
+    }
+
+    /// Returns a 2D slice of this ROI at the given Z.
+    #[inline]
+    pub fn slice_2d(&self, z: i32) -> Self {
+        Self {
+            xbegin: self.xbegin,
+            xend: self.xend,
+            ybegin: self.ybegin,
+            yend: self.yend,
+            zbegin: z,
+            zend: z + 1,
+            chbegin: self.chbegin,
+            chend: self.chend,
+        }
+    }
+
+    /// Returns an iterator over all (x, y) coordinates in this 2D ROI.
+    pub fn iter_xy(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
+        (self.ybegin..self.yend).flat_map(move |y| (self.xbegin..self.xend).map(move |x| (x, y)))
+    }
+
+    /// Returns an iterator over all (x, y, z) coordinates in this ROI.
+    pub fn iter_xyz(&self) -> impl Iterator<Item = (i32, i32, i32)> + '_ {
+        (self.zbegin..self.zend).flat_map(move |z| {
+            (self.ybegin..self.yend)
+                .flat_map(move |y| (self.xbegin..self.xend).map(move |x| (x, y, z)))
+        })
+    }
+
+    /// Scales the ROI by the given factor.
+    ///
+    /// Both origin and size are scaled.
+    pub fn scale(&self, factor: f32) -> Self {
+        if self.is_all() {
+            return *self;
+        }
+        Self {
+            xbegin: (self.xbegin as f32 * factor) as i32,
+            xend: (self.xend as f32 * factor) as i32,
+            ybegin: (self.ybegin as f32 * factor) as i32,
+            yend: (self.yend as f32 * factor) as i32,
+            zbegin: self.zbegin,
+            zend: self.zend,
+            chbegin: self.chbegin,
+            chend: self.chend,
+        }
+    }
+
+    /// Creates ROI that covers the pixels needed for a filter of given radius.
+    ///
+    /// Useful when computing how much source data is needed for a filtered region.
+    pub fn for_filter(&self, filter_radius: i32) -> Self {
+        self.expand(filter_radius)
+    }
 }
 
 impl std::fmt::Display for Roi3D {

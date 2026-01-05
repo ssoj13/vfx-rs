@@ -590,6 +590,605 @@ pub fn sobel_into(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi3D>) {
     }
 }
 
+// =============================================================================
+// Kernel Generation (OIIO Parity)
+// =============================================================================
+
+/// Kernel types for `make_kernel`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KernelType {
+    /// Gaussian kernel (isotropic blur)
+    Gaussian,
+    /// Box/averaging kernel
+    Box,
+    /// Sharpening kernel
+    Sharpen,
+    /// Laplacian edge detection
+    Laplacian,
+    /// Laplacian of Gaussian (LoG)
+    LaplacianOfGaussian,
+    /// Sobel X gradient
+    SobelX,
+    /// Sobel Y gradient
+    SobelY,
+    /// Prewitt X gradient
+    PrewittX,
+    /// Prewitt Y gradient
+    PrewittY,
+    /// Emboss effect
+    Emboss,
+    /// Unsharp mask
+    Unsharp,
+    /// Disk kernel (circular)
+    Disk,
+}
+
+/// Creates a convolution kernel of the specified type.
+///
+/// This is the OIIO-compatible `make_kernel` function.
+///
+/// # Arguments
+///
+/// * `kernel_type` - Type of kernel to generate
+/// * `width` - Kernel width (odd number recommended)
+/// * `height` - Kernel height (odd number recommended)
+/// * `param` - Additional parameter (meaning depends on kernel type)
+///
+/// For Gaussian: param = sigma
+/// For Sharpen: param = strength
+/// For Unsharp: param = sigma
+///
+/// # Example
+///
+/// ```ignore
+/// use vfx_io::imagebufalgo::filters::{make_kernel, KernelType};
+///
+/// let gaussian = make_kernel(KernelType::Gaussian, 5, 5, 1.0);
+/// let sharpen = make_kernel(KernelType::Sharpen, 3, 3, 1.0);
+/// ```
+pub fn make_kernel(kernel_type: KernelType, width: u32, height: u32, param: f32) -> Vec<f32> {
+    let w = width as i32;
+    let h = height as i32;
+    let hw = w / 2;
+    let hh = h / 2;
+    let total = (w * h) as usize;
+
+    match kernel_type {
+        KernelType::Gaussian => {
+            let sigma = if param <= 0.0 { 1.0 } else { param };
+            let sigma2 = 2.0 * sigma * sigma;
+            let mut kernel = vec![0.0f32; total];
+            let mut sum = 0.0f32;
+
+            for y in -hh..=hh {
+                for x in -hw..=hw {
+                    let idx = ((y + hh) * w + (x + hw)) as usize;
+                    let d2 = (x * x + y * y) as f32;
+                    kernel[idx] = (-d2 / sigma2).exp();
+                    sum += kernel[idx];
+                }
+            }
+
+            // Normalize
+            for k in &mut kernel {
+                *k /= sum;
+            }
+            kernel
+        }
+
+        KernelType::Box => {
+            let n = total as f32;
+            vec![1.0 / n; total]
+        }
+
+        KernelType::Sharpen => {
+            if w == 3 && h == 3 {
+                let amount = if param <= 0.0 { 1.0 } else { param };
+                let center = 1.0 + 4.0 * amount;
+                vec![
+                    0.0, -amount, 0.0,
+                    -amount, center, -amount,
+                    0.0, -amount, 0.0,
+                ]
+            } else {
+                // For larger kernels, create LoG-based sharpening
+                let gaussian = make_kernel(KernelType::Gaussian, width, height, param);
+                let center_idx = total / 2;
+                let mut kernel = gaussian.iter().map(|&g| -g * param).collect::<Vec<_>>();
+                kernel[center_idx] += 1.0 + param;
+                kernel
+            }
+        }
+
+        KernelType::Laplacian => {
+            if w == 3 && h == 3 {
+                vec![
+                    0.0, -1.0, 0.0,
+                    -1.0, 4.0, -1.0,
+                    0.0, -1.0, 0.0,
+                ]
+            } else {
+                // Extended Laplacian
+                let mut kernel = vec![-1.0f32; total];
+                let center_idx = total / 2;
+                kernel[center_idx] = (total - 1) as f32;
+                kernel
+            }
+        }
+
+        KernelType::LaplacianOfGaussian => {
+            let sigma = if param <= 0.0 { 1.0 } else { param };
+            let sigma2 = sigma * sigma;
+            let sigma4 = sigma2 * sigma2;
+            let mut kernel = vec![0.0f32; total];
+            let mut sum = 0.0f32;
+
+            for y in -hh..=hh {
+                for x in -hw..=hw {
+                    let idx = ((y + hh) * w + (x + hw)) as usize;
+                    let d2 = (x * x + y * y) as f32;
+                    let g = (-d2 / (2.0 * sigma2)).exp();
+                    kernel[idx] = ((d2 - 2.0 * sigma2) / sigma4) * g;
+                    sum += kernel[idx];
+                }
+            }
+
+            // Normalize to zero-sum
+            let mean = sum / total as f32;
+            for k in &mut kernel {
+                *k -= mean;
+            }
+            kernel
+        }
+
+        KernelType::SobelX => {
+            if w == 3 && h == 3 {
+                vec![
+                    -1.0, 0.0, 1.0,
+                    -2.0, 0.0, 2.0,
+                    -1.0, 0.0, 1.0,
+                ]
+            } else {
+                // Extended Sobel using separable filters
+                let mut kernel = vec![0.0f32; total];
+                for y in -hh..=hh {
+                    for x in -hw..=hw {
+                        let idx = ((y + hh) * w + (x + hw)) as usize;
+                        // Approximate extended Sobel
+                        let smooth = 1.0 / (1 + y.abs()) as f32;
+                        kernel[idx] = x as f32 * smooth;
+                    }
+                }
+                kernel
+            }
+        }
+
+        KernelType::SobelY => {
+            if w == 3 && h == 3 {
+                vec![
+                    -1.0, -2.0, -1.0,
+                    0.0, 0.0, 0.0,
+                    1.0, 2.0, 1.0,
+                ]
+            } else {
+                let mut kernel = vec![0.0f32; total];
+                for y in -hh..=hh {
+                    for x in -hw..=hw {
+                        let idx = ((y + hh) * w + (x + hw)) as usize;
+                        let smooth = 1.0 / (1 + x.abs()) as f32;
+                        kernel[idx] = y as f32 * smooth;
+                    }
+                }
+                kernel
+            }
+        }
+
+        KernelType::PrewittX => {
+            if w == 3 && h == 3 {
+                vec![
+                    -1.0, 0.0, 1.0,
+                    -1.0, 0.0, 1.0,
+                    -1.0, 0.0, 1.0,
+                ]
+            } else {
+                let mut kernel = vec![0.0f32; total];
+                for y in -hh..=hh {
+                    for x in -hw..=hw {
+                        let idx = ((y + hh) * w + (x + hw)) as usize;
+                        kernel[idx] = x.signum() as f32;
+                    }
+                }
+                kernel
+            }
+        }
+
+        KernelType::PrewittY => {
+            if w == 3 && h == 3 {
+                vec![
+                    -1.0, -1.0, -1.0,
+                    0.0, 0.0, 0.0,
+                    1.0, 1.0, 1.0,
+                ]
+            } else {
+                let mut kernel = vec![0.0f32; total];
+                for y in -hh..=hh {
+                    for x in -hw..=hw {
+                        let idx = ((y + hh) * w + (x + hw)) as usize;
+                        kernel[idx] = y.signum() as f32;
+                    }
+                }
+                kernel
+            }
+        }
+
+        KernelType::Emboss => {
+            if w == 3 && h == 3 {
+                vec![
+                    -2.0, -1.0, 0.0,
+                    -1.0, 1.0, 1.0,
+                    0.0, 1.0, 2.0,
+                ]
+            } else {
+                let mut kernel = vec![0.0f32; total];
+                for y in -hh..=hh {
+                    for x in -hw..=hw {
+                        let idx = ((y + hh) * w + (x + hw)) as usize;
+                        kernel[idx] = (x + y) as f32 / (hw + hh) as f32;
+                    }
+                }
+                let center_idx = total / 2;
+                kernel[center_idx] = 1.0;
+                kernel
+            }
+        }
+
+        KernelType::Unsharp => {
+            let sigma = if param <= 0.0 { 1.0 } else { param };
+            let gaussian = make_kernel(KernelType::Gaussian, width, height, sigma);
+            let center_idx = total / 2;
+            let mut kernel: Vec<f32> = gaussian.iter().map(|&g| -g).collect();
+            kernel[center_idx] += 2.0;
+            kernel
+        }
+
+        KernelType::Disk => {
+            let radius = (hw.min(hh)) as f32;
+            let mut kernel = vec![0.0f32; total];
+            let mut count = 0.0f32;
+
+            for y in -hh..=hh {
+                for x in -hw..=hw {
+                    let idx = ((y + hh) * w + (x + hw)) as usize;
+                    let d = ((x * x + y * y) as f32).sqrt();
+                    if d <= radius {
+                        kernel[idx] = 1.0;
+                        count += 1.0;
+                    }
+                }
+            }
+
+            // Normalize
+            if count > 0.0 {
+                for k in &mut kernel {
+                    *k /= count;
+                }
+            }
+            kernel
+        }
+    }
+}
+
+/// Creates a named kernel string (for OIIO compatibility).
+///
+/// Accepts kernel names like "gaussian", "box", "laplacian", etc.
+pub fn make_kernel_from_name(name: &str, width: u32, height: u32, param: f32) -> Option<Vec<f32>> {
+    let kernel_type = match name.to_lowercase().as_str() {
+        "gaussian" | "gauss" => KernelType::Gaussian,
+        "box" | "average" => KernelType::Box,
+        "sharpen" | "sharp" => KernelType::Sharpen,
+        "laplacian" | "laplace" => KernelType::Laplacian,
+        "log" | "laplacianofgaussian" => KernelType::LaplacianOfGaussian,
+        "sobel_x" | "sobelx" => KernelType::SobelX,
+        "sobel_y" | "sobely" => KernelType::SobelY,
+        "prewitt_x" | "prewittx" => KernelType::PrewittX,
+        "prewitt_y" | "prewitty" => KernelType::PrewittY,
+        "emboss" => KernelType::Emboss,
+        "unsharp" => KernelType::Unsharp,
+        "disk" => KernelType::Disk,
+        _ => return None,
+    };
+
+    Some(make_kernel(kernel_type, width, height, param))
+}
+
+// =============================================================================
+// Iterated Morphological Operations
+// =============================================================================
+
+/// Applies morphological dilation with iteration support.
+///
+/// # Arguments
+///
+/// * `src` - Source image
+/// * `size` - Structuring element size
+/// * `iterations` - Number of times to apply the operation
+/// * `roi` - Optional region of interest
+pub fn dilate_n(src: &ImageBuf, size: u32, iterations: u32, roi: Option<Roi3D>) -> ImageBuf {
+    if iterations == 0 {
+        return src.clone();
+    }
+
+    let mut result = dilate(src, size, roi);
+    for _ in 1..iterations {
+        result = dilate(&result, size, roi);
+    }
+    result
+}
+
+/// Applies morphological erosion with iteration support.
+pub fn erode_n(src: &ImageBuf, size: u32, iterations: u32, roi: Option<Roi3D>) -> ImageBuf {
+    if iterations == 0 {
+        return src.clone();
+    }
+
+    let mut result = erode(src, size, roi);
+    for _ in 1..iterations {
+        result = erode(&result, size, roi);
+    }
+    result
+}
+
+/// Morphological gradient (dilation - erosion).
+///
+/// Highlights edges in the image.
+pub fn morph_gradient(src: &ImageBuf, size: u32, roi: Option<Roi3D>) -> ImageBuf {
+    let dilated = dilate(src, size, roi);
+    let eroded = erode(src, size, roi);
+
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let nch = src.nchannels() as usize;
+    let mut result = ImageBuf::new(src.spec().clone(), InitializePixels::No);
+
+    let mut d_pixel = vec![0.0f32; nch];
+    let mut e_pixel = vec![0.0f32; nch];
+    let mut out_pixel = vec![0.0f32; nch];
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                dilated.getpixel(x, y, z, &mut d_pixel, WrapMode::Clamp);
+                eroded.getpixel(x, y, z, &mut e_pixel, WrapMode::Clamp);
+                for c in 0..nch {
+                    out_pixel[c] = d_pixel[c] - e_pixel[c];
+                }
+                result.setpixel(x, y, z, &out_pixel);
+            }
+        }
+    }
+
+    result
+}
+
+/// Top-hat transform (src - opening).
+///
+/// Extracts bright features smaller than the structuring element.
+pub fn top_hat(src: &ImageBuf, size: u32, roi: Option<Roi3D>) -> ImageBuf {
+    let opened = morph_open(src, size, roi);
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let nch = src.nchannels() as usize;
+    let mut result = ImageBuf::new(src.spec().clone(), InitializePixels::No);
+
+    let mut s_pixel = vec![0.0f32; nch];
+    let mut o_pixel = vec![0.0f32; nch];
+    let mut out_pixel = vec![0.0f32; nch];
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                src.getpixel(x, y, z, &mut s_pixel, WrapMode::Clamp);
+                opened.getpixel(x, y, z, &mut o_pixel, WrapMode::Clamp);
+                for c in 0..nch {
+                    out_pixel[c] = s_pixel[c] - o_pixel[c];
+                }
+                result.setpixel(x, y, z, &out_pixel);
+            }
+        }
+    }
+
+    result
+}
+
+/// Black-hat transform (closing - src).
+///
+/// Extracts dark features smaller than the structuring element.
+pub fn black_hat(src: &ImageBuf, size: u32, roi: Option<Roi3D>) -> ImageBuf {
+    let closed = morph_close(src, size, roi);
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let nch = src.nchannels() as usize;
+    let mut result = ImageBuf::new(src.spec().clone(), InitializePixels::No);
+
+    let mut s_pixel = vec![0.0f32; nch];
+    let mut c_pixel = vec![0.0f32; nch];
+    let mut out_pixel = vec![0.0f32; nch];
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                src.getpixel(x, y, z, &mut s_pixel, WrapMode::Clamp);
+                closed.getpixel(x, y, z, &mut c_pixel, WrapMode::Clamp);
+                for c in 0..nch {
+                    out_pixel[c] = c_pixel[c] - s_pixel[c];
+                }
+                result.setpixel(x, y, z, &out_pixel);
+            }
+        }
+    }
+
+    result
+}
+
+// =============================================================================
+// Convolution with Border Mode
+// =============================================================================
+
+/// Applies convolution with explicit border handling.
+///
+/// # Arguments
+///
+/// * `src` - Source image
+/// * `kernel` - Convolution kernel
+/// * `kw`, `kh` - Kernel dimensions
+/// * `border` - Border handling mode
+/// * `roi` - Optional region of interest
+pub fn convolve_with_border(
+    src: &ImageBuf,
+    kernel: &[f32],
+    kw: u32,
+    kh: u32,
+    border: WrapMode,
+    roi: Option<Roi3D>,
+) -> ImageBuf {
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let mut dst = ImageBuf::new(src.spec().clone(), InitializePixels::No);
+    convolve_with_border_into(&mut dst, src, kernel, kw, kh, border, Some(roi));
+    dst
+}
+
+/// Applies convolution with border mode into existing ImageBuf.
+pub fn convolve_with_border_into(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    kernel: &[f32],
+    kw: u32,
+    kh: u32,
+    border: WrapMode,
+    roi: Option<Roi3D>,
+) {
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let nch = src.nchannels() as usize;
+    let half_w = (kw / 2) as i32;
+    let half_h = (kh / 2) as i32;
+
+    let mut src_pixel = vec![0.0f32; nch];
+    let mut dst_pixel = vec![0.0f32; nch];
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                // Reset accumulator
+                for c in 0..nch {
+                    dst_pixel[c] = 0.0;
+                }
+
+                // Apply kernel
+                let mut ki = 0;
+                for ky in -half_h..=half_h {
+                    for kx in -half_w..=half_w {
+                        let sx = x + kx;
+                        let sy = y + ky;
+                        src.getpixel(sx, sy, z, &mut src_pixel, border);
+
+                        for c in 0..nch {
+                            dst_pixel[c] += src_pixel[c] * kernel[ki];
+                        }
+                        ki += 1;
+                    }
+                }
+
+                dst.setpixel(x, y, z, &dst_pixel);
+            }
+        }
+    }
+}
+
+/// Bilateral filter for edge-preserving smoothing.
+///
+/// Smooths the image while preserving edges by considering both
+/// spatial proximity and intensity similarity.
+///
+/// # Arguments
+///
+/// * `src` - Source image
+/// * `sigma_spatial` - Spatial standard deviation (size of blur)
+/// * `sigma_range` - Range standard deviation (edge sensitivity)
+/// * `roi` - Optional region of interest
+pub fn bilateral(
+    src: &ImageBuf,
+    sigma_spatial: f32,
+    sigma_range: f32,
+    roi: Option<Roi3D>,
+) -> ImageBuf {
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let mut dst = ImageBuf::new(src.spec().clone(), InitializePixels::No);
+    bilateral_into(&mut dst, src, sigma_spatial, sigma_range, Some(roi));
+    dst
+}
+
+/// Applies bilateral filter into existing ImageBuf.
+pub fn bilateral_into(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    sigma_spatial: f32,
+    sigma_range: f32,
+    roi: Option<Roi3D>,
+) {
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let nch = src.nchannels() as usize;
+
+    let radius = (sigma_spatial * 3.0).ceil() as i32;
+    let spatial_coeff = -0.5 / (sigma_spatial * sigma_spatial);
+    let range_coeff = -0.5 / (sigma_range * sigma_range);
+
+    let mut center_pixel = vec![0.0f32; nch];
+    let mut neighbor_pixel = vec![0.0f32; nch];
+    let mut sum = vec![0.0f32; nch];
+    let mut weight_sum = vec![0.0f32; nch];
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                src.getpixel(x, y, z, &mut center_pixel, WrapMode::Clamp);
+
+                // Reset accumulators
+                for c in 0..nch {
+                    sum[c] = 0.0;
+                    weight_sum[c] = 0.0;
+                }
+
+                // Apply bilateral filter
+                for ky in -radius..=radius {
+                    for kx in -radius..=radius {
+                        src.getpixel(x + kx, y + ky, z, &mut neighbor_pixel, WrapMode::Clamp);
+
+                        let spatial_dist = (kx * kx + ky * ky) as f32;
+                        let spatial_weight = (spatial_coeff * spatial_dist).exp();
+
+                        for c in 0..nch {
+                            let range_dist = (center_pixel[c] - neighbor_pixel[c]).powi(2);
+                            let range_weight = (range_coeff * range_dist).exp();
+                            let weight = spatial_weight * range_weight;
+
+                            sum[c] += neighbor_pixel[c] * weight;
+                            weight_sum[c] += weight;
+                        }
+                    }
+                }
+
+                // Normalize
+                for c in 0..nch {
+                    center_pixel[c] = if weight_sum[c] > 0.0 {
+                        sum[c] / weight_sum[c]
+                    } else {
+                        center_pixel[c]
+                    };
+                }
+
+                dst.setpixel(x, y, z, &center_pixel);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

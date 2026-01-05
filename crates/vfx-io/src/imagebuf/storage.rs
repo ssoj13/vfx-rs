@@ -461,6 +461,73 @@ impl PixelStorage {
         }
     }
 
+    /// Fills all storage with zeros.
+    pub fn fill_zero(&mut self, _spec: &ImageSpec) {
+        match self {
+            Self::Empty => {}
+            Self::OwnedF32 { data, .. } => {
+                data.fill(0.0);
+            }
+            Self::OwnedU8 { data, .. } => {
+                data.fill(0);
+            }
+            Self::OwnedU16 { data, .. } => {
+                data.fill(0);
+            }
+            Self::Wrapped {
+                ptr,
+                width,
+                height,
+                depth,
+                nchannels,
+                format,
+                xstride,
+                ystride,
+                zstride,
+                ..
+            } => unsafe {
+                for z in 0..*depth {
+                    for y in 0..*height {
+                        for x in 0..*width {
+                            let offset = z * *zstride + y * *ystride + x * *xstride;
+                            let base = ptr.add(offset);
+                            for c in 0..*nchannels {
+                                match format {
+                                    DataFormat::F32 | DataFormat::U32 => {
+                                        let p = base.add(c * 4) as *mut u32;
+                                        *p = 0;
+                                    }
+                                    DataFormat::U8 => {
+                                        *base.add(c) = 0;
+                                    }
+                                    DataFormat::U16 | DataFormat::F16 => {
+                                        let p = base.add(c * 2) as *mut u16;
+                                        *p = 0;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+    /// Fills storage with a constant value per channel.
+    pub fn fill(&mut self, values: &[f32], spec: &ImageSpec) {
+        let width = spec.width as usize;
+        let height = spec.height as usize;
+        let depth = spec.depth.max(1) as usize;
+
+        for z in 0..depth {
+            for y in 0..height {
+                for x in 0..width {
+                    self.set_pixel(x, y, z, values, spec);
+                }
+            }
+        }
+    }
+
     /// Converts storage to a different format.
     pub fn convert_to(&self, format: DataFormat, spec: &ImageSpec) -> Self {
         let width = spec.width as usize;

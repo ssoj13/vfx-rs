@@ -417,6 +417,38 @@ impl ImageBuf {
         inner.read_only = false;
     }
 
+    /// Resets and re-initializes with a new name and spec.
+    pub fn reset_named(&mut self, name: impl Into<String>, spec: ImageSpec, zero: InitializePixels) {
+        self.reset_spec(spec, zero);
+        self.set_name(name);
+    }
+
+    /// Resets to wrap an external buffer.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure the data pointer remains valid for the
+    /// lifetime of the ImageBuf and has sufficient size for the spec.
+    pub unsafe fn reset_wrap(
+        &mut self,
+        spec: ImageSpec,
+        data: *mut u8,
+        xstride: Option<usize>,
+        ystride: Option<usize>,
+        zstride: Option<usize>,
+    ) {
+        // SAFETY: Caller guarantees data pointer validity and lifetime
+        let pixels = unsafe { PixelStorage::wrap(data, &spec, xstride, ystride, zstride) };
+        let mut inner = self.inner.write().unwrap();
+        inner.spec = spec;
+        inner.storage = IBStorage::AppBuffer;
+        inner.pixels = pixels;
+        inner.error = None;
+        inner.spec_valid = true;
+        inner.pixels_valid = true;
+        inner.read_only = false;
+    }
+
     /// Resets to read from a file.
     pub fn reset_file<P: AsRef<Path>>(
         &mut self,
@@ -1161,6 +1193,197 @@ impl ImageBuf {
 
         inner.pixels = inner.pixels.convert_to(format, &inner.spec);
         inner.spec.format = format;
+    }
+
+    // =========================================================================
+    // Copy Operations (OIIO Parity)
+    // =========================================================================
+
+    /// Copies metadata (spec attributes) from another ImageBuf.
+    ///
+    /// This copies all attributes but not pixel data or core dimensions.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use vfx_io::imagebuf::ImageBuf;
+    ///
+    /// let mut src = ImageBuf::from_file("source.exr");
+    /// let mut dst = ImageBuf::new(dst_spec, InitializePixels::Yes);
+    /// dst.copy_metadata(&src);
+    /// ```
+    pub fn copy_metadata(&mut self, src: &ImageBuf) {
+        let src_inner = src.inner.read().unwrap();
+        let mut dst_inner = self.inner.write().unwrap();
+
+        // Copy all attributes from source spec
+        for (key, value) in &src_inner.spec.attributes {
+            dst_inner.spec.attributes.insert(key.clone(), value.clone());
+        }
+
+        // Copy channel names if they exist
+        if !src_inner.spec.channel_names.is_empty() {
+            dst_inner.spec.channel_names = src_inner.spec.channel_names.clone();
+        }
+
+        // Copy alpha/z channel indices
+        if src_inner.spec.alpha_channel >= 0 {
+            dst_inner.spec.alpha_channel = src_inner.spec.alpha_channel;
+        }
+        if src_inner.spec.z_channel >= 0 {
+            dst_inner.spec.z_channel = src_inner.spec.z_channel;
+        }
+    }
+
+    /// Copies pixel data from another ImageBuf.
+    ///
+    /// Both ImageBufs must have matching dimensions. The format may differ
+    /// and will be converted automatically.
+    ///
+    /// # Arguments
+    ///
+    /// * `src` - Source ImageBuf to copy from
+    /// * `roi` - Region to copy (None = entire image)
+    ///
+    /// # Returns
+    ///
+    /// `true` on success, `false` on failure.
+    pub fn copy_pixels(&mut self, src: &ImageBuf, roi: Option<Roi3D>) -> bool {
+        if !self.make_writable(false) {
+            return false;
+        }
+
+        src.ensure_pixels_read_ref();
+
+        let src_inner = src.inner.read().unwrap();
+        let dst_inner = self.inner.read().unwrap();
+
+        let roi = roi.unwrap_or_else(|| src_inner.spec.roi());
+        let roi = if roi.is_all() {
+            src_inner.spec.roi()
+        } else {
+            roi
+        };
+
+        // Validate dimensions match or roi fits in destination
+        let dst_roi = dst_inner.spec.roi();
+        if roi.width() > dst_roi.width() || roi.height() > dst_roi.height() {
+            return false;
+        }
+
+        drop(src_inner);
+        drop(dst_inner);
+
+        // Copy pixels
+        let nch = self.nchannels() as usize;
+        let mut pixel = vec![0.0f32; nch.max(src.nchannels() as usize)];
+
+        for z in roi.zbegin..roi.zend {
+            for y in roi.ybegin..roi.yend {
+                for x in roi.xbegin..roi.xend {
+                    src.getpixel(x, y, z, &mut pixel, WrapMode::Black);
+                    self.setpixel(x, y, z, &pixel[..nch]);
+                }
+            }
+        }
+
+        true
+    }
+
+    /// Copies both metadata and pixel data from another ImageBuf.
+    ///
+    /// This is a convenience function that calls copy_metadata and copy_pixels.
+    pub fn copy(&mut self, src: &ImageBuf, roi: Option<Roi3D>) -> bool {
+        self.copy_metadata(src);
+        self.copy_pixels(src, roi)
+    }
+
+    /// Swaps contents with another ImageBuf.
+    pub fn swap(&mut self, other: &mut ImageBuf) {
+        std::mem::swap(&mut self.inner, &mut other.inner);
+    }
+
+    /// Creates a deep copy of this ImageBuf.
+    ///
+    /// Unlike clone() which shares data for cache-backed images,
+    /// deep_copy() always creates an independent copy of pixel data.
+    pub fn deep_copy(&self) -> Self {
+        self.clone() // Our clone already does deep copy
+    }
+
+    /// Creates a copy with different dimensions or format.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_spec` - Specification for the new ImageBuf
+    /// * `copy_pixels` - Whether to copy/convert pixel data
+    ///
+    /// # Returns
+    ///
+    /// A new ImageBuf with the requested spec.
+    pub fn copy_with_spec(&self, new_spec: ImageSpec, do_copy_pixels: bool) -> Self {
+        let mut result = Self::new(new_spec.clone(), InitializePixels::Yes);
+        result.copy_metadata(self);
+
+        if do_copy_pixels {
+            // Calculate overlapping region
+            let src_roi = self.roi();
+            let dst_roi = new_spec.roi();
+
+            if let Some(overlap) = src_roi.intersection(&dst_roi) {
+                result.copy_pixels(self, Some(overlap));
+            }
+        }
+
+        result
+    }
+
+    /// Sets all pixels in the image to zero/black.
+    pub fn zero(&mut self) {
+        if !self.make_writable(false) {
+            return;
+        }
+
+        let mut inner = self.inner.write().unwrap();
+        let spec = inner.spec.clone();
+        inner.pixels.fill_zero(&spec);
+    }
+
+    /// Fills all pixels with the given color value.
+    ///
+    /// # Arguments
+    ///
+    /// * `values` - Color values for each channel
+    pub fn fill(&mut self, values: &[f32]) {
+        if !self.make_writable(false) {
+            return;
+        }
+
+        let roi = self.roi();
+        for z in roi.zbegin..roi.zend {
+            for y in roi.ybegin..roi.yend {
+                for x in roi.xbegin..roi.xend {
+                    self.setpixel(x, y, z, values);
+                }
+            }
+        }
+    }
+
+    /// Fills a region with the given color value.
+    pub fn fill_roi(&mut self, values: &[f32], roi: &Roi3D) {
+        if !self.make_writable(false) {
+            return;
+        }
+
+        let roi = if roi.is_all() { self.roi() } else { *roi };
+
+        for z in roi.zbegin..roi.zend {
+            for y in roi.ybegin..roi.yend {
+                for x in roi.xbegin..roi.xend {
+                    self.setpixel(x, y, z, values);
+                }
+            }
+        }
     }
 
     /// Converts to ImageData for use with other vfx-io functions.
