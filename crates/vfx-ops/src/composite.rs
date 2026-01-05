@@ -31,6 +31,7 @@
 //! ```
 
 use crate::{OpsError, OpsResult};
+use tracing::{debug, trace};
 use vfx_compute::{Processor, ComputeImage, backend::BlendMode as ComputeBlendMode};
 
 /// Blend mode for compositing operations.
@@ -251,6 +252,9 @@ pub fn over(
     width: usize,
     height: usize,
 ) -> OpsResult<Vec<f32>> {
+    trace!(width, height, "composite::over");
+    debug!(width, height, "Compositing over");
+    
     let size = width * height * 4;
     if fg.len() != size || bg.len() != size {
         return Err(OpsError::SizeMismatch(format!(

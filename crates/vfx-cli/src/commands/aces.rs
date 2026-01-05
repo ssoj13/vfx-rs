@@ -13,6 +13,9 @@ use vfx_color::aces::{
 use vfx_color::prelude::srgb;
 
 pub fn run(args: AcesArgs, verbose: u8) -> Result<()> {
+    trace!(input = %args.input.display(), transform = %args.transform, "aces::run");
+    info!(transform = %args.transform, rrt = %args.rrt_variant, "Applying ACES transform");
+    
     if verbose > 0 {
         println!("Loading: {}", args.input.display());
     }

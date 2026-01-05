@@ -4,10 +4,13 @@
 //! Supports `--layer` for processing specific layers in multi-layer EXR.
 
 use crate::ColorArgs;
+use tracing::{debug, info, trace};
 use anyhow::Result;
 use vfx_io::ImageData;
 
 pub fn run(args: ColorArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
+    trace!(input = %args.input.display(), "color::run");
+    
     let image = super::load_image_layer(&args.input, args.layer.as_deref())?;
     super::ensure_color_processing(&image, "color", allow_non_color)?;
     let mut data = image.to_f32();
@@ -15,6 +18,14 @@ pub fn run(args: ColorArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
     let h = image.height as usize;
     let c = image.channels as usize;
 
+    info!(
+        exposure = ?args.exposure,
+        gamma = ?args.gamma,
+        saturation = ?args.saturation,
+        transfer = ?args.transfer,
+        "Applying color transforms"
+    );
+    
     if verbose > 0 {
         println!("Applying color transforms to {}", args.input.display());
     }

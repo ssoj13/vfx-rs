@@ -4,17 +4,22 @@
 //! Supports `--layer` for processing specific layers in multi-layer EXR.
 
 use crate::BlurArgs;
+use tracing::{debug, info, trace};
 use anyhow::Result;
 use vfx_io::ImageData;
 use vfx_ops::filter::{box_blur, Kernel, convolve};
 
 pub fn run(args: BlurArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
+    trace!(input = %args.input.display(), blur_type = %args.blur_type, radius = args.radius, "blur::run");
+    
     let image = super::load_image_layer(&args.input, args.layer.as_deref())?;
     super::ensure_color_processing(&image, "blur", allow_non_color)?;
     let w = image.width as usize;
     let h = image.height as usize;
     let c = image.channels as usize;
 
+    info!(blur_type = %args.blur_type, radius = args.radius, w = w, h = h, "Applying blur");
+    
     if verbose > 0 {
         println!("Applying {} blur (radius={}) to {}",
             args.blur_type, args.radius, args.input.display());

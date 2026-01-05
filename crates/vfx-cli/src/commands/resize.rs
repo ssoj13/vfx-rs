@@ -10,6 +10,8 @@ use vfx_io::ImageData;
 use vfx_ops::resize::{resize_f32, Filter};
 
 pub fn run(args: ResizeArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
+    trace!(input = %args.input.display(), filter = %args.filter, "resize::run");
+    
     let image = super::load_image_layer(&args.input, args.layer.as_deref())?;
     super::ensure_color_processing(&image, "resize", allow_non_color)?;
     let src_w = image.width as usize;
@@ -34,6 +36,8 @@ pub fn run(args: ResizeArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
         _ => bail!("Specify --width, --height, or --scale"),
     };
 
+    info!(from_w = src_w, from_h = src_h, to_w = dst_w, to_h = dst_h, filter = %args.filter, "Resizing image");
+    
     if verbose > 0 {
         println!("Resizing {}x{} -> {}x{}", src_w, src_h, dst_w, dst_h);
     }

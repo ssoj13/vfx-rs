@@ -43,6 +43,7 @@ heif = ["dep:libheif-rs"]
 [dependencies]
 vfx-core.workspace = true
 thiserror.workspace = true
+tracing = "0.1"
 
 # EXR support
 exr = { version = "1.74", optional = true }

@@ -154,6 +154,7 @@ pub use attrs::{Attrs, AttrValue};
 pub use registry::{FormatRegistry, FormatInfo, FormatReaderDyn, FormatWriterDyn};
 
 use std::path::Path;
+use tracing::{debug, trace};
 
 /// Reads an image from a file, auto-detecting the format.
 ///
@@ -176,7 +177,10 @@ use std::path::Path;
 /// - The file is corrupted
 pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
     let path = path.as_ref();
+    trace!(path = %path.display(), "vfx_io::read");
+    
     let format = Format::detect(path)?;
+    debug!(path = %path.display(), format = ?format, "Reading image");
     
     match format {
         #[cfg(feature = "exr")]
@@ -246,7 +250,17 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
 /// - The image data is incompatible with the format
 pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
     let path = path.as_ref();
+    trace!(path = %path.display(), "vfx_io::write");
+    
     let format = Format::from_extension(path);
+    debug!(
+        path = %path.display(),
+        format = ?format,
+        w = image.width,
+        h = image.height,
+        ch = image.channels,
+        "Writing image"
+    );
     
     match format {
         #[cfg(feature = "exr")]

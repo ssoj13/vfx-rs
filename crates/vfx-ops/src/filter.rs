@@ -20,6 +20,7 @@
 //! ```
 
 use crate::{OpsError, OpsResult};
+use tracing::{debug, trace};
 
 /// Convolution kernel for image filtering.
 #[derive(Debug, Clone)]
@@ -215,6 +216,8 @@ pub fn convolve(
     channels: usize,
     kernel: &Kernel,
 ) -> OpsResult<Vec<f32>> {
+    trace!(width, height, channels, kernel_w = kernel.width, kernel_h = kernel.height, "convolve");
+    
     let expected = width * height * channels;
     if src.len() != expected {
         return Err(OpsError::InvalidDimensions(format!(
@@ -279,6 +282,9 @@ pub fn box_blur(
     channels: usize,
     radius: usize,
 ) -> OpsResult<Vec<f32>> {
+    trace!(width, height, channels, radius, "box_blur");
+    debug!(width, height, radius, "Applying box blur");
+    
     let expected = width * height * channels;
     if src.len() != expected {
         return Err(OpsError::InvalidDimensions(format!(

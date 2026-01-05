@@ -20,6 +20,7 @@ vfx-io.workspace = true
 vfx-math.workspace = true
 vfx-compute.workspace = true
 thiserror.workspace = true
+tracing = "0.1"
 rayon = { workspace = true, optional = true }
 rustfft = { workspace = true, optional = true }
 

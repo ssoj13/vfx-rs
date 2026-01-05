@@ -1,5 +1,6 @@
 //! Paste command - overlay one image onto another
 
+use tracing::{debug, info, trace};
 use anyhow::Result;
 use crate::{PasteArgs, commands::{load_image, save_image}};
 use vfx_io::ImageData;

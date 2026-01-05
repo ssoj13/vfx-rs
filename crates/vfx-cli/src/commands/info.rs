@@ -3,6 +3,7 @@
 //! Displays image metadata, dimensions, channels, and for EXR files - layer information.
 
 use crate::InfoArgs;
+use tracing::{debug, info, trace};
 use anyhow::Result;
 use std::fs;
 use vfx_io::exr::ExrReader;
@@ -12,10 +13,14 @@ use vfx_io::Format;
 ///
 /// For EXR files with multiple layers, shows layer details when verbose or --all.
 pub fn run(args: InfoArgs, verbose: u8) -> Result<()> {
+    trace!(files = args.input.len(), "info::run");
+    
     for path in &args.input {
         let metadata = fs::metadata(path)?;
         let file_size = metadata.len();
         let format = Format::detect(path).unwrap_or(Format::Unknown);
+        
+        debug!(path = %path.display(), format = ?format, size = file_size, "Reading image info");
 
         // For EXR, try to get layer info
         let layer_info = if format == Format::Exr {

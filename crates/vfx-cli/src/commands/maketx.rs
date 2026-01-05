@@ -1,6 +1,7 @@
 //! Texture creation command (like maketx)
 
 use crate::MaketxArgs;
+use tracing::{debug, info, trace};
 use anyhow::Result;
 use vfx_io::ImageData;
 use vfx_ops::resize::{resize_f32, Filter};

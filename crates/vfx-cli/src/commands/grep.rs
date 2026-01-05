@@ -1,6 +1,7 @@
 //! Metadata grep command (like igrep)
 
 use crate::GrepArgs;
+use tracing::{debug, info, trace};
 use anyhow::Result;
 use vfx_io::Format;
 

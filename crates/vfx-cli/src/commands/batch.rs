@@ -8,6 +8,8 @@ use rayon::prelude::*;
 use vfx_io::ImageData;
 
 pub fn run(args: BatchArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
+    trace!(pattern = %args.input, op = %args.op, "batch::run");
+    
     // Find matching files
     let files: Vec<PathBuf> = glob::glob(&args.input)?
         .filter_map(|r| r.ok())
@@ -17,6 +19,8 @@ pub fn run(args: BatchArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
         bail!("No files match pattern: {}", args.input);
     }
 
+    info!(files = files.len(), pattern = %args.input, op = %args.op, "Starting batch processing");
+    
     if verbose > 0 {
         println!("Found {} files matching '{}'", files.len(), args.input);
     }
@@ -63,6 +67,7 @@ pub fn run(args: BatchArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
         }
     }
 
+    info!(success = success, failed = failed, "Batch processing complete");
     println!("Processed: {} success, {} failed", success, failed);
 
     if failed > 0 {

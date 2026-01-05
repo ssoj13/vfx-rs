@@ -20,6 +20,7 @@
 //! ```
 
 use crate::{OpsError, OpsResult};
+use tracing::{debug, trace};
 use vfx_compute::{Processor, ComputeImage, ResizeFilter as ComputeFilter};
 
 /// Resampling filter for resize operations.
@@ -146,6 +147,8 @@ pub fn resize_f32(
     dst_h: usize,
     filter: Filter,
 ) -> OpsResult<Vec<f32>> {
+    trace!(src_w, src_h, dst_w, dst_h, channels, filter = ?filter, "resize_f32");
+    
     // Validate inputs
     let expected = src_w * src_h * channels;
     if src.len() != expected {
@@ -162,6 +165,7 @@ pub fn resize_f32(
     }
 
     // Try GPU-accelerated resize via vfx-compute
+    debug!("Attempting GPU resize");
     if let Ok(proc) = Processor::auto() {
         let compute_filter = match filter {
             Filter::Nearest => ComputeFilter::Nearest,
@@ -178,6 +182,7 @@ pub fn resize_f32(
     }
 
     // Fallback: CPU separable resize
+    debug!("Falling back to CPU resize");
     resize_f32_cpu(src, src_w, src_h, channels, dst_w, dst_h, filter)
 }
 

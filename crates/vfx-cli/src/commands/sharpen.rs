@@ -4,6 +4,7 @@
 //! Supports `--layer` for processing specific layers in multi-layer EXR.
 
 use crate::SharpenArgs;
+use tracing::{debug, info, trace};
 use anyhow::Result;
 use vfx_io::ImageData;
 use vfx_ops::filter::{Kernel, convolve};
