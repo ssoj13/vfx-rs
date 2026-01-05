@@ -20,7 +20,7 @@
 //! # Usage
 //!
 //! ```rust
-//! use vfx_core::{ImageSpec, Rect, ChannelFormat};
+//! use vfx_core::{ImageSpec, Rect, DataFormat};
 //!
 //! // Simple RGB image
 //! let spec = ImageSpec::rgb(1920, 1080);
@@ -60,107 +60,14 @@
 //! - [`crate::image::Image`] - Stores spec alongside pixel data
 //! - `vfx-io` - Reads/writes spec from image files
 
+use crate::format::DataFormat;
 use crate::Rect;
 use std::collections::HashMap;
 
-/// Channel data format/type.
-///
-/// Describes the binary representation of channel values.
-/// Used in [`ImageSpec`] to specify pixel format without generics.
-///
-/// # Variants
-///
-/// - `U8` - 8-bit unsigned integer [0, 255]
-/// - `U16` - 16-bit unsigned integer [0, 65535]
-/// - `F16` - 16-bit IEEE 754 half-precision float
-/// - `F32` - 32-bit IEEE 754 single-precision float
-///
-/// # Example
-///
-/// ```rust
-/// use vfx_core::ChannelFormat;
-///
-/// let format = ChannelFormat::F16;
-/// assert_eq!(format.bytes_per_channel(), 2);
-/// assert!(format.is_floating_point());
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[repr(u8)]
-pub enum ChannelFormat {
-    /// 8-bit unsigned integer
-    U8 = 1,
-    /// 16-bit unsigned integer
-    U16 = 2,
-    /// 16-bit half-precision float (default for VFX)
-    #[default]
-    F16 = 3,
-    /// 32-bit single-precision float
-    F32 = 4,
-}
-
-impl ChannelFormat {
-    /// Returns the number of bytes per channel value.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use vfx_core::ChannelFormat;
-    ///
-    /// assert_eq!(ChannelFormat::U8.bytes_per_channel(), 1);
-    /// assert_eq!(ChannelFormat::F16.bytes_per_channel(), 2);
-    /// assert_eq!(ChannelFormat::F32.bytes_per_channel(), 4);
-    /// ```
-    #[inline]
-    pub const fn bytes_per_channel(&self) -> usize {
-        match self {
-            Self::U8 => 1,
-            Self::U16 => 2,
-            Self::F16 => 2,
-            Self::F32 => 4,
-        }
-    }
-
-    /// Returns `true` if this is a floating-point format.
-    #[inline]
-    pub const fn is_floating_point(&self) -> bool {
-        matches!(self, Self::F16 | Self::F32)
-    }
-
-    /// Returns `true` if this is an integer format.
-    #[inline]
-    pub const fn is_integer(&self) -> bool {
-        matches!(self, Self::U8 | Self::U16)
-    }
-
-    /// Returns the maximum representable value for integer formats.
-    ///
-    /// For floating-point formats, returns 1.0.
-    #[inline]
-    pub const fn max_value(&self) -> f32 {
-        match self {
-            Self::U8 => 255.0,
-            Self::U16 => 65535.0,
-            Self::F16 | Self::F32 => 1.0,
-        }
-    }
-
-    /// Returns a human-readable name for this format.
-    #[inline]
-    pub const fn name(&self) -> &'static str {
-        match self {
-            Self::U8 => "uint8",
-            Self::U16 => "uint16",
-            Self::F16 => "half",
-            Self::F32 => "float",
-        }
-    }
-}
-
-impl std::fmt::Display for ChannelFormat {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name())
-    }
-}
+/// Alias for backward compatibility.
+/// Prefer using [`DataFormat`] directly.
+#[deprecated(since = "0.2.0", note = "Use DataFormat instead")]
+pub type ChannelFormat = DataFormat;
 
 /// Attribute value that can be stored in image metadata.
 ///
@@ -256,15 +163,15 @@ impl From<&str> for AttrValue {
 ///
 /// Modeled after OpenImageIO's `ImageSpec` but simplified:
 /// - Uses Rust enums instead of type codes
-/// - Strongly typed channel format via [`ChannelFormat`]
+/// - Strongly typed channel format via [`DataFormat`]
 /// - HashMap for flexible metadata
 ///
 /// # Example
 ///
 /// ```rust
-/// use vfx_core::{ImageSpec, ChannelFormat, Rect};
+/// use vfx_core::{ImageSpec, DataFormat, Rect};
 ///
-/// let mut spec = ImageSpec::new(1920, 1080, 4, ChannelFormat::F16);
+/// let mut spec = ImageSpec::new(1920, 1080, 4, DataFormat::F16);
 /// spec.channel_names = vec!["R".into(), "G".into(), "B".into(), "A".into()];
 /// spec.set_attr("compression", "piz");
 ///
@@ -281,7 +188,7 @@ pub struct ImageSpec {
     /// Number of channels per pixel
     pub channels: u8,
     /// Data type for each channel
-    pub format: ChannelFormat,
+    pub format: DataFormat,
     /// Optional channel names (e.g., ["R", "G", "B", "A"])
     pub channel_names: Vec<String>,
     /// Data window - region containing actual pixel data
@@ -307,13 +214,13 @@ impl ImageSpec {
     /// # Example
     ///
     /// ```rust
-    /// use vfx_core::{ImageSpec, ChannelFormat};
+    /// use vfx_core::{ImageSpec, DataFormat};
     ///
-    /// let spec = ImageSpec::new(1920, 1080, 4, ChannelFormat::F16);
+    /// let spec = ImageSpec::new(1920, 1080, 4, DataFormat::F16);
     /// assert_eq!(spec.width, 1920);
     /// assert_eq!(spec.channels, 4);
     /// ```
-    pub fn new(width: u32, height: u32, channels: u8, format: ChannelFormat) -> Self {
+    pub fn new(width: u32, height: u32, channels: u8, format: DataFormat) -> Self {
         let window = Rect::from_size(width, height);
         Self {
             width,
@@ -333,7 +240,7 @@ impl ImageSpec {
     /// Uses F16 format by default (standard for VFX).
     #[inline]
     pub fn rgb(width: u32, height: u32) -> Self {
-        let mut spec = Self::new(width, height, 3, ChannelFormat::F16);
+        let mut spec = Self::new(width, height, 3, DataFormat::F16);
         spec.channel_names = vec!["R".into(), "G".into(), "B".into()];
         spec
     }
@@ -343,7 +250,7 @@ impl ImageSpec {
     /// Uses F16 format by default (standard for VFX).
     #[inline]
     pub fn rgba(width: u32, height: u32) -> Self {
-        let mut spec = Self::new(width, height, 4, ChannelFormat::F16);
+        let mut spec = Self::new(width, height, 4, DataFormat::F16);
         spec.channel_names = vec!["R".into(), "G".into(), "B".into(), "A".into()];
         spec
     }
@@ -351,7 +258,7 @@ impl ImageSpec {
     /// Creates a spec for a grayscale image (1 channel).
     #[inline]
     pub fn gray(width: u32, height: u32) -> Self {
-        let mut spec = Self::new(width, height, 1, ChannelFormat::F16);
+        let mut spec = Self::new(width, height, 1, DataFormat::F16);
         spec.channel_names = vec!["Y".into()];
         spec
     }
@@ -359,7 +266,7 @@ impl ImageSpec {
     /// Creates a spec for a grayscale + alpha image (2 channels).
     #[inline]
     pub fn gray_alpha(width: u32, height: u32) -> Self {
-        let mut spec = Self::new(width, height, 2, ChannelFormat::F16);
+        let mut spec = Self::new(width, height, 2, DataFormat::F16);
         spec.channel_names = vec!["Y".into(), "A".into()];
         spec
     }
@@ -463,7 +370,7 @@ impl ImageSpec {
     }
 
     /// Creates a copy with a different format.
-    pub fn with_format(&self, format: ChannelFormat) -> Self {
+    pub fn with_format(&self, format: DataFormat) -> Self {
         let mut spec = self.clone();
         spec.format = format;
         spec
@@ -501,23 +408,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_channel_format() {
-        assert_eq!(ChannelFormat::U8.bytes_per_channel(), 1);
-        assert_eq!(ChannelFormat::U16.bytes_per_channel(), 2);
-        assert_eq!(ChannelFormat::F16.bytes_per_channel(), 2);
-        assert_eq!(ChannelFormat::F32.bytes_per_channel(), 4);
+    fn test_data_format() {
+        assert_eq!(DataFormat::U8.bytes_per_channel(), 1);
+        assert_eq!(DataFormat::U16.bytes_per_channel(), 2);
+        assert_eq!(DataFormat::F16.bytes_per_channel(), 2);
+        assert_eq!(DataFormat::F32.bytes_per_channel(), 4);
 
-        assert!(!ChannelFormat::U8.is_floating_point());
-        assert!(ChannelFormat::F16.is_floating_point());
+        assert!(!DataFormat::U8.is_floating_point());
+        assert!(DataFormat::F16.is_floating_point());
     }
 
     #[test]
     fn test_spec_new() {
-        let spec = ImageSpec::new(1920, 1080, 4, ChannelFormat::F16);
+        let spec = ImageSpec::new(1920, 1080, 4, DataFormat::F16);
         assert_eq!(spec.width, 1920);
         assert_eq!(spec.height, 1080);
         assert_eq!(spec.channels, 4);
-        assert_eq!(spec.format, ChannelFormat::F16);
+        assert_eq!(spec.format, DataFormat::F16);
     }
 
     #[test]

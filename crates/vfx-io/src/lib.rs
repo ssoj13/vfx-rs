@@ -475,22 +475,10 @@ pub struct LayeredImage {
     pub metadata: Metadata,
 }
 
-/// Pixel data format.
+/// Re-export PixelFormat from vfx-core for backward compatibility.
 ///
-/// Describes the numeric type and bit depth of pixel values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PixelFormat {
-    /// 8-bit unsigned integer per channel (0-255).
-    U8,
-    /// 16-bit unsigned integer per channel (0-65535).
-    U16,
-    /// 16-bit float per channel (half precision).
-    F16,
-    /// 32-bit float per channel (full precision).
-    F32,
-    /// 32-bit unsigned integer per channel.
-    U32,
-}
+/// This is now an alias for [`vfx_core::DataFormat`].
+pub use vfx_core::DataFormat as PixelFormat;
 
 /// Raw pixel data storage.
 ///
@@ -745,24 +733,6 @@ impl ImageData {
         }
 
         Ok(())
-    }
-}
-
-impl PixelFormat {
-    /// Returns bytes per channel for this format.
-    #[inline]
-    pub fn bytes_per_channel(&self) -> usize {
-        match self {
-            Self::U8 => 1,
-            Self::U16 | Self::F16 => 2,
-            Self::F32 | Self::U32 => 4,
-        }
-    }
-    
-    /// Returns true if this is a floating-point format.
-    #[inline]
-    pub fn is_float(&self) -> bool {
-        matches!(self, Self::F16 | Self::F32)
     }
 }
 

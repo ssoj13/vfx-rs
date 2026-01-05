@@ -49,6 +49,7 @@
 
 pub mod colorspace;
 pub mod error;
+pub mod format;
 pub mod image;
 pub mod pixel;
 pub mod rect;
@@ -57,6 +58,7 @@ pub mod spec;
 // Re-exports for convenience
 pub use colorspace::*;
 pub use error::*;
+pub use format::*;
 pub use image::*;
 pub use pixel::*;
 pub use rect::*;

@@ -65,73 +65,8 @@ pub const CLF_VERSION: &str = "3.0";
 /// CTF version supported by this implementation.
 pub const CTF_VERSION: &str = "2.0";
 
-/// Bit depth specification for CLF nodes.
-///
-/// Defines how values are interpreted and scaled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BitDepth {
-    /// 8-bit unsigned integer [0, 255].
-    Uint8,
-    /// 10-bit unsigned integer [0, 1023].
-    Uint10,
-    /// 12-bit unsigned integer [0, 4095].
-    Uint12,
-    /// 16-bit unsigned integer [0, 65535].
-    Uint16,
-    /// 16-bit half float.
-    Float16,
-    /// 32-bit float (normalized [0, 1]).
-    #[default]
-    Float32,
-}
-
-impl BitDepth {
-    /// Returns the scale factor to convert to normalized [0, 1].
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use vfx_lut::clf::BitDepth;
-    ///
-    /// assert_eq!(BitDepth::Uint8.scale(), 255.0);
-    /// assert_eq!(BitDepth::Float32.scale(), 1.0);
-    /// ```
-    #[inline]
-    pub fn scale(&self) -> f32 {
-        match self {
-            BitDepth::Uint8 => 255.0,
-            BitDepth::Uint10 => 1023.0,
-            BitDepth::Uint12 => 4095.0,
-            BitDepth::Uint16 => 65535.0,
-            BitDepth::Float16 | BitDepth::Float32 => 1.0,
-        }
-    }
-
-    /// Parses bit depth from CLF attribute string.
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "8i" => Some(BitDepth::Uint8),
-            "10i" => Some(BitDepth::Uint10),
-            "12i" => Some(BitDepth::Uint12),
-            "16i" => Some(BitDepth::Uint16),
-            "16f" => Some(BitDepth::Float16),
-            "32f" => Some(BitDepth::Float32),
-            _ => None,
-        }
-    }
-
-    /// Returns the CLF attribute string.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            BitDepth::Uint8 => "8i",
-            BitDepth::Uint10 => "10i",
-            BitDepth::Uint12 => "12i",
-            BitDepth::Uint16 => "16i",
-            BitDepth::Float16 => "16f",
-            BitDepth::Float32 => "32f",
-        }
-    }
-}
+/// Re-export BitDepth from vfx-core.
+pub use vfx_core::BitDepth;
 
 /// ASC-CDL (Color Decision List) parameters.
 ///
@@ -674,17 +609,17 @@ fn parse_clf_internal<R: BufRead>(reader: R, ctf_mode: bool) -> LutResult<Proces
                         result = Some(ProcessList::new(id));
                     }
                     "LUT1D" | "LUT3D" => {
-                        let mut in_depth = BitDepth::Float32;
-                        let mut out_depth = BitDepth::Float32;
+                        let mut in_depth = BitDepth::F32;
+                        let mut out_depth = BitDepth::F32;
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
                                 b"inBitDepth" => {
-                                    in_depth = BitDepth::from_str(
+                                    in_depth = BitDepth::from_clf_str(
                                         &String::from_utf8_lossy(&attr.value)
                                     ).unwrap_or_default();
                                 }
                                 b"outBitDepth" => {
-                                    out_depth = BitDepth::from_str(
+                                    out_depth = BitDepth::from_clf_str(
                                         &String::from_utf8_lossy(&attr.value)
                                     ).unwrap_or_default();
                                 }
@@ -706,17 +641,17 @@ fn parse_clf_internal<R: BufRead>(reader: R, ctf_mode: bool) -> LutResult<Proces
                         ));
                     }
                     "Matrix" => {
-                        let mut in_depth = BitDepth::Float32;
-                        let mut out_depth = BitDepth::Float32;
+                        let mut in_depth = BitDepth::F32;
+                        let mut out_depth = BitDepth::F32;
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
                                 b"inBitDepth" => {
-                                    in_depth = BitDepth::from_str(
+                                    in_depth = BitDepth::from_clf_str(
                                         &String::from_utf8_lossy(&attr.value)
                                     ).unwrap_or_default();
                                 }
                                 b"outBitDepth" => {
-                                    out_depth = BitDepth::from_str(
+                                    out_depth = BitDepth::from_clf_str(
                                         &String::from_utf8_lossy(&attr.value)
                                     ).unwrap_or_default();
                                 }
@@ -999,8 +934,8 @@ fn write_node<W: Write>(xml: &mut Writer<W>, node: &ProcessNode) -> LutResult<()
     match node {
         ProcessNode::Lut1D { lut, in_depth, out_depth } => {
             let mut start = BytesStart::new("LUT1D");
-            start.push_attribute(("inBitDepth", in_depth.as_str()));
-            start.push_attribute(("outBitDepth", out_depth.as_str()));
+            start.push_attribute(("inBitDepth", in_depth.clf_str()));
+            start.push_attribute(("outBitDepth", out_depth.clf_str()));
             xml.write_event(Event::Start(start))
                 .map_err(|e| LutError::ParseError(format!("write error: {}", e)))?;
 
@@ -1024,8 +959,8 @@ fn write_node<W: Write>(xml: &mut Writer<W>, node: &ProcessNode) -> LutResult<()
         }
         ProcessNode::Lut3D { lut, in_depth, out_depth } => {
             let mut start = BytesStart::new("LUT3D");
-            start.push_attribute(("inBitDepth", in_depth.as_str()));
-            start.push_attribute(("outBitDepth", out_depth.as_str()));
+            start.push_attribute(("inBitDepth", in_depth.clf_str()));
+            start.push_attribute(("outBitDepth", out_depth.clf_str()));
             xml.write_event(Event::Start(start))
                 .map_err(|e| LutError::ParseError(format!("write error: {}", e)))?;
 
@@ -1049,8 +984,8 @@ fn write_node<W: Write>(xml: &mut Writer<W>, node: &ProcessNode) -> LutResult<()
         }
         ProcessNode::Matrix { values, in_depth, out_depth } => {
             let mut start = BytesStart::new("Matrix");
-            start.push_attribute(("inBitDepth", in_depth.as_str()));
-            start.push_attribute(("outBitDepth", out_depth.as_str()));
+            start.push_attribute(("inBitDepth", in_depth.clf_str()));
+            start.push_attribute(("outBitDepth", out_depth.clf_str()));
             xml.write_event(Event::Start(start))
                 .map_err(|e| LutError::ParseError(format!("write error: {}", e)))?;
 
@@ -1134,13 +1069,13 @@ mod tests {
 
     #[test]
     fn test_bit_depth() {
-        assert_eq!(BitDepth::Uint8.scale(), 255.0);
-        assert_eq!(BitDepth::Uint10.scale(), 1023.0);
-        assert_eq!(BitDepth::Float32.scale(), 1.0);
+        assert_eq!(BitDepth::U8.scale(), 255.0);
+        assert_eq!(BitDepth::U10.scale(), 1023.0);
+        assert_eq!(BitDepth::F32.scale(), 1.0);
         
-        assert_eq!(BitDepth::from_str("8i"), Some(BitDepth::Uint8));
-        assert_eq!(BitDepth::from_str("32f"), Some(BitDepth::Float32));
-        assert_eq!(BitDepth::from_str("invalid"), None);
+        assert_eq!(BitDepth::from_clf_str("8i"), Some(BitDepth::U8));
+        assert_eq!(BitDepth::from_clf_str("32f"), Some(BitDepth::F32));
+        assert_eq!(BitDepth::from_clf_str("invalid"), None);
     }
 
     #[test]
@@ -1185,8 +1120,8 @@ mod tests {
         // Add identity 1D LUT
         clf.nodes.push(ProcessNode::Lut1D {
             lut: Lut1D::identity(256),
-            in_depth: BitDepth::Float32,
-            out_depth: BitDepth::Float32,
+            in_depth: BitDepth::F32,
+            out_depth: BitDepth::F32,
         });
         
         let mut rgb = [0.5, 0.3, 0.2];
@@ -1202,8 +1137,8 @@ mod tests {
         let node = ProcessNode::Matrix {
             // Identity matrix
             values: vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-            in_depth: BitDepth::Float32,
-            out_depth: BitDepth::Float32,
+            in_depth: BitDepth::F32,
+            out_depth: BitDepth::F32,
         };
         
         let mut rgb = [0.5, 0.3, 0.2];
@@ -1223,8 +1158,8 @@ mod tests {
         
         clf.nodes.push(ProcessNode::Lut1D {
             lut: Lut1D::gamma(64, 2.2),
-            in_depth: BitDepth::Float32,
-            out_depth: BitDepth::Float32,
+            in_depth: BitDepth::F32,
+            out_depth: BitDepth::F32,
         });
         
         // Write to buffer
@@ -1248,8 +1183,8 @@ mod tests {
         
         ctf.nodes.push(ProcessNode::Matrix {
             values: vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-            in_depth: BitDepth::Float32,
-            out_depth: BitDepth::Float32,
+            in_depth: BitDepth::F32,
+            out_depth: BitDepth::F32,
         });
         
         // Write CTF to buffer

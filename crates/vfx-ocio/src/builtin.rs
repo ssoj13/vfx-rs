@@ -309,7 +309,7 @@ fn srgb() -> ColorSpace {
         .alias("Output - sRGB")
         .family(Family::Display)
         .encoding(Encoding::Sdr)
-        .bit_depth(BitDepth::Uint8)
+        .bit_depth(BitDepth::U8)
         .description("sRGB display color space")
         .to_reference(to_ref)
         .from_reference(from_ref)

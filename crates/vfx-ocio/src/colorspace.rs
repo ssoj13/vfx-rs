@@ -128,23 +128,8 @@ impl Family {
     }
 }
 
-/// Bit depth hint for the color space.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum BitDepth {
-    /// 8-bit unsigned integer.
-    Uint8,
-    /// 10-bit unsigned integer.
-    Uint10,
-    /// 12-bit unsigned integer.
-    Uint12,
-    /// 16-bit unsigned integer.
-    Uint16,
-    /// 16-bit float.
-    F16,
-    /// 32-bit float.
-    #[default]
-    F32,
-}
+/// Re-export BitDepth from vfx-core.
+pub use vfx_core::BitDepth;
 
 /// Color space definition.
 ///

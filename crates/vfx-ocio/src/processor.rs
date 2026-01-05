@@ -576,25 +576,8 @@ pub struct Processor {
     has_dynamic: bool,
 }
 
-/// Bit depth for processing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BitDepth {
-    /// Unknown/auto.
-    #[default]
-    Unknown,
-    /// 8-bit unsigned.
-    Uint8,
-    /// 10-bit unsigned.
-    Uint10,
-    /// 12-bit unsigned.
-    Uint12,
-    /// 16-bit unsigned.
-    Uint16,
-    /// 16-bit float.
-    F16,
-    /// 32-bit float.
-    F32,
-}
+/// Re-export BitDepth from vfx-core.
+pub use vfx_core::BitDepth;
 
 /// Internal operation type.
 #[derive(Debug, Clone)]
