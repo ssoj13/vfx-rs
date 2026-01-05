@@ -843,6 +843,24 @@ impl TypeDesc {
         self.basetype as u8 == other.basetype as u8
             && self.aggregate as u8 == other.aggregate as u8
     }
+
+    /// Creates a TypeDesc from a BaseType.
+    #[inline]
+    pub const fn from_basetype(basetype: BaseType) -> Self {
+        Self::scalar(basetype)
+    }
+
+    /// Creates a TypeDesc from a DataFormat.
+    #[inline]
+    pub const fn from_format(format: DataFormat) -> Self {
+        match format {
+            DataFormat::U8 => Self::UINT8,
+            DataFormat::U16 => Self::UINT16,
+            DataFormat::U32 => Self::UINT32,
+            DataFormat::F16 => Self::HALF,
+            DataFormat::F32 => Self::FLOAT,
+        }
+    }
 }
 
 impl std::fmt::Display for TypeDesc {
