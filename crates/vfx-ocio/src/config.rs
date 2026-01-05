@@ -1062,6 +1062,448 @@ impl Config {
     pub fn set_role(&mut self, role: impl Into<String>, colorspace: impl Into<String>) {
         self.roles.define(role, colorspace);
     }
+
+    // ========================================================================
+    // Config creation methods
+    // ========================================================================
+
+    /// Creates a minimal "raw" configuration.
+    ///
+    /// This config only contains a "Raw" data color space with no transforms.
+    /// Useful for applications that need to bypass color management.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vfx_ocio::Config;
+    ///
+    /// let config = Config::create_raw();
+    /// assert!(config.colorspace("Raw").is_some());
+    /// ```
+    pub fn create_raw() -> Self {
+        use crate::colorspace::{ColorSpace, Encoding, Family};
+
+        let mut config = Self::new();
+        config.name = "Raw Config".to_string();
+        config.version = ConfigVersion::V2;
+
+        // Add a Raw/data color space
+        let raw = ColorSpace::builder("Raw")
+            .encoding(Encoding::Data)
+            .family(Family::Utility)
+            .description("Raw data bypass - no color processing")
+            .is_data(true)
+            .build();
+
+        config.colorspaces.push(raw);
+        config.roles.define(crate::role::names::REFERENCE, "Raw");
+        config.roles.define(crate::role::names::DATA, "Raw");
+        config.roles.define(crate::role::names::DEFAULT, "Raw");
+
+        config
+    }
+
+    // ========================================================================
+    // Version access
+    // ========================================================================
+
+    /// Gets the major version number.
+    ///
+    /// Returns 1 for OCIO v1.x configs, 2 for OCIO v2.x configs.
+    pub fn major_version(&self) -> u32 {
+        match self.version {
+            ConfigVersion::V1 => 1,
+            ConfigVersion::V2 => 2,
+        }
+    }
+
+    /// Gets the minor version number.
+    ///
+    /// Currently returns 0 as we don't track minor versions.
+    pub fn minor_version(&self) -> u32 {
+        0
+    }
+
+    /// Sets the config version.
+    pub fn set_version(&mut self, major: u32, _minor: u32) {
+        self.version = if major >= 2 {
+            ConfigVersion::V2
+        } else {
+            ConfigVersion::V1
+        };
+    }
+
+    // ========================================================================
+    // Config metadata
+    // ========================================================================
+
+    /// Sets the config name.
+    pub fn set_name(&mut self, name: impl Into<String>) {
+        self.name = name.into();
+    }
+
+    /// Sets the config description.
+    ///
+    /// Note: This is stored in the name field as OCIO uses name for description.
+    pub fn set_description(&mut self, description: impl Into<String>) {
+        self.name = description.into();
+    }
+
+    /// Gets the config description.
+    pub fn description(&self) -> &str {
+        &self.name
+    }
+
+    // ========================================================================
+    // Search path management
+    // ========================================================================
+
+    /// Adds a search path for LUT files.
+    pub fn add_search_path(&mut self, path: impl Into<PathBuf>) {
+        self.search_paths.push(path.into());
+    }
+
+    /// Sets all search paths.
+    pub fn set_search_paths(&mut self, paths: Vec<PathBuf>) {
+        self.search_paths = paths;
+    }
+
+    /// Clears all search paths.
+    pub fn clear_search_paths(&mut self) {
+        self.search_paths.clear();
+    }
+
+    /// Sets the working directory.
+    pub fn set_working_dir(&mut self, dir: impl Into<PathBuf>) {
+        self.working_dir = dir.into();
+    }
+
+    // ========================================================================
+    // File rules management
+    // ========================================================================
+
+    /// Adds a file rule.
+    pub fn add_file_rule(&mut self, rule: FileRule) {
+        self.file_rules.push(rule);
+    }
+
+    /// Gets all file rules.
+    pub fn file_rules(&self) -> &[FileRule] {
+        &self.file_rules
+    }
+
+    /// Clears all file rules.
+    pub fn clear_file_rules(&mut self) {
+        self.file_rules.clear();
+    }
+
+    // ========================================================================
+    // Validation
+    // ========================================================================
+
+    /// Validates the configuration.
+    ///
+    /// Checks for:
+    /// - At least one color space defined
+    /// - Reference role is defined
+    /// - All role color spaces exist
+    /// - All display view color spaces exist
+    ///
+    /// Returns a list of validation errors/warnings.
+    pub fn validate(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+
+        // Check for color spaces
+        if self.colorspaces.is_empty() {
+            errors.push("Config has no color spaces defined".to_string());
+        }
+
+        // Check reference role
+        if !self.roles.has_reference() {
+            errors.push("Config is missing the 'reference' role".to_string());
+        }
+
+        // Check that all roles point to existing color spaces
+        for (role, cs_name) in self.roles.iter() {
+            if self.colorspace(cs_name).is_none() {
+                errors.push(format!(
+                    "Role '{}' references non-existent color space '{}'",
+                    role, cs_name
+                ));
+            }
+        }
+
+        // Check display/view color spaces
+        for display in self.displays.displays() {
+            for view in display.views() {
+                let cs_name = view.colorspace();
+                if self.colorspace(cs_name).is_none() {
+                    errors.push(format!(
+                        "View '{}' in display '{}' references non-existent color space '{}'",
+                        view.name(),
+                        display.name(),
+                        cs_name
+                    ));
+                }
+            }
+        }
+
+        // Check look process spaces
+        for look in self.looks.all() {
+            if let Some(ps) = look.get_process_space() {
+                if !ps.is_empty() && self.colorspace(ps).is_none() {
+                    errors.push(format!(
+                        "Look '{}' references non-existent process space '{}'",
+                        look.name(),
+                        ps
+                    ));
+                }
+            }
+        }
+
+        // Check file rules (v2)
+        if self.version == ConfigVersion::V2 && !self.file_rules.is_empty() {
+            // Check that file rules have valid color spaces
+            for rule in &self.file_rules {
+                if !matches!(rule.kind, FileRuleKind::Default) {
+                    if self.colorspace(&rule.colorspace).is_none() {
+                        errors.push(format!(
+                            "File rule '{}' references non-existent color space '{}'",
+                            rule.name, rule.colorspace
+                        ));
+                    }
+                }
+            }
+
+            // Check that Default rule exists and is last
+            let has_default = self
+                .file_rules
+                .last()
+                .map(|r| matches!(r.kind, FileRuleKind::Default))
+                .unwrap_or(false);
+            if !has_default {
+                errors.push(
+                    "File rules must end with a Default rule (OCIO v2 requirement)".to_string(),
+                );
+            }
+        }
+
+        errors
+    }
+
+    /// Checks if the config is valid.
+    ///
+    /// Returns true if `validate()` returns no errors.
+    pub fn is_valid(&self) -> bool {
+        self.validate().is_empty()
+    }
+
+    // ========================================================================
+    // Serialization
+    // ========================================================================
+
+    /// Serializes the config to a YAML string.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use vfx_ocio::Config;
+    ///
+    /// let config = Config::create_raw();
+    /// let yaml = config.serialize()?;
+    /// println!("{}", yaml);
+    /// ```
+    pub fn serialize(&self) -> OcioResult<String> {
+        let mut output = String::new();
+
+        // Header
+        let version_str = match self.version {
+            ConfigVersion::V1 => "1",
+            ConfigVersion::V2 => "2.0",
+        };
+        output.push_str(&format!("ocio_profile_version: {}\n\n", version_str));
+
+        // Name/description
+        if !self.name.is_empty() {
+            output.push_str(&format!("name: {}\n", self.name));
+        }
+
+        // Search paths
+        if !self.search_paths.is_empty() {
+            let paths: Vec<&str> = self
+                .search_paths
+                .iter()
+                .filter_map(|p| p.to_str())
+                .collect();
+            if !paths.is_empty() {
+                output.push_str(&format!("search_path: {}\n", paths.join(":")));
+            }
+        }
+
+        output.push('\n');
+
+        // Roles
+        if !self.roles.is_empty() {
+            output.push_str("roles:\n");
+            for (role, cs) in self.roles.iter() {
+                output.push_str(&format!("  {}: {}\n", role, cs));
+            }
+            output.push('\n');
+        }
+
+        // File rules (v2)
+        if self.version == ConfigVersion::V2 && !self.file_rules.is_empty() {
+            output.push_str("file_rules:\n");
+            for rule in &self.file_rules {
+                output.push_str(&format!("  - !<Rule> {{name: {}", rule.name));
+                match &rule.kind {
+                    FileRuleKind::Default => {}
+                    FileRuleKind::Basic { pattern, extension } => {
+                        if !pattern.is_empty() {
+                            output.push_str(&format!(", pattern: \"{}\"", pattern));
+                        }
+                        if let Some(ext) = extension {
+                            output.push_str(&format!(", extension: {}", ext));
+                        }
+                    }
+                    FileRuleKind::Regex { regex } => {
+                        output.push_str(&format!(", regex: \"{}\"", regex.as_str()));
+                    }
+                }
+                output.push_str(&format!(", colorspace: {}}}\n", rule.colorspace));
+            }
+            output.push('\n');
+        }
+
+        // Displays
+        if !self.displays.displays().is_empty() {
+            output.push_str("displays:\n");
+            for display in self.displays.displays() {
+                output.push_str(&format!("  {}:\n", display.name()));
+                for view in display.views() {
+                    output.push_str(&format!(
+                        "    - !<View> {{name: {}, colorspace: {}",
+                        view.name(),
+                        view.colorspace()
+                    ));
+                    if let Some(looks) = view.looks() {
+                        if !looks.is_empty() {
+                            output.push_str(&format!(", looks: {}", looks));
+                        }
+                    }
+                    output.push_str("}\n");
+                }
+            }
+            output.push('\n');
+        }
+
+        // Active displays/views
+        if !self.active_displays.is_empty() {
+            output.push_str(&format!(
+                "active_displays: [{}]\n",
+                self.active_displays.join(", ")
+            ));
+        }
+        if !self.active_views.is_empty() {
+            output.push_str(&format!(
+                "active_views: [{}]\n",
+                self.active_views.join(", ")
+            ));
+        }
+
+        output.push('\n');
+
+        // Looks
+        if !self.looks.all().is_empty() {
+            output.push_str("looks:\n");
+            for look in self.looks.all() {
+                output.push_str(&format!("  - !<Look>\n"));
+                output.push_str(&format!("    name: {}\n", look.name()));
+                if let Some(ps) = look.get_process_space() {
+                    if !ps.is_empty() {
+                        output.push_str(&format!("    process_space: {}\n", ps));
+                    }
+                }
+                if !look.get_description().is_empty() {
+                    output.push_str(&format!("    description: {}\n", look.get_description()));
+                }
+                // Note: Transform serialization would go here
+            }
+            output.push('\n');
+        }
+
+        // Color spaces
+        output.push_str("colorspaces:\n");
+        for cs in &self.colorspaces {
+            output.push_str("  - !<ColorSpace>\n");
+            output.push_str(&format!("    name: {}\n", cs.name()));
+
+            if !cs.description().is_empty() {
+                output.push_str(&format!("    description: {}\n", cs.description()));
+            }
+
+            let family_str = cs.family().as_str();
+            if !family_str.is_empty() {
+                output.push_str(&format!("    family: {}\n", family_str));
+            }
+
+            let encoding_str = cs.encoding().as_str();
+            if !encoding_str.is_empty() {
+                output.push_str(&format!("    encoding: {}\n", encoding_str));
+            }
+
+            if cs.is_data() {
+                output.push_str("    isdata: true\n");
+            }
+
+            if !cs.aliases().is_empty() {
+                output.push_str(&format!(
+                    "    aliases: [{}]\n",
+                    cs.aliases().join(", ")
+                ));
+            }
+
+            // Note: Transform serialization would require more work
+        }
+
+        Ok(output)
+    }
+
+    /// Writes the config to a file.
+    pub fn write_to_file(&self, path: impl AsRef<Path>) -> OcioResult<()> {
+        let content = self.serialize()?;
+        std::fs::write(path, content)?;
+        Ok(())
+    }
+
+    // ========================================================================
+    // Environment variable management
+    // ========================================================================
+
+    /// Sets an environment variable in the context.
+    pub fn set_environment_var(&mut self, name: impl Into<String>, value: impl Into<String>) {
+        self.context.set_var(name, value);
+    }
+
+    /// Gets an environment variable from the context.
+    pub fn environment_var(&self, name: &str) -> Option<&str> {
+        self.context.get_var(name)
+    }
+
+    /// Returns the number of environment variables.
+    pub fn num_environment_vars(&self) -> usize {
+        self.context.vars().count()
+    }
+
+    /// Gets environment variable name at index.
+    pub fn environment_var_name_at(&self, index: usize) -> Option<&str> {
+        self.context.vars().nth(index).map(|(k, _)| k)
+    }
+
+    /// Gets environment variable value at index.
+    pub fn environment_var_value_at(&self, index: usize) -> Option<&str> {
+        self.context.vars().nth(index).map(|(_, v)| v)
+    }
 }
 
 // ============================================================================

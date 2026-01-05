@@ -128,16 +128,48 @@ impl Context {
         result
     }
 
-    /// Returns all user-defined variables.
+    /// Returns all user-defined variables as a HashMap reference.
     #[inline]
-    pub fn vars(&self) -> &HashMap<String, String> {
+    pub fn vars_map(&self) -> &HashMap<String, String> {
         &self.vars
+    }
+
+    /// Returns an iterator over all user-defined variables.
+    #[inline]
+    pub fn vars(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.vars.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
 
     /// Clears all user-defined variables.
     #[inline]
     pub fn clear(&mut self) {
         self.vars.clear();
+    }
+
+    /// Alias for `set` - sets a context variable.
+    #[inline]
+    pub fn set_var(&mut self, name: impl Into<String>, value: impl Into<String>) {
+        self.set(name, value);
+    }
+
+    /// Gets a variable value as a string reference.
+    ///
+    /// Only checks user-defined variables (not environment).
+    #[inline]
+    pub fn get_var(&self, name: &str) -> Option<&str> {
+        self.vars.get(name).map(|s| s.as_str())
+    }
+
+    /// Returns the number of user-defined variables.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.vars.len()
+    }
+
+    /// Checks if no variables are defined.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.vars.is_empty()
     }
 }
 
