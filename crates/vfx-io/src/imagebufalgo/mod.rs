@@ -11,6 +11,7 @@
 //! - [`arithmetic`] - Arithmetic operations (add, sub, mul, div, over)
 //! - [`color`] - Color operations (saturate, contrast, color maps, gamma)
 //! - [`composite`] - Compositing operations (Porter-Duff, blend modes)
+//! - [`stats`] - Statistics and analysis (histogram, compare, min/max)
 //!
 //! # Example
 //!
@@ -35,6 +36,7 @@ pub mod geometry;
 pub mod arithmetic;
 pub mod color;
 pub mod composite;
+pub mod stats;
 
 // Re-export commonly used functions
 pub use patterns::{zero, fill, checker, noise};
@@ -59,4 +61,14 @@ pub use composite::{
     // Blend modes
     screen, multiply, overlay, hardlight, softlight,
     difference, exclusion, colordodge, colorburn, add_blend,
+};
+
+// Statistics operations
+pub use stats::{
+    compute_pixel_stats, PixelStats,
+    compare, compare_relative, CompareResults,
+    is_constant_color, is_constant_channel, is_monochrome,
+    histogram, Histogram,
+    maxchan, minchan,
+    color_range_check, RangeCheckResult,
 };
