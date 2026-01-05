@@ -306,6 +306,301 @@ impl Default for TextureSystem {
     }
 }
 
+// ============================================================================
+// Environment Map Sampling (OIIO-compatible)
+// ============================================================================
+
+/// Environment map layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EnvLayout {
+    /// Lat-long (equirectangular) projection.
+    #[default]
+    LatLong,
+    /// Light probe (mirror ball).
+    LightProbe,
+    /// Cube map (6 faces).
+    CubeMap,
+}
+
+impl TextureSystem {
+    /// Sample an environment map using a 3D direction vector.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to environment map texture
+    /// * `dir` - Direction vector (x, y, z) - doesn't need to be normalized
+    /// * `layout` - Environment map layout/projection
+    /// * `opts` - Texture options
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use vfx_io::texture::{TextureSystem, TextureOptions, EnvLayout};
+    ///
+    /// let texsys = TextureSystem::new();
+    /// let dir = [0.0, 1.0, 0.0]; // Looking up
+    /// let color = texsys.environment("sky.exr", &dir, EnvLayout::LatLong, &TextureOptions::default())?;
+    /// ```
+    pub fn environment(
+        &self,
+        path: impl AsRef<Path>,
+        dir: &[f32; 3],
+        layout: EnvLayout,
+        opts: &TextureOptions,
+    ) -> IoResult<[f32; 4]> {
+        // Normalize direction
+        let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+        if len < 1e-10 {
+            return Ok(opts.fill);
+        }
+        let x = dir[0] / len;
+        let y = dir[1] / len;
+        let z = dir[2] / len;
+
+        let (s, t) = match layout {
+            EnvLayout::LatLong => {
+                // Equirectangular projection
+                // phi: [-pi, pi] -> [0, 1] (azimuth around Y axis)
+                // theta: [0, pi] -> [0, 1] (elevation from +Y)
+                let phi = z.atan2(x);
+                let theta = y.acos();
+                let s = (phi / std::f32::consts::PI + 1.0) * 0.5;
+                let t = theta / std::f32::consts::PI;
+                (s, t)
+            }
+            EnvLayout::LightProbe => {
+                // Mirror ball projection
+                let r = (2.0 * (1.0 + z)).sqrt();
+                let s = 0.5 + x / (2.0 * r);
+                let t = 0.5 + y / (2.0 * r);
+                (s, t)
+            }
+            EnvLayout::CubeMap => {
+                // Simplified: project to dominant face
+                let ax = x.abs();
+                let ay = y.abs();
+                let az = z.abs();
+
+                let (s, t) = if ax >= ay && ax >= az {
+                    // X face
+                    if x > 0.0 {
+                        (0.5 - z / (2.0 * ax), 0.5 - y / (2.0 * ax))
+                    } else {
+                        (0.5 + z / (2.0 * ax), 0.5 - y / (2.0 * ax))
+                    }
+                } else if ay >= ax && ay >= az {
+                    // Y face
+                    if y > 0.0 {
+                        (0.5 + x / (2.0 * ay), 0.5 + z / (2.0 * ay))
+                    } else {
+                        (0.5 + x / (2.0 * ay), 0.5 - z / (2.0 * ay))
+                    }
+                } else {
+                    // Z face
+                    if z > 0.0 {
+                        (0.5 + x / (2.0 * az), 0.5 - y / (2.0 * az))
+                    } else {
+                        (0.5 - x / (2.0 * az), 0.5 - y / (2.0 * az))
+                    }
+                };
+                (s, t)
+            }
+        };
+
+        self.sample(path, s, t, opts)
+    }
+
+    /// Sample a 3D volume texture.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to 3D texture (multi-subimage or deep image)
+    /// * `s` - S coordinate [0, 1]
+    /// * `t` - T coordinate [0, 1]
+    /// * `r` - R coordinate [0, 1] (depth/Z)
+    /// * `opts` - Texture options
+    pub fn texture3d(
+        &self,
+        path: impl AsRef<Path>,
+        s: f32,
+        t: f32,
+        r: f32,
+        opts: &TextureOptions,
+    ) -> IoResult<[f32; 4]> {
+        let path = path.as_ref();
+        let info = self.cache.get_image_info(path)?;
+
+        // For 3D textures, we use subimages as depth slices
+        let depth = info.subimages as f32;
+        let r_clamped = r.clamp(0.0, 1.0);
+        let z = r_clamped * (depth - 1.0);
+        let z0 = z.floor() as u32;
+        let z1 = (z0 + 1).min(info.subimages - 1);
+        let fz = z - z0 as f32;
+
+        // Sample two slices and interpolate
+        let mut opts0 = opts.clone();
+        opts0.subimage = z0;
+        let c0 = self.sample(path, s, t, &opts0)?;
+
+        let mut opts1 = opts.clone();
+        opts1.subimage = z1;
+        let c1 = self.sample(path, s, t, &opts1)?;
+
+        // Linear interpolation between slices
+        let mut result = [0.0f32; 4];
+        for i in 0..4 {
+            result[i] = c0[i] * (1.0 - fz) + c1[i] * fz;
+        }
+
+        Ok(result)
+    }
+}
+
+// ============================================================================
+// Texture Handle (OIIO-compatible)
+// ============================================================================
+
+/// Handle to a cached texture for efficient repeated sampling.
+///
+/// Using a handle avoids repeated path lookups and is more efficient
+/// when sampling the same texture many times.
+#[derive(Debug, Clone)]
+pub struct TextureHandle {
+    /// Path to the texture file.
+    path: std::path::PathBuf,
+    /// Cached image info.
+    info: CachedImageInfo,
+}
+
+impl TextureHandle {
+    /// Gets the texture path.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Gets texture width at given mip level.
+    pub fn width(&self, mip: u32) -> u32 {
+        self.info.width_at_mip(mip)
+    }
+
+    /// Gets texture height at given mip level.
+    pub fn height(&self, mip: u32) -> u32 {
+        self.info.height_at_mip(mip)
+    }
+
+    /// Gets number of channels.
+    pub fn channels(&self) -> u32 {
+        self.info.channels
+    }
+
+    /// Gets number of mip levels.
+    pub fn mip_levels(&self) -> u32 {
+        self.info.mip_levels
+    }
+
+    /// Gets number of subimages.
+    pub fn subimages(&self) -> u32 {
+        self.info.subimages
+    }
+}
+
+impl TextureSystem {
+    /// Gets a handle to a texture for efficient repeated sampling.
+    ///
+    /// The handle caches image metadata and avoids repeated path lookups.
+    pub fn get_handle(&self, path: impl AsRef<Path>) -> IoResult<TextureHandle> {
+        let path = path.as_ref();
+        let info = self.cache.get_image_info(path)?;
+        Ok(TextureHandle {
+            path: path.to_path_buf(),
+            info,
+        })
+    }
+
+    /// Samples using a texture handle.
+    pub fn sample_handle(
+        &self,
+        handle: &TextureHandle,
+        s: f32,
+        t: f32,
+        opts: &TextureOptions,
+    ) -> IoResult<[f32; 4]> {
+        let s = apply_wrap(s, opts.wrap_s);
+        let t = apply_wrap(t, opts.wrap_t);
+
+        if s < 0.0 || s > 1.0 || t < 0.0 || t > 1.0 {
+            return Ok(opts.fill);
+        }
+
+        match opts.filter {
+            FilterMode::Nearest => self.sample_nearest(&handle.path, &handle.info, s, t, 0, opts),
+            FilterMode::Bilinear | FilterMode::Trilinear | FilterMode::Anisotropic => {
+                self.sample_bilinear(&handle.path, &handle.info, s, t, 0, opts)
+            }
+        }
+    }
+
+    /// Samples environment map using a texture handle.
+    pub fn environment_handle(
+        &self,
+        handle: &TextureHandle,
+        dir: &[f32; 3],
+        layout: EnvLayout,
+        opts: &TextureOptions,
+    ) -> IoResult<[f32; 4]> {
+        // Normalize direction
+        let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+        if len < 1e-10 {
+            return Ok(opts.fill);
+        }
+        let x = dir[0] / len;
+        let y = dir[1] / len;
+        let z = dir[2] / len;
+
+        let (s, t) = match layout {
+            EnvLayout::LatLong => {
+                let phi = z.atan2(x);
+                let theta = y.acos();
+                let s = (phi / std::f32::consts::PI + 1.0) * 0.5;
+                let t = theta / std::f32::consts::PI;
+                (s, t)
+            }
+            EnvLayout::LightProbe => {
+                let r = (2.0 * (1.0 + z)).sqrt();
+                let s = 0.5 + x / (2.0 * r);
+                let t = 0.5 + y / (2.0 * r);
+                (s, t)
+            }
+            EnvLayout::CubeMap => {
+                let ax = x.abs();
+                let ay = y.abs();
+                let az = z.abs();
+
+                if ax >= ay && ax >= az {
+                    if x > 0.0 {
+                        (0.5 - z / (2.0 * ax), 0.5 - y / (2.0 * ax))
+                    } else {
+                        (0.5 + z / (2.0 * ax), 0.5 - y / (2.0 * ax))
+                    }
+                } else if ay >= ax && ay >= az {
+                    if y > 0.0 {
+                        (0.5 + x / (2.0 * ay), 0.5 + z / (2.0 * ay))
+                    } else {
+                        (0.5 + x / (2.0 * ay), 0.5 - z / (2.0 * ay))
+                    }
+                } else if z > 0.0 {
+                    (0.5 + x / (2.0 * az), 0.5 - y / (2.0 * az))
+                } else {
+                    (0.5 - x / (2.0 * az), 0.5 - y / (2.0 * az))
+                }
+            }
+        };
+
+        self.sample_handle(handle, s, t, opts)
+    }
+}
+
 /// Applies wrap mode to a coordinate.
 fn apply_wrap(coord: f32, mode: WrapMode) -> f32 {
     match mode {
