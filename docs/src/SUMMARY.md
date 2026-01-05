@@ -29,23 +29,27 @@
 
 # Crate Reference
 
+- [Overview](./crates/README.md)
 - [vfx-core](./crates/core.md)
 - [vfx-math](./crates/math.md)
-- [vfx-io](./crates/io.md)
-- [vfx-ops](./crates/ops.md)
-- [vfx-compute](./crates/compute.md)
-- [vfx-lut](./crates/lut.md)
 - [vfx-transfer](./crates/transfer.md)
 - [vfx-primaries](./crates/primaries.md)
+- [vfx-lut](./crates/lut.md)
+- [vfx-io](./crates/io.md)
+- [vfx-compute](./crates/compute.md)
 - [vfx-color](./crates/color.md)
-- [vfx-icc](./crates/icc.md)
 - [vfx-ocio](./crates/ocio.md)
+- [vfx-icc](./crates/icc.md)
+- [vfx-ops](./crates/ops.md)
 - [vfx-view](./crates/view.md)
 - [vfx-cli](./crates/cli.md)
 - [vfx-rs-py](./crates/python.md)
+- [vfx-tests](./crates/tests.md)
+- [vfx-bench](./crates/bench.md)
 
 # Internals
 
+- [Overview](./internals/README.md)
 - [Image Pipeline](./internals/pipeline.md)
 - [EXR Handling](./internals/exr.md)
 - [Color Management](./internals/color.md)
@@ -53,6 +57,7 @@
 
 # Development
 
+- [Overview](./dev/README.md)
 - [Testing](./dev/testing.md)
 - [Benchmarks](./dev/benchmarks.md)
 - [Adding Formats](./dev/adding-formats.md)
@@ -60,5 +65,7 @@
 
 # Appendix
 
+- [Overview](./appendix/README.md)
 - [Format Support](./appendix/formats.md)
 - [CLI Quick Reference](./appendix/cli-ref.md)
+- [Glossary](./appendix/glossary.md)
