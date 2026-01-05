@@ -32,6 +32,7 @@ pub mod ops;
 pub mod processor;
 pub mod pipeline;
 pub mod convert;
+pub mod layer;
 mod shaders;
 
 pub use backend::{
@@ -51,7 +52,9 @@ pub use pipeline::{
 };
 pub use convert::Processable;
 #[cfg(feature = "io")]
-pub use convert::{LayerMeta, from_image_data, to_image_data, from_layer, to_layer};
+pub use convert::{LayerMeta, from_image_data, from_image_data_direct, to_image_data, from_layer, to_layer};
+#[cfg(feature = "io")]
+pub use layer::{LayerProcessor, ChannelGroup, ChannelClassification};
 
 use thiserror::Error;
 

@@ -267,10 +267,21 @@ impl Processable for ImageLayer {
 // Convenience Functions
 // ============================================================================
 
-/// Converts ImageData to ComputeImage.
+/// Converts ImageData to ComputeImage (pads to 4 channels).
 #[cfg(feature = "io")]
 pub fn from_image_data(data: &ImageData) -> ComputeImage {
     data.into()
+}
+
+/// Converts ImageData to ComputeImage preserving original channel count.
+///
+/// Use this for optimal memory usage when you don't need RGBA padding.
+/// Note: Color operations (CDL, LUT, Saturation) require at least 3 channels.
+#[cfg(feature = "io")]
+pub fn from_image_data_direct(data: &ImageData) -> ComputeImage {
+    let f32_data = data.to_f32();
+    ComputeImage::from_f32(f32_data, data.width, data.height, data.channels)
+        .expect("ImageData conversion should not fail")
 }
 
 /// Converts ComputeImage to ImageData.
@@ -330,5 +341,41 @@ mod tests {
         
         let back = ImageData::from_compute(compute, meta).unwrap();
         assert_eq!(back.channels, 3); // Restored to RGB
+    }
+
+    #[cfg(feature = "io")]
+    #[test]
+    fn test_from_image_data_direct() {
+        // Test direct conversion preserves channel count
+        let data_rgb = ImageData::from_f32(2, 2, 3, vec![0.5; 12]);
+        let compute_rgb = from_image_data_direct(&data_rgb);
+        assert_eq!(compute_rgb.channels, 3); // Preserved!
+
+        let data_gray = ImageData::from_f32(2, 2, 1, vec![0.5; 4]);
+        let compute_gray = from_image_data_direct(&data_gray);
+        assert_eq!(compute_gray.channels, 1); // Preserved!
+
+        let data_rgba = ImageData::from_f32(2, 2, 4, vec![0.5; 16]);
+        let compute_rgba = from_image_data_direct(&data_rgba);
+        assert_eq!(compute_rgba.channels, 4); // Preserved!
+    }
+
+    #[cfg(feature = "io")]
+    #[test]
+    fn test_rgb_color_ops() {
+        use crate::Processor;
+
+        // Test that color ops work with 3 channels
+        let data = vec![0.5, 0.3, 0.2,  0.4, 0.4, 0.4]; // 2 pixels RGB
+        let mut img = ComputeImage::from_f32(data, 2, 1, 3).unwrap();
+        
+        let proc = Processor::auto().unwrap();
+        
+        // Exposure should work on RGB
+        proc.apply_exposure(&mut img, 1.0).unwrap();
+        
+        // Values should be doubled (2^1 = 2x)
+        assert!((img.data()[0] - 1.0).abs() < 0.01); // 0.5 * 2 = 1.0
+        assert!((img.data()[1] - 0.6).abs() < 0.01); // 0.3 * 2 = 0.6
     }
 }
