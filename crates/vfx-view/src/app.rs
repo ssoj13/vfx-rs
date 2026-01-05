@@ -131,9 +131,14 @@ impl ViewerApp {
     fn process_events(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.rx.try_recv() {
             match event {
-                ViewerEvent::ImageLoaded { dims, layers, colorspace, path: _ } => {
+                ViewerEvent::ImageLoaded { dims, layers, colorspace, path } => {
                     self.state.image_dims = Some(dims);
+                    self.state.image_path = Some(path.clone());
                     self.state.layers = layers;
+                    
+                    // Update window title
+                    let title = format!("vfx view - {}", path.file_name().and_then(|n| n.to_str()).unwrap_or("Image"));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
                     if let Some(cs) = colorspace {
                         if self.cli_colorspace.is_none() {
                             self.state.input_colorspace = cs;
@@ -345,6 +350,12 @@ impl ViewerApp {
                     ui.separator();
                     ui.label(format!("{}x{}", w, h));
                 }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Refresh").clicked() {
+                        self.send(ViewerMsg::Regenerate);
+                    }
+                });
             });
         });
     }

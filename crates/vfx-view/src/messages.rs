@@ -37,7 +37,8 @@ pub enum ViewerMsg {
     /// Set current layer (for multi-layer images).
     SetLayer(String),
 
-    /// Regenerate display texture.
+    /// Regenerate display texture (manual refresh).
+    #[allow(dead_code)]
     Regenerate,
 
     /// Sync generation counter.
@@ -72,6 +73,7 @@ pub enum ViewerMsg {
 pub enum ViewerEvent {
     /// Image loaded successfully.
     ImageLoaded {
+        #[allow(dead_code)]
         path: PathBuf,
         dims: (u32, u32),
         layers: Vec<String>,
