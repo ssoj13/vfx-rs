@@ -90,12 +90,6 @@ impl BitDepth {
         matches!(self, Self::Unknown)
     }
 
-    /// Alias for `is_float()` for compatibility.
-    #[inline]
-    pub const fn is_floating_point(&self) -> bool {
-        self.is_float()
-    }
-
     /// Whether this is an integer format.
     #[inline]
     pub const fn is_integer(&self) -> bool {
@@ -282,12 +276,6 @@ impl DataFormat {
     #[inline]
     pub const fn is_integer(&self) -> bool {
         !self.is_float()
-    }
-
-    /// Alias for `is_float()` for compatibility.
-    #[inline]
-    pub const fn is_floating_point(&self) -> bool {
-        self.is_float()
     }
 
     /// Short name for display.

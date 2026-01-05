@@ -414,8 +414,8 @@ mod tests {
         assert_eq!(DataFormat::F16.bytes_per_channel(), 2);
         assert_eq!(DataFormat::F32.bytes_per_channel(), 4);
 
-        assert!(!DataFormat::U8.is_floating_point());
-        assert!(DataFormat::F16.is_floating_point());
+        assert!(!DataFormat::U8.is_float());
+        assert!(DataFormat::F16.is_float());
     }
 
     #[test]
