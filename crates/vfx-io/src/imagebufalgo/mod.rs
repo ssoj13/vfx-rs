@@ -40,6 +40,7 @@ pub mod composite;
 pub mod stats;
 pub mod ocio;
 pub mod deep;
+pub mod filters;
 
 // Re-export commonly used functions
 pub use patterns::{zero, fill, checker, noise};
@@ -92,4 +93,17 @@ pub use deep::{
     deep_merge, deep_merge_into,
     deep_holdout, deep_holdout_matte,
     deep_tidy, deep_stats, DeepStats,
+};
+
+// Filter operations
+pub use filters::{
+    median, median_into,
+    blur, blur_into,
+    unsharp_mask, unsharp_mask_into,
+    dilate, dilate_into,
+    erode, erode_into,
+    morph_open, morph_close,
+    laplacian, sharpen, sobel,
+    convolve, convolve_into,
+    box_blur, box_blur_into,
 };
