@@ -38,7 +38,21 @@ use crate::pipeline::ComputePipeline;
 // Channel Classification
 // ============================================================================
 
-/// Channel group for batch processing.
+/// A group of channels to be processed together on the GPU.
+///
+/// Channels in a group share the same sample type and are packed into
+/// an interleaved buffer for efficient GPU processing.
+///
+/// # Example
+///
+/// ```ignore
+/// // RGB channels grouped for color operations
+/// let rgb_group = ChannelGroup {
+///     indices: vec![0, 1, 2],
+///     names: vec!["R".into(), "G".into(), "B".into()],
+///     sample_type: ChannelSampleType::F32,
+/// };
+/// ```
 #[cfg(feature = "io")]
 #[derive(Debug, Clone)]
 pub struct ChannelGroup {
@@ -73,7 +87,27 @@ impl ChannelGroup {
     }
 }
 
-/// Classification of layer channels.
+/// Classification of layer channels by type and semantic meaning.
+///
+/// Automatically separates channels into:
+/// - `color`: RGB channels for color operations (CDL, LUT, Saturation)
+/// - `alpha`: Alpha channel
+/// - `other_f32`: Other float channels (Z, normals, etc.) for spatial ops
+/// - `passthrough`: U32 channels (Object ID, Cryptomatte) copied unchanged
+///
+/// # Example
+///
+/// ```ignore
+/// let class = ChannelClassification::from_layer(&layer);
+/// 
+/// if let Some(rgb) = &class.color {
+///     // Process RGB with color ops
+/// }
+/// 
+/// for idx in &class.passthrough {
+///     // Copy U32 channels unchanged
+/// }
+/// ```
 #[cfg(feature = "io")]
 #[derive(Debug)]
 pub struct ChannelClassification {
