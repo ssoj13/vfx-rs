@@ -1039,6 +1039,11 @@ impl Config {
         self.colorspaces.push(cs);
     }
 
+    /// Adds a display to the config.
+    pub fn add_display(&mut self, display: Display) {
+        self.displays.add_display(display);
+    }
+
     /// Adds a look to the config.
     pub fn add_look(&mut self, look: Look) {
         self.looks.add(look);

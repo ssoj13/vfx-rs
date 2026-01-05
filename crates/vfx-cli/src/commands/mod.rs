@@ -24,6 +24,8 @@ pub mod rotate;
 pub mod warp;
 pub mod aces;
 pub mod udim;
+#[cfg(feature = "viewer")]
+pub mod view;
 
 use vfx_io::ImageData;
 use vfx_io::exr::{ExrReader, ExrWriter};

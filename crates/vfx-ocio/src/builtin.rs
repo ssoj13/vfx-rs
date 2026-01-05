@@ -19,6 +19,7 @@
 
 use crate::colorspace::{AllocationInfo, AllocationType, BitDepth, ColorSpace, Encoding, Family};
 use crate::config::Config;
+use crate::display::{Display, View};
 use crate::role;
 use crate::transform::*;
 
@@ -54,6 +55,17 @@ pub fn aces_1_3() -> Config {
     config.set_role(role::names::DATA, "Raw");
     config.set_role(role::names::DEFAULT, "ACEScg");
     config.set_role(role::names::ACES_INTERCHANGE, "ACES2065-1");
+
+    // Define displays
+    let mut srgb_display = Display::new("sRGB");
+    srgb_display.add_view(View::new("ACES 1.0 - SDR Video", "sRGB"));
+    srgb_display.add_view(View::new("Raw", "Raw"));
+    config.add_display(srgb_display);
+
+    let mut rec709_display = Display::new("Rec.709");
+    rec709_display.add_view(View::new("ACES 1.0 - SDR Video", "Rec.709"));
+    rec709_display.add_view(View::new("Raw", "Raw"));
+    config.add_display(rec709_display);
 
     config
 }

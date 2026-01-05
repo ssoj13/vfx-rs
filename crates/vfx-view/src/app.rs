@@ -1,0 +1,449 @@
+//! Main viewer application with eframe/egui integration.
+//!
+//! Handles UI rendering and user interaction.
+
+use std::path::PathBuf;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread::{self, JoinHandle};
+
+use egui::{Color32, ColorImage, TextureHandle, TextureOptions, Vec2};
+
+use crate::handler::ViewerHandler;
+use crate::messages::{Generation, ViewerEvent, ViewerMsg};
+use crate::state::{ChannelMode, ViewerPersistence, ViewerState};
+
+/// Main viewer application.
+pub struct ViewerApp {
+    /// Sender for commands to worker thread.
+    tx: Sender<ViewerMsg>,
+    /// Receiver for results from worker thread.
+    rx: Receiver<ViewerEvent>,
+    /// Worker thread handle.
+    _worker: JoinHandle<()>,
+    
+    /// Current display texture.
+    texture: Option<TextureHandle>,
+    /// Error message to display.
+    error: Option<String>,
+    
+    /// Runtime state.
+    state: ViewerState,
+    
+    /// Generation counter for stale result rejection.
+    generation: Generation,
+    
+    /// CLI overrides.
+    cli_ocio: Option<PathBuf>,
+    cli_display: Option<String>,
+    cli_view: Option<String>,
+    cli_colorspace: Option<String>,
+}
+
+/// Configuration for launching the viewer.
+#[derive(Debug, Clone, Default)]
+pub struct ViewerConfig {
+    /// OCIO config path override.
+    pub ocio: Option<PathBuf>,
+    /// Display override.
+    pub display: Option<String>,
+    /// View override.
+    pub view: Option<String>,
+    /// Input colorspace override.
+    pub colorspace: Option<String>,
+    /// Verbosity level.
+    pub verbose: u8,
+}
+
+impl ViewerApp {
+    /// Creates a new viewer application.
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        image_path: PathBuf,
+        config: ViewerConfig,
+    ) -> Self {
+        // Create bidirectional channels
+        let (tx_to_worker, rx_in_worker) = channel();
+        let (tx_to_ui, rx_from_worker) = channel();
+
+        // Spawn worker thread
+        let verbose = config.verbose;
+        let worker = thread::spawn(move || {
+            let handler = ViewerHandler::new(rx_in_worker, tx_to_ui, verbose);
+            handler.run();
+        });
+
+        // Load persisted settings
+        let persistence: ViewerPersistence = cc
+            .storage
+            .and_then(|s| eframe::get_value(s, "vfx_viewer_state"))
+            .unwrap_or_default();
+
+        let state = ViewerState::from_persistence(
+            &persistence,
+            config.ocio.clone(),
+            config.display.as_deref(),
+            config.view.as_deref(),
+        );
+
+        let app = Self {
+            tx: tx_to_worker,
+            rx: rx_from_worker,
+            _worker: worker,
+            texture: None,
+            error: None,
+            state,
+            generation: 0,
+            cli_ocio: config.ocio,
+            cli_display: config.display,
+            cli_view: config.view,
+            cli_colorspace: config.colorspace.clone(),
+        };
+
+        // Send initial config
+        if let Some(ref ocio) = app.cli_ocio {
+            app.send(ViewerMsg::SetOcioConfig(Some(ocio.clone())));
+        } else {
+            app.send(ViewerMsg::SetOcioConfig(None));
+        }
+
+        // Override colorspace if specified
+        if let Some(ref cs) = config.colorspace {
+            app.send(ViewerMsg::SetInputColorspace(cs.clone()));
+        }
+
+        // Load the image
+        app.send(ViewerMsg::LoadImage(image_path));
+
+        app
+    }
+
+    fn send(&self, msg: ViewerMsg) {
+        let _ = self.tx.send(msg);
+    }
+
+    fn send_regen(&mut self, msg: ViewerMsg) {
+        self.generation += 1;
+        self.send(ViewerMsg::SyncGeneration(self.generation));
+        self.send(msg);
+    }
+
+    /// Process all pending events from worker.
+    fn process_events(&mut self, ctx: &egui::Context) {
+        while let Ok(event) = self.rx.try_recv() {
+            match event {
+                ViewerEvent::ImageLoaded { dims, layers, colorspace, path: _ } => {
+                    self.state.image_dims = Some(dims);
+                    self.state.layers = layers;
+                    if let Some(cs) = colorspace {
+                        if self.cli_colorspace.is_none() {
+                            self.state.input_colorspace = cs;
+                        }
+                    }
+                    self.error = None;
+                }
+                ViewerEvent::OcioConfigLoaded { displays, default_display, colorspaces } => {
+                    self.state.displays = displays;
+                    self.state.colorspaces = colorspaces;
+                    
+                    // Apply CLI override or use default
+                    if let Some(ref d) = self.cli_display {
+                        self.state.display = d.clone();
+                    } else if self.state.display.is_empty() {
+                        self.state.display = default_display;
+                    }
+                }
+                ViewerEvent::DisplayChanged { views, default_view } => {
+                    self.state.views = views;
+                    
+                    // Apply CLI override or use default
+                    if let Some(ref v) = self.cli_view {
+                        self.state.view = v.clone();
+                    } else if self.state.view.is_empty() {
+                        self.state.view = default_view;
+                    }
+                }
+                ViewerEvent::TextureReady { generation, width, height, pixels } => {
+                    if generation < self.generation {
+                        continue; // Stale result
+                    }
+                    let image = ColorImage {
+                        size: [width as usize, height as usize],
+                        pixels,
+                    };
+                    self.texture = Some(ctx.load_texture(
+                        "viewer_image",
+                        image,
+                        TextureOptions::LINEAR,
+                    ));
+                }
+                ViewerEvent::StateSync { zoom, pan } => {
+                    self.state.zoom = zoom;
+                    self.state.pan = pan;
+                }
+                ViewerEvent::Error(msg) => {
+                    self.error = Some(msg);
+                }
+            }
+        }
+    }
+
+    /// Handle keyboard input.
+    fn handle_input(&mut self, ctx: &egui::Context) -> bool {
+        let mut exit = false;
+
+        ctx.input(|i| {
+            if i.key_pressed(egui::Key::Escape) {
+                exit = true;
+            }
+
+            // View controls
+            if i.key_pressed(egui::Key::F) {
+                self.send(ViewerMsg::FitToWindow);
+            }
+            if i.key_pressed(egui::Key::H) || i.key_pressed(egui::Key::Num0) {
+                self.send(ViewerMsg::Home);
+            }
+
+            // Zoom
+            if i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals) {
+                self.send(ViewerMsg::Zoom { factor: 0.2, center: [0.0, 0.0] });
+            }
+            if i.key_pressed(egui::Key::Minus) {
+                self.send(ViewerMsg::Zoom { factor: -0.2, center: [0.0, 0.0] });
+            }
+
+            // Channel modes (avoid Ctrl+key)
+            if i.key_pressed(egui::Key::R) && !i.modifiers.ctrl {
+                self.state.channel_mode = ChannelMode::Red;
+                self.send_regen(ViewerMsg::SetChannelMode(ChannelMode::Red));
+            }
+            if i.key_pressed(egui::Key::G) && !i.modifiers.ctrl {
+                self.state.channel_mode = ChannelMode::Green;
+                self.send_regen(ViewerMsg::SetChannelMode(ChannelMode::Green));
+            }
+            if i.key_pressed(egui::Key::B) && !i.modifiers.ctrl {
+                self.state.channel_mode = ChannelMode::Blue;
+                self.send_regen(ViewerMsg::SetChannelMode(ChannelMode::Blue));
+            }
+            if i.key_pressed(egui::Key::A) && !i.modifiers.ctrl {
+                self.state.channel_mode = ChannelMode::Alpha;
+                self.send_regen(ViewerMsg::SetChannelMode(ChannelMode::Alpha));
+            }
+            if i.key_pressed(egui::Key::C) && !i.modifiers.ctrl {
+                self.state.channel_mode = ChannelMode::Color;
+                self.send_regen(ViewerMsg::SetChannelMode(ChannelMode::Color));
+            }
+            if i.key_pressed(egui::Key::L) {
+                self.state.channel_mode = ChannelMode::Luminance;
+                self.send_regen(ViewerMsg::SetChannelMode(ChannelMode::Luminance));
+            }
+
+            // Scroll zoom
+            if i.raw_scroll_delta.y != 0.0 {
+                self.send(ViewerMsg::Zoom {
+                    factor: i.raw_scroll_delta.y * 0.002,
+                    center: [0.0, 0.0],
+                });
+            }
+        });
+
+        exit
+    }
+
+    /// Draw top control panel.
+    fn draw_controls(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("controls").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                // Input colorspace selector (left side)
+                egui::ComboBox::from_label("Input")
+                    .selected_text(if self.state.input_colorspace.is_empty() {
+                        "Auto"
+                    } else {
+                        &self.state.input_colorspace
+                    })
+                    .show_ui(ui, |ui| {
+                        for cs in self.state.colorspaces.clone() {
+                            if ui.selectable_value(&mut self.state.input_colorspace, cs.clone(), &cs).changed() {
+                                self.send_regen(ViewerMsg::SetInputColorspace(cs));
+                            }
+                        }
+                    });
+
+                ui.separator();
+
+                // Display selector (right side)
+                egui::ComboBox::from_label("Display")
+                    .selected_text(&self.state.display)
+                    .show_ui(ui, |ui| {
+                        for display in self.state.displays.clone() {
+                            if ui.selectable_value(&mut self.state.display, display.clone(), &display).changed() {
+                                self.send_regen(ViewerMsg::SetDisplay(display));
+                            }
+                        }
+                    });
+
+                // View selector
+                egui::ComboBox::from_label("View")
+                    .selected_text(&self.state.view)
+                    .show_ui(ui, |ui| {
+                        for view in self.state.views.clone() {
+                            if ui.selectable_value(&mut self.state.view, view.clone(), &view).changed() {
+                                self.send_regen(ViewerMsg::SetView(view));
+                            }
+                        }
+                    });
+
+                ui.separator();
+
+                // Exposure slider
+                ui.label("EV:");
+                let old_exp = self.state.exposure;
+                if ui.add(
+                    egui::Slider::new(&mut self.state.exposure, -10.0..=10.0)
+                        .step_by(0.1)
+                        .fixed_decimals(1)
+                ).changed() && (self.state.exposure - old_exp).abs() > 0.001 {
+                    self.send_regen(ViewerMsg::SetExposure(self.state.exposure));
+                }
+            });
+
+            // Second row
+            ui.horizontal(|ui| {
+                // Layer selector (if multiple)
+                if self.state.layers.len() > 1 {
+                    egui::ComboBox::from_label("Layer")
+                        .selected_text(&self.state.layer)
+                        .show_ui(ui, |ui| {
+                            for layer in self.state.layers.clone() {
+                                if ui.selectable_value(&mut self.state.layer, layer.clone(), &layer).changed() {
+                                    self.send_regen(ViewerMsg::SetLayer(layer));
+                                }
+                            }
+                        });
+                    ui.separator();
+                }
+
+                // Channel mode selector
+                egui::ComboBox::from_label("Channel")
+                    .selected_text(self.state.channel_mode.label())
+                    .show_ui(ui, |ui| {
+                        for &mode in ChannelMode::all() {
+                            let label = format!("{} ({})", mode.label(), mode.shortcut());
+                            if ui.selectable_value(&mut self.state.channel_mode, mode, label).changed() {
+                                self.send_regen(ViewerMsg::SetChannelMode(mode));
+                            }
+                        }
+                    });
+
+                ui.separator();
+
+                // Zoom percentage
+                ui.label(format!("{}%", (self.state.zoom * 100.0) as i32));
+
+                // Image dimensions
+                if let Some((w, h)) = self.state.image_dims {
+                    ui.separator();
+                    ui.label(format!("{}x{}", w, h));
+                }
+            });
+        });
+    }
+
+    /// Draw bottom hints panel.
+    fn draw_hints(&self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("hints").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("F: Fit | H: Home | +/-: Zoom | R/G/B/A: Channels | C: Color | L: Luma | Esc: Exit");
+            });
+        });
+    }
+
+    /// Draw main canvas with image.
+    fn draw_canvas(&mut self, ctx: &egui::Context) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let available = ui.available_size();
+
+            // Track viewport size changes
+            if (self.state.viewport_size[0] - available.x).abs() > 1.0
+                || (self.state.viewport_size[1] - available.y).abs() > 1.0
+            {
+                self.state.viewport_size = [available.x, available.y];
+                self.send(ViewerMsg::SetViewport(self.state.viewport_size));
+            }
+
+            // Show error if any
+            if let Some(ref err) = self.error {
+                ui.centered_and_justified(|ui| {
+                    ui.colored_label(Color32::RED, err);
+                });
+                return;
+            }
+
+            // Draw image if texture available
+            if let Some(ref texture) = self.texture {
+                let tex_size = texture.size_vec2();
+                let scaled_size = tex_size * self.state.zoom;
+
+                // Center image with pan offset
+                let center = available / 2.0;
+                let pan_offset = Vec2::new(
+                    self.state.pan[0] * self.state.zoom,
+                    self.state.pan[1] * self.state.zoom,
+                );
+                let top_left = center - scaled_size / 2.0 + pan_offset;
+
+                // Allocate space and handle drag
+                let (rect, response) = ui.allocate_exact_size(available, egui::Sense::drag());
+
+                if response.dragged() {
+                    let delta = response.drag_delta();
+                    self.send(ViewerMsg::Pan { delta: [delta.x, delta.y] });
+                }
+
+                if response.double_clicked() {
+                    self.send(ViewerMsg::FitToWindow);
+                }
+
+                // Paint the image
+                let painter = ui.painter_at(rect);
+                let image_rect = egui::Rect::from_min_size(
+                    rect.min + top_left.to_pos2().to_vec2(),
+                    scaled_size,
+                );
+                painter.image(
+                    texture.id(),
+                    image_rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            }
+        });
+    }
+}
+
+impl eframe::App for ViewerApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Process worker events
+        self.process_events(ctx);
+
+        // Handle input
+        if self.handle_input(ctx) {
+            self.send(ViewerMsg::Close);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+
+        // Draw UI
+        self.draw_controls(ctx);
+        self.draw_hints(ctx);
+        self.draw_canvas(ctx);
+
+        // Always request repaint for smooth interaction
+        ctx.request_repaint();
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        let persistence = self.state.to_persistence();
+        eframe::set_value(storage, "vfx_viewer_state", &persistence);
+    }
+}

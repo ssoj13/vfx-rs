@@ -16,6 +16,7 @@ members = [
     "crates/vfx-tests",
     "crates/vfx-bench",
     "crates/vfx-ocio",
+    "crates/vfx-view",
     "crates/vfx-rs-py",
 ]
 

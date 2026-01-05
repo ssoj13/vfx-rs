@@ -17,8 +17,13 @@ vfx-io = { workspace = true }
 vfx-ops = { workspace = true }
 vfx-color = { workspace = true }
 vfx-lut = { workspace = true }
+vfx-view = { path = "../vfx-view", optional = true }
 
 clap = { workspace = true }
 anyhow = { workspace = true }
 glob = { workspace = true }
 rayon = { workspace = true }
+
+[features]
+default = ["viewer"]
+viewer = ["dep:vfx-view"]

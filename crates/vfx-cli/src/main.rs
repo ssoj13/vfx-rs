@@ -129,6 +129,11 @@ enum Commands {
 
     /// UDIM texture set operations (info, convert, atlas, split)
     Udim(UdimArgs),
+
+    /// View image with OCIO color management
+    #[cfg(feature = "viewer")]
+    #[command(visible_alias = "v")]
+    View(ViewArgs),
 }
 
 #[derive(Args)]
@@ -627,6 +632,30 @@ struct AcesArgs {
     rrt_variant: String,
 }
 
+/// Arguments for the `view` command.
+#[cfg(feature = "viewer")]
+#[derive(Args)]
+struct ViewArgs {
+    /// Input image file
+    input: PathBuf,
+
+    /// OCIO config file path (overrides $OCIO)
+    #[arg(long)]
+    ocio: Option<PathBuf>,
+
+    /// Display name (e.g., "sRGB", "Rec.709")
+    #[arg(long)]
+    display: Option<String>,
+
+    /// View name (e.g., "ACES 1.0 - SDR Video")
+    #[arg(long)]
+    view: Option<String>,
+
+    /// Input color space (overrides metadata)
+    #[arg(long, visible_alias = "cs")]
+    colorspace: Option<String>,
+}
+
 /// Arguments for the `udim` command.
 #[derive(Args)]
 pub struct UdimArgs {
@@ -715,5 +744,7 @@ fn main() -> Result<()> {
         Commands::Warp(args) => commands::warp::run(args, cli.verbose),
         Commands::Aces(args) => commands::aces::run(args, cli.verbose),
         Commands::Udim(args) => commands::udim::run(args, cli.verbose),
+        #[cfg(feature = "viewer")]
+        Commands::View(args) => commands::view::run(args, cli.verbose),
     }
 }

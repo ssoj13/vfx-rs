@@ -1,0 +1,56 @@
+# =============================================================================
+# vfx-view - Image viewer with OCIO color management
+# =============================================================================
+#
+# GPU-accelerated viewer for VFX images with:
+# - OCIO display pipeline (config -> display -> view)
+# - Multi-layer EXR support
+# - Channel isolation (R/G/B/A)
+# - Exposure control
+# - Drag & drop, pan/zoom
+#
+# =============================================================================
+
+[package]
+name = "vfx-view"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Image viewer with OCIO color management"
+keywords = ["image", "viewer", "ocio", "color", "vfx"]
+categories = ["graphics", "multimedia::images", "visualization"]
+
+[dependencies]
+# Internal crates
+vfx-io = { path = "../vfx-io" }
+vfx-ocio = { path = "../vfx-ocio" }
+
+# GUI
+eframe = { version = "0.30", default-features = false, features = [
+    "default_fonts",
+    "wgpu",
+    "persistence",
+] }
+egui = "0.30"
+
+# Serialization for persistence
+serde = { version = "1", features = ["derive"] }
+
+# Platform directories for config storage
+dirs = "6"
+
+# Logging
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3.24"
+
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
