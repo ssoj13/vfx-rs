@@ -881,9 +881,32 @@ def test_complete_pipeline(input_path: Path) -> list[TestResult]:
 # Main
 # =============================================================================
 
+EXAMPLES = """
+Examples:
+  python test_api.py                      # Run with default owl.exr
+  python test_api.py my_image.exr         # Test with custom image
+  python test_api.py render.exr -o results # Custom output directory
+  python test_api.py --help               # Show this help
+
+Test Coverage:
+  - Basic I/O (EXR, PNG, JPEG, TIFF, DPX, HDR)
+  - Processor (exposure, saturation, contrast, CDL)
+  - Operation chains (cinema look, B&W, HDR recovery)
+  - NumPy interop (vignette, channel swap, gradients)
+  - Synthetic patterns (colorbars, ramp, checker)
+  - LayeredImage API (layers, channels, conversion)
+  - Format roundtrip verification with vfx diff
+
+Output:
+  All intermediate results are written to the output directory.
+  Each processing step saves its result for visual inspection.
+"""
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Comprehensive vfx_rs Python API test suite"
+        description="Comprehensive vfx_rs Python API test suite",
+        epilog=EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
         "input",
