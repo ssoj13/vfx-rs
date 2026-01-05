@@ -2,6 +2,7 @@
 //!
 //! Applies ACES IDT, RRT, and ODT transforms.
 
+use tracing::{debug, info, trace};
 use anyhow::{Result, bail};
 use crate::AcesArgs;
 use super::{load_image, save_image};
@@ -12,7 +13,7 @@ use vfx_color::aces::{
 use vfx_color::prelude::srgb;
 
 pub fn run(args: AcesArgs, verbose: u8) -> Result<()> {
-    if verbose {
+    if verbose > 0 {
         println!("Loading: {}", args.input.display());
     }
 
@@ -28,7 +29,7 @@ pub fn run(args: AcesArgs, verbose: u8) -> Result<()> {
     let result_data = match args.transform.to_lowercase().as_str() {
         // IDT: sRGB gamma -> ACEScg linear
         "idt" | "input" | "srgb-to-acescg" => {
-            if verbose {
+            if verbose > 0 {
                 println!("Applying IDT: sRGB -> ACEScg");
             }
             apply_inverse_odt_srgb(&data, channels)
@@ -36,7 +37,7 @@ pub fn run(args: AcesArgs, verbose: u8) -> Result<()> {
         
         // RRT only: tonemap in ACEScg
         "rrt" | "tonemap" => {
-            if verbose {
+            if verbose > 0 {
                 println!("Applying RRT tonemap");
             }
             let params = get_rrt_params(&args.rrt_variant);
@@ -45,7 +46,7 @@ pub fn run(args: AcesArgs, verbose: u8) -> Result<()> {
         
         // ODT only: ACEScg -> sRGB (no tonemap)
         "odt" | "output" | "acescg-to-srgb" => {
-            if verbose {
+            if verbose > 0 {
                 println!("Applying ODT: ACEScg -> sRGB");
             }
             apply_odt_only(&data, channels)
@@ -53,7 +54,7 @@ pub fn run(args: AcesArgs, verbose: u8) -> Result<()> {
         
         // Full RRT+ODT: ACEScg -> display sRGB
         "rrt-odt" | "rrtodt" | "display" | "full" => {
-            if verbose {
+            if verbose > 0 {
                 println!("Applying RRT+ODT: ACEScg -> sRGB display");
             }
             apply_rrt_odt_srgb(&data, channels)
@@ -66,7 +67,7 @@ pub fn run(args: AcesArgs, verbose: u8) -> Result<()> {
 
     let result = vfx_io::ImageData::from_f32(input.width, input.height, channels as u32, result_data);
 
-    if verbose {
+    if verbose > 0 {
         println!("Saving: {}", args.output.display());
     }
 

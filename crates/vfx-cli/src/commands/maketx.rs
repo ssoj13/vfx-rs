@@ -9,7 +9,7 @@ pub fn run(args: MaketxArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
     let image = super::load_image(&args.input)?;
     super::ensure_color_processing(&image, "maketx", allow_non_color)?;
 
-    if verbose {
+    if verbose > 0 {
         println!("Creating texture from {}", args.input.display());
         println!("  Tile size: {}", args.tile);
         println!("  Mipmaps: {}", args.mipmap);
@@ -18,11 +18,11 @@ pub fn run(args: MaketxArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
 
     // For now, just copy the image with mipmap generation if requested
     if args.mipmap {
-        if verbose {
+        if verbose > 0 {
             println!("  Generating mipmaps...");
         }
         let mipmaps = generate_mipmaps(&image, &args.filter)?;
-        if verbose {
+        if verbose > 0 {
             println!("  Generated {} mip levels", mipmaps.len());
         }
         // Save base level (full mipmap chain would need tiled format)
@@ -31,7 +31,7 @@ pub fn run(args: MaketxArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
         super::save_image(&args.output, &image)?;
     }
 
-    if verbose {
+    if verbose > 0 {
         println!("Done.");
     }
 

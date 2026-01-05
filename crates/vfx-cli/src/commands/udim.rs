@@ -1,5 +1,6 @@
 //! UDIM texture set operations
 
+use tracing::{debug, info, trace};
 use anyhow::{Context, Result};
 use std::path::Path;
 use vfx_io::udim::{UdimResolver, UdimTile};
@@ -49,7 +50,7 @@ fn run_info(pattern: &Path, verbose: u8) -> Result<()> {
 
     for (tile, path) in &tiles {
         print!("  {} (U={}, V={})", tile.udim(), tile.u, tile.v);
-        if verbose {
+        if verbose > 0 {
             // Get image info
             if let Ok(img) = vfx_io::read(path) {
                 print!(" - {}x{} {}ch", img.width, img.height, img.channels);
@@ -80,7 +81,7 @@ fn run_convert(input: &Path, output: &Path, compression: Option<&str>, verbose: 
     for (tile, src_path) in &tiles {
         let dst_path = out_resolver.build_path(tile.udim());
         
-        if verbose {
+        if verbose > 0 {
             println!("Converting {} -> {}", src_path.display(), dst_path.display());
         }
 
@@ -118,7 +119,7 @@ fn run_atlas(input: &Path, output: &Path, tile_size: u32, verbose: u8) -> Result
     let atlas_w = cols * tile_size as usize;
     let atlas_h = rows * tile_size as usize;
 
-    if verbose {
+    if verbose > 0 {
         println!("Creating {}x{} atlas ({}x{} tiles @ {}px)", 
                  atlas_w, atlas_h, cols, rows, tile_size);
     }
@@ -134,7 +135,7 @@ fn run_atlas(input: &Path, output: &Path, tile_size: u32, verbose: u8) -> Result
 
     // Process each tile
     for (tile, path) in resolver.tiles() {
-        if verbose {
+        if verbose > 0 {
             println!("  Processing tile {} from {}", tile.udim(), path.display());
         }
 
@@ -193,7 +194,7 @@ fn run_split(input: &Path, output: &Path, tile_size: u32, verbose: u8) -> Result
     let cols = (w + ts - 1) / ts;
     let rows = (h + ts - 1) / ts;
 
-    if verbose {
+    if verbose > 0 {
         println!("Splitting {}x{} into {}x{} tiles @ {}px", w, h, cols, rows, ts);
     }
 
@@ -239,7 +240,7 @@ fn run_split(input: &Path, output: &Path, tile_size: u32, verbose: u8) -> Result
                 tile_data
             );
 
-            if verbose {
+            if verbose > 0 {
                 println!("  Tile {} -> {}", tile.udim(), dst_path.display());
             }
 

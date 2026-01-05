@@ -1,18 +1,19 @@
 //! Warp command - apply lens distortion and artistic effects
 
+use tracing::{debug, info, trace};
 use anyhow::{Result, bail};
 use crate::{WarpArgs, commands::{load_image, save_image}};
 use vfx_io::ImageData;
 use vfx_ops::warp;
 
 pub fn run(args: WarpArgs, verbose: u8) -> Result<()> {
-    if verbose {
+    if verbose > 0 {
         println!("Loading: {}", args.input.display());
     }
     
     let input = load_image(&args.input)?;
     
-    if verbose {
+    if verbose > 0 {
         println!("Size: {}x{} ({} ch)", input.width, input.height, input.channels);
         println!("Warp: {} (k1={}, k2={}, radius={})", 
                  args.warp_type, args.k1, args.k2, args.radius);
@@ -22,7 +23,7 @@ pub fn run(args: WarpArgs, verbose: u8) -> Result<()> {
     
     save_image(&args.output, &result)?;
     
-    if verbose {
+    if verbose > 0 {
         println!("Saved: {}", args.output.display());
     }
     

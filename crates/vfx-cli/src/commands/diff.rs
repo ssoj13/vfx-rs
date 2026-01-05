@@ -1,6 +1,7 @@
 //! Image diff command (like idiff)
 
 use crate::DiffArgs;
+use tracing::{debug, info, trace};
 use anyhow::{Result, bail};
 use vfx_io::ImageData;
 
@@ -20,7 +21,7 @@ pub fn run(args: DiffArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
     let channels_b = img_b.channels as usize;
     let compare_channels = channels_a.min(channels_b);
     
-    if channels_a != channels_b && verbose {
+    if channels_a != channels_b && verbose > 0 {
         println!("Note: Channel count differs ({} vs {}), comparing {} common channels",
             channels_a, channels_b, compare_channels);
     }
@@ -46,7 +47,7 @@ pub fn run(args: DiffArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
         let diff_data = create_diff_image(&data_a, &data_b, pixels, channels_a, channels_b, compare_channels);
         let diff_image = ImageData::from_f32(img_a.width, img_a.height, compare_channels as u32, diff_data);
         super::save_image(output, &diff_image)?;
-        if verbose {
+        if verbose > 0 {
             println!("Difference image saved to {}", output.display());
         }
     }

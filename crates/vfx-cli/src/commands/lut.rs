@@ -1,6 +1,7 @@
 //! LUT application command
 
 use crate::LutArgs;
+use tracing::{debug, info, trace};
 use anyhow::{Result, bail};
 use vfx_io::ImageData;
 use vfx_lut::cube;
@@ -9,7 +10,7 @@ pub fn run(args: LutArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
     let image = super::load_image(&args.input)?;
     super::ensure_color_processing(&image, "lut", allow_non_color)?;
 
-    if verbose {
+    if verbose > 0 {
         println!("Applying LUT {} to {}", args.lut.display(), args.input.display());
     }
 
@@ -26,7 +27,7 @@ pub fn run(args: LutArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
 
     super::save_image(&args.output, &result)?;
 
-    if verbose {
+    if verbose > 0 {
         println!("Done.");
     }
 

@@ -11,7 +11,7 @@ pub fn run(args: ViewArgs, verbose: u8) -> Result<()> {
         display: args.display,
         view: args.view,
         colorspace: args.colorspace,
-        verbose: if verbose { 1 } else { 0 },
+        verbose: if verbose > 0 { 1 } else { 0 },
     };
 
     let exit_code = vfx_view::run_opt(args.input, config);

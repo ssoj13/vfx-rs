@@ -6,7 +6,7 @@ use vfx_io::ImageData;
 use vfx_ops::transform::paste;
 
 pub fn run(args: PasteArgs, verbose: u8) -> Result<()> {
-    if verbose {
+    if verbose > 0 {
         println!("Loading background: {}", args.background.display());
         println!("Loading foreground: {}", args.foreground.display());
     }
@@ -14,7 +14,7 @@ pub fn run(args: PasteArgs, verbose: u8) -> Result<()> {
     let bg = load_image(&args.background)?;
     let fg = load_image(&args.foreground)?;
     
-    if verbose {
+    if verbose > 0 {
         println!("Background: {}x{} ({} ch)", bg.width, bg.height, bg.channels);
         println!("Foreground: {}x{} ({} ch)", fg.width, fg.height, fg.channels);
         println!("Offset: ({}, {}), blend: {}", args.x, args.y, args.blend);
@@ -24,7 +24,7 @@ pub fn run(args: PasteArgs, verbose: u8) -> Result<()> {
     
     save_image(&args.output, &result)?;
     
-    if verbose {
+    if verbose > 0 {
         println!("Saved: {}", args.output.display());
     }
     

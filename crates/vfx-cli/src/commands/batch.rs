@@ -1,6 +1,7 @@
 //! Batch processing command
 
 use crate::BatchArgs;
+use tracing::{debug, info, trace};
 use anyhow::{Result, bail};
 use std::path::PathBuf;
 use rayon::prelude::*;
@@ -16,7 +17,7 @@ pub fn run(args: BatchArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
         bail!("No files match pattern: {}", args.input);
     }
 
-    if verbose {
+    if verbose > 0 {
         println!("Found {} files matching '{}'", files.len(), args.input);
     }
 
@@ -93,7 +94,7 @@ fn process_file(
 
     let output = output_dir.join(format!("{}.{}", stem, ext));
 
-    if verbose {
+    if verbose > 0 {
         println!("Processing {} -> {}", input.display(), output.display());
     }
 

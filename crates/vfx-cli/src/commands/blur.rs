@@ -15,7 +15,7 @@ pub fn run(args: BlurArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
     let h = image.height as usize;
     let c = image.channels as usize;
 
-    if verbose {
+    if verbose > 0 {
         println!("Applying {} blur (radius={}) to {}",
             args.blur_type, args.radius, args.input.display());
     }
@@ -35,7 +35,7 @@ pub fn run(args: BlurArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
 
     super::save_image_layer(&args.output, &output, args.layer.as_deref())?;
 
-    if verbose {
+    if verbose > 0 {
         println!("Done.");
     }
 

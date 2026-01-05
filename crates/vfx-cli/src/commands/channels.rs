@@ -4,6 +4,7 @@
 //! specific channels to a new image.
 
 use crate::{ChannelExtractArgs, ChannelShuffleArgs};
+use tracing::{debug, info, trace};
 use anyhow::{Result, bail};
 use vfx_io::ImageData;
 
@@ -21,7 +22,7 @@ pub fn run_shuffle(args: ChannelShuffleArgs, verbose: u8) -> Result<()> {
     let input = super::load_image(&args.input)?;
     let pattern = args.pattern.to_uppercase();
     
-    if verbose {
+    if verbose > 0 {
         println!(
             "Shuffling {} ({}x{}, {} ch) with pattern '{}'",
             args.input.display(),
@@ -36,7 +37,7 @@ pub fn run_shuffle(args: ChannelShuffleArgs, verbose: u8) -> Result<()> {
     
     super::save_image(&args.output, &output)?;
     
-    if verbose {
+    if verbose > 0 {
         println!("Saved to {} ({} channels)", args.output.display(), output.channels);
     }
     
@@ -49,7 +50,7 @@ pub fn run_shuffle(args: ChannelShuffleArgs, verbose: u8) -> Result<()> {
 pub fn run_extract(args: ChannelExtractArgs, verbose: u8) -> Result<()> {
     let input = super::load_image(&args.input)?;
     
-    if verbose {
+    if verbose > 0 {
         println!(
             "Extracting channels [{}] from {} ({}x{}, {} ch)",
             args.channels.join(", "),
@@ -64,7 +65,7 @@ pub fn run_extract(args: ChannelExtractArgs, verbose: u8) -> Result<()> {
     
     super::save_image(&args.output, &output)?;
     
-    if verbose {
+    if verbose > 0 {
         println!("Saved to {} ({} channels)", args.output.display(), output.channels);
     }
     

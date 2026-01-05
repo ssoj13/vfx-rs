@@ -1,6 +1,7 @@
 //! Composite command
 
 use crate::CompositeArgs;
+use tracing::{debug, info, trace};
 use anyhow::{Result, bail};
 use vfx_io::ImageData;
 use vfx_ops::composite::{over, blend, BlendMode};
@@ -16,7 +17,7 @@ pub fn run(args: CompositeArgs, verbose: u8, allow_non_color: bool) -> Result<()
             fg.width, fg.height, bg.width, bg.height);
     }
 
-    if verbose {
+    if verbose > 0 {
         println!("Compositing {} over {} with mode '{}'",
             args.fg.display(), args.bg.display(), args.mode);
     }
@@ -38,7 +39,7 @@ pub fn run(args: CompositeArgs, verbose: u8, allow_non_color: bool) -> Result<()
 
     super::save_image(&args.output, &output)?;
 
-    if verbose {
+    if verbose > 0 {
         println!("Done.");
     }
 

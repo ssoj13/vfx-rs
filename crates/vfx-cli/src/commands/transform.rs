@@ -1,6 +1,7 @@
 //! Transform command (flip, rotate, transpose)
 
 use crate::TransformArgs;
+use tracing::{debug, info, trace};
 use anyhow::{Result, bail};
 use vfx_io::ImageData;
 use vfx_ops::transform::{flip_h, flip_v, rotate_90_cw};
@@ -13,23 +14,23 @@ pub fn run(args: TransformArgs, verbose: u8, allow_non_color: bool) -> Result<()
     let mut height = image.height as usize;
     let channels = image.channels as usize;
 
-    if verbose {
+    if verbose > 0 {
         println!("Transforming {}", args.input.display());
     }
 
     // Apply transformations in order
     if args.flip_h {
-        if verbose { println!("  Flip horizontal"); }
+        if verbose > 0 { println!("  Flip horizontal"); }
         data = flip_h(&data, width, height, channels);
     }
 
     if args.flip_v {
-        if verbose { println!("  Flip vertical"); }
+        if verbose > 0 { println!("  Flip vertical"); }
         data = flip_v(&data, width, height, channels);
     }
 
     if let Some(angle) = args.rotate {
-        if verbose { println!("  Rotate {}deg", angle); }
+        if verbose > 0 { println!("  Rotate {}deg", angle); }
         match angle {
             90 => {
                 let (new_data, new_w, new_h) = rotate_90_cw(&data, width, height, channels);
@@ -55,7 +56,7 @@ pub fn run(args: TransformArgs, verbose: u8, allow_non_color: bool) -> Result<()
     }
 
     if args.transpose {
-        if verbose { println!("  Transpose"); }
+        if verbose > 0 { println!("  Transpose"); }
         data = transpose(&data, width, height, channels);
         std::mem::swap(&mut width, &mut height);
     }
@@ -64,7 +65,7 @@ pub fn run(args: TransformArgs, verbose: u8, allow_non_color: bool) -> Result<()
 
     super::save_image(&args.output, &output)?;
 
-    if verbose {
+    if verbose > 0 {
         println!("Done.");
     }
 

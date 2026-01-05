@@ -15,13 +15,13 @@ pub fn run(args: ColorArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
     let h = image.height as usize;
     let c = image.channels as usize;
 
-    if verbose {
+    if verbose > 0 {
         println!("Applying color transforms to {}", args.input.display());
     }
 
     // Apply exposure adjustment
     if let Some(stops) = args.exposure {
-        if verbose { println!("  Exposure: {:+.2} stops", stops); }
+        if verbose > 0 { println!("  Exposure: {:+.2} stops", stops); }
         let factor = 2.0f32.powf(stops);
         for v in &mut data {
             *v *= factor;
@@ -30,7 +30,7 @@ pub fn run(args: ColorArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
 
     // Apply gamma
     if let Some(gamma) = args.gamma {
-        if verbose { println!("  Gamma: {:.2}", gamma); }
+        if verbose > 0 { println!("  Gamma: {:.2}", gamma); }
         for v in &mut data {
             if *v > 0.0 {
                 *v = v.powf(gamma);
@@ -40,20 +40,20 @@ pub fn run(args: ColorArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
 
     // Apply saturation
     if let Some(sat) = args.saturation {
-        if verbose { println!("  Saturation: {:.2}", sat); }
+        if verbose > 0 { println!("  Saturation: {:.2}", sat); }
         apply_saturation(&mut data, w, h, c, sat);
     }
 
     // Apply transfer function
     if let Some(ref tf) = args.transfer {
-        if verbose { println!("  Transfer: {}", tf); }
+        if verbose > 0 { println!("  Transfer: {}", tf); }
         apply_transfer(&mut data, tf);
     }
 
     let output = ImageData::from_f32(image.width, image.height, image.channels, data);
     super::save_image_layer(&args.output, &output, args.layer.as_deref())?;
 
-    if verbose {
+    if verbose > 0 {
         println!("Done.");
     }
 

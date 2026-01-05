@@ -6,13 +6,13 @@ use vfx_io::ImageData;
 use vfx_ops::transform::rotate;
 
 pub fn run(args: RotateArgs, verbose: u8) -> Result<()> {
-    if verbose {
+    if verbose > 0 {
         println!("Loading: {}", args.input.display());
     }
     
     let input = load_image(&args.input)?;
     
-    if verbose {
+    if verbose > 0 {
         println!("Size: {}x{} ({} ch)", input.width, input.height, input.channels);
         println!("Rotation: {}°", args.angle);
     }
@@ -21,13 +21,13 @@ pub fn run(args: RotateArgs, verbose: u8) -> Result<()> {
     
     let result = rotate_image(&input, args.angle, &bg_color)?;
     
-    if verbose {
+    if verbose > 0 {
         println!("New size: {}x{}", result.width, result.height);
     }
     
     save_image(&args.output, &result)?;
     
-    if verbose {
+    if verbose > 0 {
         println!("Saved: {}", args.output.display());
     }
     

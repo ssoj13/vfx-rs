@@ -15,7 +15,7 @@ pub fn run(args: CropArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
     let h = image.height as usize;
     let c = image.channels as usize;
 
-    if verbose {
+    if verbose > 0 {
         println!("Cropping {}x{} @ ({},{}) from {}x{}", args.w, args.h, args.x, args.y, w, h);
     }
 
@@ -26,7 +26,7 @@ pub fn run(args: CropArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
 
     super::save_image_layer(&args.output, &output, args.layer.as_deref())?;
 
-    if verbose {
+    if verbose > 0 {
         println!("Done.");
     }
 

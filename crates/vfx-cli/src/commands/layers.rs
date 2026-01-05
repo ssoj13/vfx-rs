@@ -9,6 +9,7 @@
 //! contain multiple render passes (beauty, specular, diffuse, depth, etc.).
 
 use crate::{ExtractLayerArgs, LayersArgs, MergeLayersArgs};
+use tracing::{debug, info, trace};
 use anyhow::{Context, Result};
 use std::path::Path;
 use vfx_io::exr::{ExrReader, ExrWriter};
@@ -70,7 +71,7 @@ fn print_layers_text(path: &Path, layered: &LayeredImage, verbose: u8) {
         println!("      Size: {}x{}", layer.width, layer.height);
         println!("      Channels: {}", layer.channels.len());
 
-        if verbose {
+        if verbose > 0 {
             for ch in &layer.channels {
                 println!(
                     "        {} ({:?}, {:?})",
@@ -160,7 +161,7 @@ pub fn run_extract_layer(args: ExtractLayerArgs, verbose: u8) -> Result<()> {
 
     let layer = &layered.layers[layer_idx];
 
-    if verbose {
+    if verbose > 0 {
         println!(
             "Extracting layer '{}' ({}x{}, {} channels)",
             layer.name,
@@ -178,7 +179,7 @@ pub fn run_extract_layer(args: ExtractLayerArgs, verbose: u8) -> Result<()> {
     vfx_io::write(&args.output, &image)
         .with_context(|| format!("Failed to write: {}", args.output.display()))?;
 
-    if verbose {
+    if verbose > 0 {
         println!("Saved to {}", args.output.display());
     }
 
@@ -217,7 +218,7 @@ pub fn run_merge_layers(args: MergeLayersArgs, verbose: u8) -> Result<()> {
             }
             // For multi-layer inputs, preserve original names
 
-            if verbose {
+            if verbose > 0 {
                 println!(
                     "Adding layer '{}' from {} ({}x{}, {} ch)",
                     layer.name,
@@ -249,7 +250,7 @@ pub fn run_merge_layers(args: MergeLayersArgs, verbose: u8) -> Result<()> {
         }
     }
 
-    if verbose {
+    if verbose > 0 {
         println!(
             "Writing {} layers to {}",
             output.layers.len(),

@@ -5,6 +5,7 @@
 
 use crate::ConvertArgs;
 use anyhow::{Context, Result};
+use tracing::{debug, info, trace};
 use vfx_io::exr::{Compression, ExrReader, ExrWriter, ExrWriterOptions};
 use vfx_io::{Format, FormatWriter, PixelFormat};
 
@@ -13,10 +14,20 @@ use vfx_io::{Format, FormatWriter, PixelFormat};
 /// When both input and output are EXR, uses layered I/O to preserve all layers.
 /// Otherwise falls back to single-layer ImageData conversion.
 pub fn run(args: ConvertArgs, verbose: u8) -> Result<()> {
+    trace!(input = %args.input.display(), output = %args.output.display(), "convert::run");
+    
     let input_format = Format::detect(&args.input).unwrap_or(Format::Unknown);
     let output_format = Format::detect(&args.output).unwrap_or(Format::Unknown);
 
-    if verbose {
+    info!(
+        input = %args.input.display(),
+        input_format = ?input_format,
+        output = %args.output.display(),
+        output_format = ?output_format,
+        "Converting image"
+    );
+    
+    if verbose > 0 {
         println!(
             "Converting {} ({:?}) -> {} ({:?})",
             args.input.display(),
@@ -37,7 +48,8 @@ pub fn run(args: ConvertArgs, verbose: u8) -> Result<()> {
     // Apply bit depth conversion if requested
     if let Some(ref depth) = args.depth {
         let target_format = parse_depth(depth)?;
-        if verbose {
+        debug!(from = ?image.format, to = ?target_format, "Converting bit depth");
+        if verbose > 0 {
             println!("  Converting depth: {:?} -> {:?}", image.format, target_format);
         }
         image = image.convert_to(target_format);
@@ -45,7 +57,7 @@ pub fn run(args: ConvertArgs, verbose: u8) -> Result<()> {
 
     super::save_image(&args.output, &image)?;
 
-    if verbose {
+    if verbose > 0 {
         println!("Done.");
     }
 
@@ -54,12 +66,16 @@ pub fn run(args: ConvertArgs, verbose: u8) -> Result<()> {
 
 /// Converts EXR to EXR preserving all layers and channels.
 fn convert_exr_layered(args: &ConvertArgs, verbose: u8) -> Result<()> {
+    trace!(input = %args.input.display(), "convert_exr_layered");
+    
     let reader = ExrReader::default();
     let layered = reader
         .read_layers(&args.input)
         .with_context(|| format!("Failed to read layers from {}", args.input.display()))?;
 
-    if verbose {
+    debug!(layers = layered.layers.len(), "Read EXR layers");
+    
+    if verbose > 0 {
         println!("  Layers: {}", layered.layers.len());
         for layer in &layered.layers {
             println!(
@@ -91,7 +107,7 @@ fn convert_exr_layered(args: &ConvertArgs, verbose: u8) -> Result<()> {
         .write_layers(&args.output, &layered)
         .with_context(|| format!("Failed to write {}", args.output.display()))?;
 
-    if verbose {
+    if verbose > 0 {
         println!("Done.");
     }
 

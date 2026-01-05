@@ -4,6 +4,7 @@
 //! Supports `--layer` for processing specific layers in multi-layer EXR.
 
 use crate::ResizeArgs;
+use tracing::{debug, info, trace};
 use anyhow::{Result, bail};
 use vfx_io::ImageData;
 use vfx_ops::resize::{resize_f32, Filter};
@@ -33,7 +34,7 @@ pub fn run(args: ResizeArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
         _ => bail!("Specify --width, --height, or --scale"),
     };
 
-    if verbose {
+    if verbose > 0 {
         println!("Resizing {}x{} -> {}x{}", src_w, src_h, dst_w, dst_h);
     }
 
@@ -54,7 +55,7 @@ pub fn run(args: ResizeArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
 
     super::save_image_layer(&args.output, &output, args.layer.as_deref())?;
 
-    if verbose {
+    if verbose > 0 {
         println!("Done.");
     }
 

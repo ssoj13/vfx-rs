@@ -71,12 +71,12 @@ fn print_text(
         println!("  Avg value:  {:.6}", avg);
     }
 
-    if verbose || args.all {
+    if verbose > 0 || args.all {
         println!("  Format:     {:?}", format);
     }
 
     // Show layer details when verbose or --all
-    if (verbose || args.all) && layer_info.is_some() {
+    if (verbose > 0 || args.all) && layer_info.is_some() {
         if let Some(layered) = layer_info {
             if layered.layers.len() > 1 || args.all {
                 println!("  Layer details:");
