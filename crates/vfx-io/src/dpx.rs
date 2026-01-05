@@ -1097,9 +1097,13 @@ fn read_10bit<R: Read>(
     big_endian: bool,
     packing: u16,
 ) -> IoResult<Vec<f32>> {
+    // DPX 10-bit packing modes:
+    // 0 = packed (method B, bitstream, no padding)
+    // 1 = filled method A (32-bit aligned, MSB justified)
+    // 2 = filled method B (32-bit aligned, LSB justified)
     match packing {
-        0 => read_10bit_method_a(reader, pixel_count, big_endian),
-        1 => read_10bit_method_b(reader, pixel_count),
+        0 => read_10bit_method_b(reader, pixel_count),
+        1 | 2 => read_10bit_method_a(reader, pixel_count, big_endian),
         _ => read_10bit_method_a(reader, pixel_count, big_endian), // fallback
     }
 }
