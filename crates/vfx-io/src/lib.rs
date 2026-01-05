@@ -12,6 +12,9 @@
 //! - **TIFF** - Print/archival with LZW compression
 //! - **DPX** - Film scanning/output (10-bit log)
 //! - **HEIF/HEIC** - Modern HDR format with PQ/HLG (requires `heif` feature)
+//! - **WebP** - Modern lossy/lossless format (requires `webp` feature)
+//! - **AVIF** - AV1-based format with HDR support (requires `avif` feature)
+//! - **JPEG2000** - JP2/J2K for cinema/archival (requires `jp2` feature)
 //!
 //! # Architecture
 //!
@@ -94,6 +97,9 @@
 //! - `dpx` - DPX support (default)
 //! - `hdr` - Radiance HDR support (default)
 //! - `heif` - HEIF/HEIC support (requires system libheif, see Cargo.toml)
+//! - `webp` - WebP support (via image crate)
+//! - `avif` - AVIF support (via image crate)
+//! - `jp2` - JPEG2000 support (requires OpenJPEG)
 
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
@@ -124,6 +130,15 @@ pub mod dpx;
 pub mod hdr;
 
 pub mod heif;
+
+#[cfg(feature = "webp")]
+pub mod webp;
+
+#[cfg(feature = "avif")]
+pub mod avif;
+
+#[cfg(feature = "jp2")]
+pub mod jp2;
 
 pub mod sequence;
 pub mod cache;
@@ -187,6 +202,21 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
 
         #[cfg(not(feature = "heif"))]
         Format::Heif => Err(IoError::UnsupportedFormat("HEIF support requires 'heif' feature".into())),
+
+        #[cfg(feature = "webp")]
+        Format::WebP => webp::read(path),
+
+        #[cfg(not(feature = "webp"))]
+        Format::WebP => Err(IoError::UnsupportedFormat("WebP support requires 'webp' feature".into())),
+
+        // AVIF is write-only - decoding requires system dav1d library
+        Format::Avif => Err(IoError::UnsupportedFormat("AVIF read not supported (requires dav1d library)".into())),
+
+        #[cfg(feature = "jp2")]
+        Format::Jp2 => jp2::read(path),
+
+        #[cfg(not(feature = "jp2"))]
+        Format::Jp2 => Err(IoError::UnsupportedFormat("JPEG2000 support requires 'jp2' feature".into())),
         
         Format::Unknown => Err(IoError::UnsupportedFormat(
             path.extension()
@@ -242,6 +272,21 @@ pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
 
         #[cfg(not(feature = "heif"))]
         Format::Heif => Err(IoError::UnsupportedFormat("HEIF support requires 'heif' feature".into())),
+
+        #[cfg(feature = "webp")]
+        Format::WebP => webp::write(path, image),
+
+        #[cfg(not(feature = "webp"))]
+        Format::WebP => Err(IoError::UnsupportedFormat("WebP support requires 'webp' feature".into())),
+
+        #[cfg(feature = "avif")]
+        Format::Avif => avif::write(path, image),
+
+        #[cfg(not(feature = "avif"))]
+        Format::Avif => Err(IoError::UnsupportedFormat("AVIF support requires 'avif' feature".into())),
+
+        // JP2 is read-only - the jpeg2k crate doesn't support creating new images
+        Format::Jp2 => Err(IoError::UnsupportedFormat("JPEG2000 write not supported (read-only format)".into())),
         
         Format::Unknown => Err(IoError::UnsupportedFormat(
             path.extension()

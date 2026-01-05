@@ -24,6 +24,12 @@ pub enum Format {
     Hdr,
     /// HEIF/HEIC format.
     Heif,
+    /// WebP format.
+    WebP,
+    /// AVIF format.
+    Avif,
+    /// JPEG2000 format.
+    Jp2,
     /// Unknown/unsupported format.
     Unknown,
 }
@@ -62,6 +68,9 @@ impl Format {
             Some("dpx") => Format::Dpx,
             Some("hdr") | Some("pic") | Some("rgbe") => Format::Hdr,
             Some("heif") | Some("heic") | Some("hif") => Format::Heif,
+            Some("webp") => Format::WebP,
+            Some("avif") => Format::Avif,
+            Some("jp2") | Some("j2k") | Some("j2c") | Some("jpx") => Format::Jp2,
             _ => Format::Unknown,
         }
     }
@@ -131,6 +140,27 @@ impl Format {
             if brand == b"heic" || brand == b"heix" || brand == b"mif1" || brand == b"msf1" || brand == b"hevc" {
                 return Format::Heif;
             }
+            // AVIF: ftyp with avif brand
+            if brand == b"avif" || brand == b"avis" || brand == b"av01" {
+                return Format::Avif;
+            }
+        }
+        
+        // WebP: RIFF....WEBP
+        if bytes.len() >= 12 && bytes[0..4] == [b'R', b'I', b'F', b'F'] && bytes[8..12] == [b'W', b'E', b'B', b'P'] {
+            return Format::WebP;
+        }
+        
+        // JPEG2000: JP2 container or raw codestream
+        if bytes.len() >= 12 {
+            // JP2 container: 0x0000000C 6A502020
+            if bytes[0..12] == [0x00, 0x00, 0x00, 0x0C, 0x6A, 0x50, 0x20, 0x20, 0x0D, 0x0A, 0x87, 0x0A] {
+                return Format::Jp2;
+            }
+            // Raw J2K codestream: FF 4F FF 51
+            if bytes[0..4] == [0xFF, 0x4F, 0xFF, 0x51] {
+                return Format::Jp2;
+            }
         }
 
         Format::Unknown
@@ -146,6 +176,9 @@ impl Format {
             Format::Dpx => "dpx",
             Format::Hdr => "hdr",
             Format::Heif => "heif",
+            Format::WebP => "webp",
+            Format::Avif => "avif",
+            Format::Jp2 => "jp2",
             Format::Unknown => "",
         }
     }
@@ -160,18 +193,21 @@ impl Format {
             Format::Dpx => "image/x-dpx",
             Format::Hdr => "image/vnd.radiance",
             Format::Heif => "image/heif",
+            Format::WebP => "image/webp",
+            Format::Avif => "image/avif",
+            Format::Jp2 => "image/jp2",
             Format::Unknown => "application/octet-stream",
         }
     }
     
     /// Returns true if this format supports HDR/float data.
     pub fn supports_hdr(&self) -> bool {
-        matches!(self, Format::Exr | Format::Tiff | Format::Hdr | Format::Heif)
+        matches!(self, Format::Exr | Format::Tiff | Format::Hdr | Format::Heif | Format::Avif)
     }
     
     /// Returns true if this format supports alpha channel.
     pub fn supports_alpha(&self) -> bool {
-        matches!(self, Format::Exr | Format::Png | Format::Tiff | Format::Heif)
+        matches!(self, Format::Exr | Format::Png | Format::Tiff | Format::Heif | Format::WebP | Format::Avif | Format::Jp2)
     }
 }
 
