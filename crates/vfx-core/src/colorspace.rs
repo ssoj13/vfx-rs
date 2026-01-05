@@ -48,6 +48,186 @@
 
 use std::fmt;
 
+// ============================================================================
+// ColorSpaceId - Runtime color space identifier
+// ============================================================================
+
+/// Runtime identifier for color spaces.
+///
+/// Bridges compile-time marker types with runtime operations.
+/// Use this for:
+/// - Serialization/deserialization
+/// - Dynamic dispatch
+/// - OCIO integration
+/// - Metadata storage
+///
+/// # Example
+///
+/// ```rust
+/// use vfx_core::{ColorSpace, ColorSpaceId, Srgb, AcesCg};
+///
+/// // Get ID from compile-time type
+/// let id = Srgb::ID;
+/// assert_eq!(id.name(), "sRGB");
+///
+/// // Parse from string
+/// let id = ColorSpaceId::from_name("ACEScg").unwrap();
+/// assert_eq!(id, ColorSpaceId::AcesCg);
+/// ```
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum ColorSpaceId {
+    /// sRGB with standard transfer function.
+    Srgb = 0,
+    /// Linear sRGB (Rec.709 primaries, linear).
+    LinearSrgb = 1,
+    /// ACEScg - standard ACES working space.
+    AcesCg = 2,
+    /// ACES2065-1 - archival ACES format.
+    Aces2065 = 3,
+    /// ACEScct - log-encoded ACES for grading.
+    AcesCct = 4,
+    /// ACEScc - pure log ACES.
+    AcesCc = 5,
+    /// Rec.709 broadcast standard.
+    Rec709 = 6,
+    /// Rec.2020 wide gamut (linear).
+    Rec2020 = 7,
+    /// DCI-P3 theatrical.
+    DciP3 = 8,
+    /// Display P3 (Apple).
+    DisplayP3 = 9,
+    /// Unknown or unspecified.
+    Unknown = 255,
+}
+
+impl ColorSpaceId {
+    /// All known color space IDs (excluding Unknown).
+    pub const ALL: &'static [ColorSpaceId] = &[
+        Self::Srgb,
+        Self::LinearSrgb,
+        Self::AcesCg,
+        Self::Aces2065,
+        Self::AcesCct,
+        Self::AcesCc,
+        Self::Rec709,
+        Self::Rec2020,
+        Self::DciP3,
+        Self::DisplayP3,
+    ];
+
+    /// Human-readable name.
+    #[inline]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Srgb => "sRGB",
+            Self::LinearSrgb => "Linear sRGB",
+            Self::AcesCg => "ACEScg",
+            Self::Aces2065 => "ACES2065-1",
+            Self::AcesCct => "ACEScct",
+            Self::AcesCc => "ACEScc",
+            Self::Rec709 => "Rec.709",
+            Self::Rec2020 => "Rec.2020",
+            Self::DciP3 => "DCI-P3",
+            Self::DisplayP3 => "Display P3",
+            Self::Unknown => "Unknown",
+        }
+    }
+
+    /// Whether this color space uses linear encoding.
+    #[inline]
+    pub const fn is_linear(&self) -> bool {
+        matches!(
+            self,
+            Self::LinearSrgb | Self::AcesCg | Self::Aces2065 | Self::Rec2020
+        )
+    }
+
+    /// CIE xy white point chromaticity.
+    #[inline]
+    pub const fn white_point(&self) -> (f32, f32) {
+        match self {
+            // D65 white point
+            Self::Srgb | Self::LinearSrgb | Self::Rec709 | Self::Rec2020 | Self::DisplayP3 => {
+                (0.3127, 0.3290)
+            }
+            // ACES white (~D60)
+            Self::AcesCg | Self::Aces2065 | Self::AcesCct | Self::AcesCc => (0.32168, 0.33767),
+            // DCI white
+            Self::DciP3 => (0.314, 0.351),
+            Self::Unknown => (0.3127, 0.3290),
+        }
+    }
+
+    /// CIE xy primaries [Red, Green, Blue].
+    #[inline]
+    pub const fn primaries(&self) -> [(f32, f32); 3] {
+        match self {
+            // sRGB / Rec.709 primaries
+            Self::Srgb | Self::LinearSrgb | Self::Rec709 | Self::Unknown => {
+                [(0.640, 0.330), (0.300, 0.600), (0.150, 0.060)]
+            }
+            // ACES AP1 primaries
+            Self::AcesCg | Self::AcesCct | Self::AcesCc => {
+                [(0.713, 0.293), (0.165, 0.830), (0.128, 0.044)]
+            }
+            // ACES AP0 primaries
+            Self::Aces2065 => [(0.7347, 0.2653), (0.0000, 1.0000), (0.0001, -0.0770)],
+            // Rec.2020 primaries
+            Self::Rec2020 => [(0.708, 0.292), (0.170, 0.797), (0.131, 0.046)],
+            // P3 primaries
+            Self::DciP3 | Self::DisplayP3 => [(0.680, 0.320), (0.265, 0.690), (0.150, 0.060)],
+        }
+    }
+
+    /// Color space family (ACES, sRGB, Rec, P3).
+    #[inline]
+    pub const fn family(&self) -> Option<&'static str> {
+        match self {
+            Self::AcesCg | Self::Aces2065 | Self::AcesCct | Self::AcesCc => Some("ACES"),
+            Self::Srgb | Self::LinearSrgb => Some("sRGB"),
+            Self::Rec709 | Self::Rec2020 => Some("Rec"),
+            Self::DciP3 | Self::DisplayP3 => Some("P3"),
+            Self::Unknown => None,
+        }
+    }
+
+    /// Parse from name string (case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        let lower = name.to_lowercase();
+        match lower.as_str() {
+            "srgb" | "s-rgb" => Some(Self::Srgb),
+            "linear srgb" | "linearsrgb" | "linear_srgb" | "srgb-linear" => Some(Self::LinearSrgb),
+            "acescg" | "aces_cg" | "aces-cg" => Some(Self::AcesCg),
+            "aces2065-1" | "aces2065" | "ap0" => Some(Self::Aces2065),
+            "acescct" | "aces_cct" | "aces-cct" => Some(Self::AcesCct),
+            "acescc" | "aces_cc" | "aces-cc" => Some(Self::AcesCc),
+            "rec709" | "rec.709" | "bt709" | "bt.709" => Some(Self::Rec709),
+            "rec2020" | "rec.2020" | "bt2020" | "bt.2020" => Some(Self::Rec2020),
+            "dci-p3" | "dcip3" | "dci_p3" => Some(Self::DciP3),
+            "display p3" | "displayp3" | "display_p3" | "p3-display" => Some(Self::DisplayP3),
+            "unknown" | "" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+
+impl Default for ColorSpaceId {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+impl fmt::Display for ColorSpaceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+// ============================================================================
+// ColorSpace Trait
+// ============================================================================
+
 /// Trait for color space marker types.
 ///
 /// This trait provides compile-time information about color spaces,
@@ -56,12 +236,13 @@ use std::fmt;
 /// # Implementing Custom Color Spaces
 ///
 /// ```
-/// use vfx_core::ColorSpace;
+/// use vfx_core::{ColorSpace, ColorSpaceId};
 ///
 /// #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 /// pub struct MyCustomSpace;
 ///
 /// impl ColorSpace for MyCustomSpace {
+///     const ID: ColorSpaceId = ColorSpaceId::Unknown;
 ///     const NAME: &'static str = "MyCustom";
 ///     const IS_LINEAR: bool = true;
 ///     const WHITE_POINT: (f32, f32) = (0.3127, 0.3290); // D65
@@ -73,6 +254,11 @@ use std::fmt;
 /// }
 /// ```
 pub trait ColorSpace: Copy + Clone + Default + Send + Sync + fmt::Debug + 'static {
+    /// Runtime identifier for this color space.
+    ///
+    /// Enables bridging between compile-time and runtime representations.
+    const ID: ColorSpaceId;
+
     /// Human-readable name of the color space.
     ///
     /// Used for display, logging, and metadata.
@@ -148,6 +334,7 @@ pub trait ColorSpace: Copy + Clone + Default + Send + Sync + fmt::Debug + 'stati
 pub struct Aces2065;
 
 impl ColorSpace for Aces2065 {
+    const ID: ColorSpaceId = ColorSpaceId::Aces2065;
     const NAME: &'static str = "ACES2065-1";
     const IS_LINEAR: bool = true;
     const WHITE_POINT: (f32, f32) = (0.32168, 0.33767); // ACES white (~D60)
@@ -182,6 +369,7 @@ impl ColorSpace for Aces2065 {
 pub struct AcesCg;
 
 impl ColorSpace for AcesCg {
+    const ID: ColorSpaceId = ColorSpaceId::AcesCg;
     const NAME: &'static str = "ACEScg";
     const IS_LINEAR: bool = true;
     const WHITE_POINT: (f32, f32) = (0.32168, 0.33767);
@@ -220,6 +408,7 @@ impl ColorSpace for AcesCg {
 pub struct AcesCct;
 
 impl ColorSpace for AcesCct {
+    const ID: ColorSpaceId = ColorSpaceId::AcesCct;
     const NAME: &'static str = "ACEScct";
     const IS_LINEAR: bool = false;
     const WHITE_POINT: (f32, f32) = (0.32168, 0.33767);
@@ -247,6 +436,7 @@ impl ColorSpace for AcesCct {
 pub struct AcesCc;
 
 impl ColorSpace for AcesCc {
+    const ID: ColorSpaceId = ColorSpaceId::AcesCc;
     const NAME: &'static str = "ACEScc";
     const IS_LINEAR: bool = false;
     const WHITE_POINT: (f32, f32) = (0.32168, 0.33767);
@@ -289,6 +479,7 @@ impl ColorSpace for AcesCc {
 pub struct Srgb;
 
 impl ColorSpace for Srgb {
+    const ID: ColorSpaceId = ColorSpaceId::Srgb;
     const NAME: &'static str = "sRGB";
     const IS_LINEAR: bool = false;
     const WHITE_POINT: (f32, f32) = (0.3127, 0.3290); // D65
@@ -319,6 +510,7 @@ impl ColorSpace for Srgb {
 pub struct LinearSrgb;
 
 impl ColorSpace for LinearSrgb {
+    const ID: ColorSpaceId = ColorSpaceId::LinearSrgb;
     const NAME: &'static str = "Linear sRGB";
     const IS_LINEAR: bool = true;
     const WHITE_POINT: (f32, f32) = (0.3127, 0.3290);
@@ -349,6 +541,7 @@ impl ColorSpace for LinearSrgb {
 pub struct Rec709;
 
 impl ColorSpace for Rec709 {
+    const ID: ColorSpaceId = ColorSpaceId::Rec709;
     const NAME: &'static str = "Rec.709";
     const IS_LINEAR: bool = false;
     const WHITE_POINT: (f32, f32) = (0.3127, 0.3290);
@@ -382,6 +575,7 @@ impl ColorSpace for Rec709 {
 pub struct Rec2020;
 
 impl ColorSpace for Rec2020 {
+    const ID: ColorSpaceId = ColorSpaceId::Rec2020;
     const NAME: &'static str = "Rec.2020";
     const IS_LINEAR: bool = true; // Linear variant
     const WHITE_POINT: (f32, f32) = (0.3127, 0.3290);
@@ -410,6 +604,7 @@ impl ColorSpace for Rec2020 {
 pub struct DciP3;
 
 impl ColorSpace for DciP3 {
+    const ID: ColorSpaceId = ColorSpaceId::DciP3;
     const NAME: &'static str = "DCI-P3";
     const IS_LINEAR: bool = false;
     const WHITE_POINT: (f32, f32) = (0.314, 0.351); // DCI white
@@ -439,6 +634,7 @@ impl ColorSpace for DciP3 {
 pub struct DisplayP3;
 
 impl ColorSpace for DisplayP3 {
+    const ID: ColorSpaceId = ColorSpaceId::DisplayP3;
     const NAME: &'static str = "Display P3";
     const IS_LINEAR: bool = false;
     const WHITE_POINT: (f32, f32) = (0.3127, 0.3290); // D65
@@ -468,6 +664,7 @@ impl ColorSpace for DisplayP3 {
 pub struct Unknown;
 
 impl ColorSpace for Unknown {
+    const ID: ColorSpaceId = ColorSpaceId::Unknown;
     const NAME: &'static str = "Unknown";
     const IS_LINEAR: bool = false;
     const WHITE_POINT: (f32, f32) = (0.3127, 0.3290); // Assume D65
@@ -481,6 +678,40 @@ impl ColorSpace for Unknown {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_colorspace_id_roundtrip() {
+        // All marker types have correct ID
+        assert_eq!(Srgb::ID, ColorSpaceId::Srgb);
+        assert_eq!(AcesCg::ID, ColorSpaceId::AcesCg);
+        assert_eq!(Aces2065::ID, ColorSpaceId::Aces2065);
+        assert_eq!(Rec2020::ID, ColorSpaceId::Rec2020);
+    }
+
+    #[test]
+    fn test_colorspace_id_properties() {
+        let id = ColorSpaceId::AcesCg;
+        assert_eq!(id.name(), "ACEScg");
+        assert!(id.is_linear());
+        assert_eq!(id.family(), Some("ACES"));
+    }
+
+    #[test]
+    fn test_colorspace_id_from_name() {
+        assert_eq!(ColorSpaceId::from_name("sRGB"), Some(ColorSpaceId::Srgb));
+        assert_eq!(ColorSpaceId::from_name("ACEScg"), Some(ColorSpaceId::AcesCg));
+        assert_eq!(ColorSpaceId::from_name("rec.709"), Some(ColorSpaceId::Rec709));
+        assert_eq!(ColorSpaceId::from_name("unknown_space"), None);
+    }
+
+    #[test]
+    fn test_colorspace_id_all() {
+        // ALL should contain all known spaces
+        assert_eq!(ColorSpaceId::ALL.len(), 10);
+        assert!(ColorSpaceId::ALL.contains(&ColorSpaceId::Srgb));
+        assert!(ColorSpaceId::ALL.contains(&ColorSpaceId::AcesCg));
+        assert!(!ColorSpaceId::ALL.contains(&ColorSpaceId::Unknown));
+    }
 
     #[test]
     fn test_colorspace_names() {

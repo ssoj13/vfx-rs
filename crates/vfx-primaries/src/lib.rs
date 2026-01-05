@@ -48,6 +48,7 @@
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
 
+use vfx_core::ColorSpaceId;
 use vfx_math::{Mat3, Vec3};
 
 /// RGB color space primaries definition.
@@ -87,6 +88,37 @@ impl Primaries {
     #[inline]
     pub fn white_xyz(&self) -> Vec3 {
         xy_to_xyz(self.w.0, self.w.1)
+    }
+
+    /// Create Primaries from a ColorSpaceId.
+    ///
+    /// Bridges compile-time color space markers to runtime primaries.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use vfx_primaries::Primaries;
+    /// use vfx_core::ColorSpaceId;
+    ///
+    /// let p = Primaries::from_id(ColorSpaceId::AcesCg);
+    /// assert_eq!(p.name, "ACEScg");
+    /// ```
+    pub const fn from_id(id: ColorSpaceId) -> Self {
+        let prims = id.primaries();
+        let w = id.white_point();
+        Self {
+            r: prims[0],
+            g: prims[1],
+            b: prims[2],
+            w,
+            name: id.name(),
+        }
+    }
+}
+
+impl From<ColorSpaceId> for Primaries {
+    fn from(id: ColorSpaceId) -> Self {
+        Self::from_id(id)
     }
 }
 
@@ -328,6 +360,24 @@ pub fn rgb_to_rgb_matrix(src: &Primaries, dst: &Primaries) -> Mat3 {
     xyz_to_dst * src_to_xyz
 }
 
+/// Computes conversion matrix between two color spaces by ID.
+///
+/// Convenience function that bridges ColorSpaceId to matrix generation.
+///
+/// # Example
+///
+/// ```rust
+/// use vfx_primaries::conversion_matrix;
+/// use vfx_core::ColorSpaceId;
+///
+/// let m = conversion_matrix(ColorSpaceId::Srgb, ColorSpaceId::AcesCg);
+/// ```
+pub fn conversion_matrix(from: ColorSpaceId, to: ColorSpaceId) -> Mat3 {
+    let src = Primaries::from_id(from);
+    let dst = Primaries::from_id(to);
+    rgb_to_rgb_matrix(&src, &dst)
+}
+
 // ============================================================================
 // Pre-computed Common Matrices
 // ============================================================================
@@ -377,6 +427,25 @@ pub const XYZ_TO_ACES_AP1: Mat3 = Mat3::from_rows([
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vfx_core::ColorSpaceId;
+
+    #[test]
+    fn test_primaries_from_id() {
+        let p = Primaries::from_id(ColorSpaceId::AcesCg);
+        assert_eq!(p.name, "ACEScg");
+        assert!((p.r.0 - 0.713).abs() < 0.001);
+        
+        // Test From trait
+        let p2: Primaries = ColorSpaceId::Srgb.into();
+        assert_eq!(p2.name, "sRGB");
+    }
+
+    #[test]
+    fn test_conversion_matrix_by_id() {
+        let m = conversion_matrix(ColorSpaceId::Srgb, ColorSpaceId::AcesCg);
+        // Check matrix is not identity (spaces differ)
+        assert!((m.m[0][0] - 1.0).abs() > 0.01);
+    }
 
     #[test]
     fn test_srgb_matrix() {

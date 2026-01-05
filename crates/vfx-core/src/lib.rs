@@ -73,8 +73,8 @@ pub use spec::*;
 /// ```
 pub mod prelude {
     pub use crate::colorspace::{
-        Aces2065, AcesCc, AcesCct, AcesCg, ColorSpace, DciP3, DisplayP3, LinearSrgb, Rec2020,
-        Rec709, Srgb,
+        Aces2065, AcesCc, AcesCct, AcesCg, ColorSpace, ColorSpaceId, DciP3, DisplayP3,
+        LinearSrgb, Rec2020, Rec709, Srgb,
     };
     pub use crate::error::{Error, Result};
     pub use crate::image::{Image, ImageView, ImageViewMut};
