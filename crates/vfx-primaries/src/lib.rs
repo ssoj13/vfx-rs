@@ -6,6 +6,21 @@
 //! by defining the chromaticity coordinates of RGB primaries and generating
 //! the matrices to convert between RGB and CIE XYZ.
 //!
+//! # Integration with vfx-core
+//!
+//! This crate bridges [`vfx_core::ColorSpaceId`] to runtime math:
+//!
+//! ```rust
+//! use vfx_core::ColorSpaceId;
+//! use vfx_primaries::{Primaries, conversion_matrix};
+//!
+//! // From compile-time type via ID
+//! let p = Primaries::from_id(ColorSpaceId::AcesCg);
+//!
+//! // Direct conversion matrix
+//! let m = conversion_matrix(ColorSpaceId::Srgb, ColorSpaceId::AcesCg);
+//! ```
+//!
 //! # What are Color Primaries?
 //!
 //! Color primaries define the gamut (range of colors) a color space can represent.

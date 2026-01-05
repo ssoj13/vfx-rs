@@ -3,11 +3,33 @@
 //! This module provides the [`ColorSpace`] trait and marker types for various
 //! color spaces used in VFX production.
 //!
-//! # Design
+//! # Architecture
 //!
-//! Color spaces are represented as zero-sized marker types that implement
-//! the [`ColorSpace`] trait. This enables compile-time checking of color space
-//! operations without runtime overhead.
+//! The color system has two complementary representations:
+//!
+//! 1. **Compile-time markers** ([`ColorSpace`] trait) - Zero-sized types like
+//!    [`Srgb`], [`AcesCg`] that enable type-safe image operations.
+//!    An `Image<Srgb>` cannot be accidentally mixed with `Image<AcesCg>`.
+//!
+//! 2. **Runtime identifiers** ([`ColorSpaceId`] enum) - For serialization,
+//!    dynamic dispatch, OCIO integration, and metadata storage.
+//!
+//! The bridge between them:
+//! ```text
+//! Compile-time          Runtime              Math
+//! ────────────          ───────              ────
+//! trait ColorSpace  ──► ColorSpaceId  ──► vfx_primaries::Primaries
+//!   const ID            .name()            ::from_id()
+//!   const NAME          .is_linear()       conversion_matrix()
+//!   const PRIMARIES     .primaries()
+//! ```
+//!
+//! # Design Rationale
+//!
+//! - **Why both?** Compile-time safety catches errors at build time, but
+//!   runtime IDs are needed for I/O, configs, and user-facing code.
+//! - **Why `const ID`?** Links marker types to runtime enum without overhead.
+//! - **Why not just enum?** Would lose compile-time type safety.
 //!
 //! # Supported Color Spaces
 //!
