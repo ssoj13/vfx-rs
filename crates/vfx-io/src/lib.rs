@@ -148,6 +148,7 @@ pub mod streaming;
 pub mod imagebuf;
 pub mod deepdata;
 pub mod imagebufalgo;
+pub mod colorconfig;
 
 // Re-exports
 pub use error::{IoError, IoResult};
@@ -155,6 +156,7 @@ pub use traits::{FormatReader, FormatWriter, ReadSeek, WriteSeek};
 pub use detect::Format;
 pub use attrs::{Attrs, AttrValue};
 pub use registry::{FormatRegistry, FormatInfo, FormatReaderDyn, FormatWriterDyn};
+pub use colorconfig::ColorConfig;
 
 use std::path::Path;
 #[allow(unused_imports)]

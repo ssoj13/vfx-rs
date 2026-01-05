@@ -38,6 +38,7 @@ vfx-color = { path = "crates/vfx-color" }
 vfx-io = { path = "crates/vfx-io" }
 vfx-ops = { path = "crates/vfx-ops" }
 vfx-compute = { path = "crates/vfx-compute" }
+vfx-ocio = { path = "crates/vfx-ocio" }
 
 # Math & SIMD
 glam = "0.30"

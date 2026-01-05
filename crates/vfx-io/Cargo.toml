@@ -45,6 +45,7 @@ heif = ["dep:libheif-rs"]
 
 [dependencies]
 vfx-core.workspace = true
+vfx-ocio.workspace = true
 thiserror.workspace = true
 tracing = "0.1"
 half = "2.4"

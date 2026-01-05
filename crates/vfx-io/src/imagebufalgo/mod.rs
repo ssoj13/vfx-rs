@@ -12,6 +12,7 @@
 //! - [`color`] - Color operations (saturate, contrast, color maps, gamma)
 //! - [`composite`] - Compositing operations (Porter-Duff, blend modes)
 //! - [`stats`] - Statistics and analysis (histogram, compare, min/max)
+//! - [`ocio`] - OCIO color conversion (colorconvert, ociodisplay, ociolook)
 //!
 //! # Example
 //!
@@ -37,6 +38,7 @@ pub mod arithmetic;
 pub mod color;
 pub mod composite;
 pub mod stats;
+pub mod ocio;
 
 // Re-export commonly used functions
 pub use patterns::{zero, fill, checker, noise};
@@ -71,4 +73,13 @@ pub use stats::{
     histogram, Histogram,
     maxchan, minchan,
     color_range_check, RangeCheckResult,
+};
+
+// OCIO color conversion operations
+pub use ocio::{
+    colorconvert, colorconvert_into, colorconvert_inplace,
+    ociodisplay, ociodisplay_into,
+    ociolook, ociolook_into,
+    ociofiletransform, ociofiletransform_into,
+    equivalent_colorspace,
 };
