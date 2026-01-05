@@ -374,6 +374,29 @@ impl DisplayManager {
     pub fn view_transforms(&self) -> &[ViewTransform] {
         &self.view_transforms
     }
+
+    /// Removes a display by name.
+    pub fn remove_display(&mut self, name: &str) {
+        self.displays.retain(|d| !d.name.eq_ignore_ascii_case(name));
+    }
+
+    /// Returns the number of displays.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.displays.len()
+    }
+
+    /// Checks if there are no displays.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.displays.is_empty()
+    }
+
+    /// Returns the number of view transforms.
+    #[inline]
+    pub fn num_view_transforms(&self) -> usize {
+        self.view_transforms.len()
+    }
 }
 
 #[cfg(test)]

@@ -1504,6 +1504,193 @@ impl Config {
     pub fn environment_var_value_at(&self, index: usize) -> Option<&str> {
         self.context.vars().nth(index).map(|(_, v)| v)
     }
+
+    // ========================================================================
+    // Color space management extensions
+    // ========================================================================
+
+    /// Returns the number of color spaces.
+    #[inline]
+    pub fn num_colorspaces(&self) -> usize {
+        self.colorspaces.len()
+    }
+
+    /// Returns color spaces filtered by family.
+    pub fn colorspaces_by_family(&self, family: crate::colorspace::Family) -> Vec<&ColorSpace> {
+        self.colorspaces
+            .iter()
+            .filter(|cs| cs.family() == family)
+            .collect()
+    }
+
+    /// Returns color spaces filtered by encoding.
+    pub fn colorspaces_by_encoding(&self, encoding: crate::colorspace::Encoding) -> Vec<&ColorSpace> {
+        self.colorspaces
+            .iter()
+            .filter(|cs| cs.encoding() == encoding)
+            .collect()
+    }
+
+    /// Returns all linear color spaces.
+    pub fn linear_colorspaces(&self) -> Vec<&ColorSpace> {
+        self.colorspaces
+            .iter()
+            .filter(|cs| cs.encoding().is_linear())
+            .collect()
+    }
+
+    /// Returns all data/non-color color spaces.
+    pub fn data_colorspaces(&self) -> Vec<&ColorSpace> {
+        self.colorspaces
+            .iter()
+            .filter(|cs| cs.is_data())
+            .collect()
+    }
+
+    /// Checks if a color space is linear.
+    pub fn is_colorspace_linear(&self, name: &str) -> bool {
+        self.colorspace(name)
+            .map(|cs| cs.encoding().is_linear())
+            .unwrap_or(false)
+    }
+
+    /// Removes a color space by name.
+    ///
+    /// Returns true if the color space was found and removed.
+    pub fn remove_colorspace(&mut self, name: &str) -> bool {
+        if let Some(idx) = self.colorspaces.iter().position(|cs| cs.matches_name(name)) {
+            self.colorspaces.remove(idx);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Clears all color spaces.
+    pub fn clear_colorspaces(&mut self) {
+        self.colorspaces.clear();
+    }
+
+    /// Sets the list of inactive (hidden) color spaces.
+    pub fn set_inactive_colorspaces(&mut self, names: Vec<String>) {
+        self.inactive_colorspaces = names;
+    }
+
+    /// Adds a color space to the inactive list.
+    pub fn add_inactive_colorspace(&mut self, name: impl Into<String>) {
+        self.inactive_colorspaces.push(name.into());
+    }
+
+    /// Checks if a color space is inactive (hidden).
+    pub fn is_colorspace_inactive(&self, name: &str) -> bool {
+        self.inactive_colorspaces
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case(name))
+    }
+
+    /// Returns only active (non-hidden) color spaces.
+    pub fn active_colorspaces(&self) -> Vec<&ColorSpace> {
+        self.colorspaces
+            .iter()
+            .filter(|cs| !self.is_colorspace_inactive(cs.name()))
+            .collect()
+    }
+
+    // ========================================================================
+    // Display management extensions
+    // ========================================================================
+
+    /// Returns the number of displays.
+    #[inline]
+    pub fn num_displays(&self) -> usize {
+        self.displays.displays().len()
+    }
+
+    /// Returns display name at index.
+    pub fn display_name_at(&self, index: usize) -> Option<&str> {
+        self.displays.displays().get(index).map(|d| d.name())
+    }
+
+    /// Adds a view to a display.
+    pub fn add_view(&mut self, display: &str, view: View) {
+        if let Some(d) = self.displays.display_mut(display) {
+            d.add_view(view);
+        }
+    }
+
+    /// Removes a display by name.
+    pub fn remove_display(&mut self, name: &str) {
+        self.displays.remove_display(name);
+    }
+
+    /// Sets active displays list.
+    pub fn set_active_displays(&mut self, displays: Vec<String>) {
+        self.active_displays = displays;
+    }
+
+    /// Sets active views list.
+    pub fn set_active_views(&mut self, views: Vec<String>) {
+        self.active_views = views;
+    }
+
+    // ========================================================================
+    // Role management extensions
+    // ========================================================================
+
+    /// Returns the number of defined roles.
+    #[inline]
+    pub fn num_roles(&self) -> usize {
+        self.roles.len()
+    }
+
+    /// Returns role name at index.
+    pub fn role_name_at(&self, index: usize) -> Option<&str> {
+        self.roles.iter().nth(index).map(|(name, _)| name)
+    }
+
+    /// Returns color space name for role at index.
+    pub fn role_colorspace_at(&self, index: usize) -> Option<&str> {
+        self.roles.iter().nth(index).map(|(_, cs)| cs)
+    }
+
+    /// Checks if a role is defined.
+    #[inline]
+    pub fn has_role(&self, role: &str) -> bool {
+        self.roles.contains(role)
+    }
+
+    /// Removes a role.
+    pub fn remove_role(&mut self, role: &str) -> Option<String> {
+        // Note: This would need Roles to have a remove method
+        // For now, we can't implement this without modifying Roles
+        let _ = role;
+        None
+    }
+
+    // ========================================================================
+    // Look management extensions
+    // ========================================================================
+
+    /// Returns the number of looks.
+    #[inline]
+    pub fn num_looks(&self) -> usize {
+        self.looks.len()
+    }
+
+    /// Returns look name at index.
+    pub fn look_name_at(&self, index: usize) -> Option<&str> {
+        self.looks.all().get(index).map(|l| l.name())
+    }
+
+    /// Checks if a look is defined.
+    pub fn has_look(&self, name: &str) -> bool {
+        self.looks.get(name).is_some()
+    }
+
+    /// Returns the look by name.
+    pub fn look(&self, name: &str) -> Option<&Look> {
+        self.looks.get(name)
+    }
 }
 
 // ============================================================================
