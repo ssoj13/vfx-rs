@@ -631,7 +631,7 @@ impl ComputePipeline {
     }
 
     /// Streaming file-to-file processing.
-    #[cfg(feature = "streaming")]
+    #[cfg(feature = "io")]
     fn run_streaming_file_to_file(
         &mut self,
         in_path: &Path,
@@ -680,7 +680,7 @@ impl ComputePipeline {
     }
 
     /// Fallback for non-streaming builds.
-    #[cfg(not(feature = "streaming"))]
+    #[cfg(not(feature = "io"))]
     fn run_streaming_file_to_file(
         &mut self,
         _in_path: &Path,

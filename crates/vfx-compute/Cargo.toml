@@ -8,10 +8,9 @@ rust-version.workspace = true
 description = "Unified compute backend for VFX workflows (CPU + GPU)"
 
 [features]
-default = []
+default = ["io"]
 wgpu = ["dep:wgpu", "dep:pollster"]
 io = ["dep:vfx-io"]
-streaming = ["io"]
 
 [dependencies]
 # GPU compute (optional)

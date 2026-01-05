@@ -415,6 +415,7 @@ impl Processor {
     }
 
     /// Log strategy info if verbose mode enabled.
+    #[allow(dead_code)]
     fn log_strategy(&self, img: &ComputeImage, op_name: &str) {
         if self.config.verbose {
             let strategy = self.recommend_strategy(img);
