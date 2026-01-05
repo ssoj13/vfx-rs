@@ -4,6 +4,7 @@
 //! Supports `--layer` for processing specific layers in multi-layer EXR.
 
 use crate::ColorArgs;
+#[allow(unused_imports)]
 use tracing::{debug, info, trace};
 use anyhow::Result;
 use vfx_io::ImageData;

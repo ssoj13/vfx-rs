@@ -1,6 +1,7 @@
 //! Batch processing command
 
 use crate::BatchArgs;
+#[allow(unused_imports)]
 use tracing::{debug, info, trace};
 use anyhow::{Result, bail};
 use std::path::PathBuf;

@@ -1,5 +1,6 @@
 //! View command - image viewer with OCIO color management.
 
+#[allow(unused_imports)]
 use tracing::{debug, info, trace};
 use anyhow::Result;
 

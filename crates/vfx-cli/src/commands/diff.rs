@@ -1,6 +1,7 @@
 //! Image diff command (like idiff)
 
 use crate::DiffArgs;
+#[allow(unused_imports)]
 use tracing::{debug, info, trace};
 use anyhow::{Result, bail};
 use vfx_io::ImageData;

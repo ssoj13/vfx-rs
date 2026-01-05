@@ -1,5 +1,6 @@
 //! Rotate command - arbitrary angle rotation
 
+#[allow(unused_imports)]
 use tracing::{debug, info, trace};
 use anyhow::Result;
 use crate::{RotateArgs, commands::{load_image, save_image}};

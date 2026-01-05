@@ -2,6 +2,7 @@
 //!
 //! Applies ACES IDT, RRT, and ODT transforms.
 
+#[allow(unused_imports)]
 use tracing::{debug, info, trace};
 use anyhow::{Result, bail};
 use crate::AcesArgs;

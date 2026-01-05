@@ -4,6 +4,7 @@
 //! specific channels to a new image.
 
 use crate::{ChannelExtractArgs, ChannelShuffleArgs};
+#[allow(unused_imports)]
 use tracing::{debug, info, trace};
 use anyhow::{Result, bail};
 use vfx_io::ImageData;

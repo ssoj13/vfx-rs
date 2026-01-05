@@ -154,6 +154,7 @@ pub use attrs::{Attrs, AttrValue};
 pub use registry::{FormatRegistry, FormatInfo, FormatReaderDyn, FormatWriterDyn};
 
 use std::path::Path;
+#[allow(unused_imports)]
 use tracing::{debug, trace};
 
 /// Reads an image from a file, auto-detecting the format.

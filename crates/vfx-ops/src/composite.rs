@@ -31,6 +31,7 @@
 //! ```
 
 use crate::{OpsError, OpsResult};
+#[allow(unused_imports)]
 use tracing::{debug, trace};
 use vfx_compute::{Processor, ComputeImage, backend::BlendMode as ComputeBlendMode};
 

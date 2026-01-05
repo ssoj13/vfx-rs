@@ -20,6 +20,7 @@
 //! ```
 
 use crate::{OpsError, OpsResult};
+#[allow(unused_imports)]
 use tracing::{debug, trace};
 
 /// Convolution kernel for image filtering.

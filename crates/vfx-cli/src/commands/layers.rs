@@ -9,6 +9,7 @@
 //! contain multiple render passes (beauty, specular, diffuse, depth, etc.).
 
 use crate::{ExtractLayerArgs, LayersArgs, MergeLayersArgs};
+#[allow(unused_imports)]
 use tracing::{debug, info, trace};
 use anyhow::{Context, Result};
 use std::path::Path;

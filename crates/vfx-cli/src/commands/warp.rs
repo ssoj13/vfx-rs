@@ -1,5 +1,6 @@
 //! Warp command - apply lens distortion and artistic effects
 
+#[allow(unused_imports)]
 use tracing::{debug, info, trace};
 use anyhow::{Result, bail};
 use crate::{WarpArgs, commands::{load_image, save_image}};

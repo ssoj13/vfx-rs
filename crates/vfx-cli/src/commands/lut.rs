@@ -1,6 +1,7 @@
 //! LUT application command
 
 use crate::LutArgs;
+#[allow(unused_imports)]
 use tracing::{debug, info, trace};
 use anyhow::{Result, bail};
 use vfx_io::ImageData;

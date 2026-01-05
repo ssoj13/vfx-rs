@@ -5,6 +5,7 @@
 
 use crate::ConvertArgs;
 use anyhow::{Context, Result};
+#[allow(unused_imports)]
 use tracing::{debug, info, trace};
 use vfx_io::exr::{Compression, ExrReader, ExrWriter, ExrWriterOptions};
 use vfx_io::{Format, FormatWriter, PixelFormat};

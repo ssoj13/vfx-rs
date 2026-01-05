@@ -3,6 +3,7 @@
 //! Displays image metadata, dimensions, channels, and for EXR files - layer information.
 
 use crate::InfoArgs;
+#[allow(unused_imports)]
 use tracing::{debug, info, trace};
 use anyhow::Result;
 use std::fs;

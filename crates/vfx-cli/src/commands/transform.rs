@@ -1,6 +1,7 @@
 //! Transform command (flip, rotate, transpose)
 
 use crate::TransformArgs;
+#[allow(unused_imports)]
 use tracing::{debug, info, trace};
 use anyhow::{Result, bail};
 use vfx_io::ImageData;

@@ -1,5 +1,6 @@
 //! UDIM texture set operations
 
+#[allow(unused_imports)]
 use tracing::{debug, info, trace};
 use anyhow::{Context, Result};
 use std::path::Path;
