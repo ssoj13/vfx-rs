@@ -580,6 +580,19 @@ impl Roi3D {
         Self::new(xbegin, xend, ybegin, yend, 0, 1, 0, i32::MAX)
     }
 
+    /// Creates a 2D ROI with specific channel range.
+    #[inline]
+    pub const fn new_2d_with_channels(
+        xbegin: i32,
+        xend: i32,
+        ybegin: i32,
+        yend: i32,
+        chbegin: i32,
+        chend: i32,
+    ) -> Self {
+        Self::new(xbegin, xend, ybegin, yend, 0, 1, chbegin, chend)
+    }
+
     /// Creates a ROI from width and height (origin at 0,0).
     #[inline]
     pub const fn from_size(width: i32, height: i32) -> Self {

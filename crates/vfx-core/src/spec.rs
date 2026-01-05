@@ -68,6 +68,7 @@
 
 use crate::format::{DataFormat, TypeDesc};
 use crate::Rect;
+use crate::Roi3D;
 use std::collections::HashMap;
 
 /// Alias for backward compatibility.
@@ -356,6 +357,54 @@ impl ImageSpec {
         let mut spec = Self::new(width, height, 2, DataFormat::F16);
         spec.channel_names = vec!["Y".into(), "A".into()];
         spec.alpha_channel = 1;
+        spec
+    }
+
+    /// Creates a spec from a [`Roi3D`].
+    ///
+    /// The ROI defines the image dimensions and channel count.
+    /// Format defaults to F32.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use vfx_core::{ImageSpec, Roi3D};
+    ///
+    /// let roi = Roi3D::new_2d_with_channels(0, 1920, 0, 1080, 0, 4);
+    /// let spec = ImageSpec::from_roi(&roi);
+    /// assert_eq!(spec.width, 1920);
+    /// assert_eq!(spec.height, 1080);
+    /// assert_eq!(spec.nchannels, 4);
+    /// ```
+    pub fn from_roi(roi: &Roi3D) -> Self {
+        let width = (roi.xend - roi.xbegin).max(0) as u32;
+        let height = (roi.yend - roi.ybegin).max(0) as u32;
+        let depth = (roi.zend - roi.zbegin).max(0) as u32;
+        let nchannels = (roi.chend - roi.chbegin).max(0).min(255) as u8;
+
+        let mut spec = Self::new(width, height, nchannels, DataFormat::F32);
+        spec.depth = depth;
+        spec.x = roi.xbegin;
+        spec.y = roi.ybegin;
+        spec.z = roi.zbegin;
+        spec.default_channel_names();
+        spec
+    }
+
+    /// Creates a spec from a [`Roi3D`] with a specified number of channels.
+    ///
+    /// The ROI defines spatial dimensions, but channel count is overridden.
+    pub fn from_roi_nchannels(roi: &Roi3D, nchannels: u32) -> Self {
+        let width = (roi.xend - roi.xbegin).max(0) as u32;
+        let height = (roi.yend - roi.ybegin).max(0) as u32;
+        let depth = (roi.zend - roi.zbegin).max(0) as u32;
+
+        let mut spec = Self::new(width, height, nchannels.min(255) as u8, DataFormat::F32);
+        spec.depth = depth;
+        spec.x = roi.xbegin;
+        spec.y = roi.ybegin;
+        spec.z = roi.zbegin;
+        spec.default_channel_names();
         spec
     }
 

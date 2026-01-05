@@ -147,6 +147,7 @@ pub mod udim;
 pub mod streaming;
 pub mod imagebuf;
 pub mod deepdata;
+pub mod imagebufalgo;
 
 // Re-exports
 pub use error::{IoError, IoResult};
