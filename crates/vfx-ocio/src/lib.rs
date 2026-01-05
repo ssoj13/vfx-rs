@@ -97,6 +97,8 @@ pub use transform::{
     ExposureContrastTransform, ExposureContrastStyle,
     AllocationTransform, AllocationType as TransformAllocationType,
     BuiltinTransferTransform,
+    GradingPrimaryTransform, GradingRgbCurveTransform, GradingToneTransform,
+    Lut1DTransform, Lut3DTransform,
 };
 pub use processor::{Processor, OptimizationLevel, BitDepth as ProcessorBitDepth};
 pub use display::{Display, View, ViewTransform, DisplayManager};
