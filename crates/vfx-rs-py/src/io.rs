@@ -48,12 +48,37 @@ fn read_exr(path: PathBuf) -> PyResult<Image> {
 }
 
 /// Write an EXR file.
+///
+/// Args:
+///     path: Output file path
+///     image: Image to write
+///     compression: Compression method: "none", "rle", "zip" (default), "piz", "dwaa", "dwab"
+///     use_half: Write as half-float (f16) instead of f32, reduces size by 50%
 #[pyfunction]
-#[pyo3(signature = (path, image, compression=None))]
-fn write_exr(path: PathBuf, image: &Image, compression: Option<&str>) -> PyResult<()> {
-    // TODO: support compression options
-    let _ = compression;
-    vfx_io::exr::write(&path, image.as_image_data())
+#[pyo3(signature = (path, image, compression=None, use_half=false))]
+fn write_exr(path: PathBuf, image: &Image, compression: Option<&str>, use_half: bool) -> PyResult<()> {
+    use vfx_io::exr::{ExrWriter, ExrWriterOptions, Compression};
+    use vfx_io::FormatWriter;
+    
+    let comp = match compression.map(|s| s.to_lowercase()).as_deref() {
+        Some("none") => Compression::None,
+        Some("rle") => Compression::Rle,
+        Some("zip") | None => Compression::Zip,
+        Some("piz") => Compression::Piz,
+        Some("dwaa") => Compression::Dwaa,
+        Some("dwab") => Compression::Dwab,
+        Some(other) => return Err(PyIOError::new_err(
+            format!("Unknown EXR compression: '{}'. Use: none, rle, zip, piz, dwaa, dwab", other)
+        )),
+    };
+    
+    let opts = ExrWriterOptions {
+        compression: comp,
+        use_half,
+        ..Default::default()
+    };
+    
+    ExrWriter::with_options(opts).write(&path, image.as_image_data())
         .map_err(|e| PyIOError::new_err(format!("EXR write failed: {}", e)))?;
     Ok(())
 }
@@ -71,11 +96,57 @@ fn read_png(path: PathBuf) -> PyResult<Image> {
 }
 
 /// Write a PNG file.
+///
+/// Args:
+///     path: Output file path
+///     image: Image to write
+///     compression: Compression level: "fast", "default", "best" (or 0-2)
+///     bit_depth: Bits per channel: 8 (default) or 16
 #[pyfunction]
-#[pyo3(signature = (path, image, compression=None))]
-fn write_png(path: PathBuf, image: &Image, compression: Option<u8>) -> PyResult<()> {
-    let _ = compression; // TODO: support compression level
-    vfx_io::png::write(&path, image.as_image_data())
+#[pyo3(signature = (path, image, compression=None, bit_depth=None))]
+fn write_png(path: PathBuf, image: &Image, compression: Option<&Bound<'_, PyAny>>, bit_depth: Option<u8>) -> PyResult<()> {
+    use vfx_io::png::{PngWriter, PngWriterOptions, CompressionLevel, BitDepth};
+    use vfx_io::FormatWriter;
+    
+    // Parse compression: string or int
+    let comp = match compression {
+        None => CompressionLevel::Default,
+        Some(v) => {
+            if let Ok(s) = v.extract::<String>() {
+                match s.to_lowercase().as_str() {
+                    "fast" | "0" => CompressionLevel::Fast,
+                    "default" | "1" => CompressionLevel::Default,
+                    "best" | "2" => CompressionLevel::Best,
+                    other => return Err(PyIOError::new_err(
+                        format!("Unknown PNG compression: '{}'. Use: fast, default, best", other)
+                    )),
+                }
+            } else if let Ok(n) = v.extract::<u8>() {
+                match n {
+                    0 => CompressionLevel::Fast,
+                    1 => CompressionLevel::Default,
+                    2 => CompressionLevel::Best,
+                    _ => return Err(PyIOError::new_err("PNG compression must be 0-2")),
+                }
+            } else {
+                return Err(PyIOError::new_err("compression must be string or int"));
+            }
+        }
+    };
+    
+    let depth = match bit_depth {
+        Some(8) | None => BitDepth::Eight,
+        Some(16) => BitDepth::Sixteen,
+        Some(n) => return Err(PyIOError::new_err(format!("PNG bit_depth must be 8 or 16, got {}", n))),
+    };
+    
+    let opts = PngWriterOptions {
+        compression: comp,
+        bit_depth: depth,
+        ..Default::default()
+    };
+    
+    PngWriter::with_options(opts).write(&path, image.as_image_data())
         .map_err(|e| PyIOError::new_err(format!("PNG write failed: {}", e)))?;
     Ok(())
 }

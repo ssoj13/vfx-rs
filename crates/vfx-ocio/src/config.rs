@@ -779,6 +779,9 @@ impl Config {
         // Reference to destination
         if let Some(t) = dst_cs.from_reference() {
             transforms.push(t.clone());
+        } else if let Some(t) = dst_cs.to_reference() {
+            // Auto-invert: use inverse of to_reference
+            transforms.push(t.clone().inverse());
         }
 
         if transforms.is_empty() {
@@ -853,9 +856,13 @@ impl Config {
                 transforms.push(t.clone());
             } else if let Some(t) = dst_cs.from_reference() {
                 transforms.push(t.clone());
+            } else if let Some(t) = dst_cs.to_reference() {
+                transforms.push(t.clone().inverse());
             }
         } else if let Some(t) = dst_cs.from_reference() {
             transforms.push(t.clone());
+        } else if let Some(t) = dst_cs.to_reference() {
+            transforms.push(t.clone().inverse());
         }
 
         if transforms.is_empty() {
@@ -894,6 +901,8 @@ impl Config {
             .ok_or_else(|| OcioError::ColorSpaceNotFound { name: dst.into() })?;
         if let Some(t) = dst_cs.from_reference() {
             transforms.push(t.clone());
+        } else if let Some(t) = dst_cs.to_reference() {
+            transforms.push(t.clone().inverse());
         }
         
         if transforms.is_empty() {

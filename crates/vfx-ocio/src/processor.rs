@@ -1567,8 +1567,83 @@ impl Processor {
                                 }
                             }
                         }
+                        FixedFunctionStyle::AcesRedMod03 | FixedFunctionStyle::AcesRedMod10 => {
+                            // ACES Red Modifier - reduce saturation in red region
+                            let [r, g, b] = *pixel;
+                            let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                            
+                            // Hue detection (simplified)
+                            let max = r.max(g).max(b);
+                            let min = r.min(g).min(b);
+                            let chroma = max - min;
+                            
+                            if chroma > 1e-6 {
+                                // Rough hue angle
+                                let hue = if (r - max).abs() < 1e-6 {
+                                    (g - b) / chroma
+                                } else if (g - max).abs() < 1e-6 {
+                                    2.0 + (b - r) / chroma
+                                } else {
+                                    4.0 + (r - g) / chroma
+                                };
+                                
+                                // Red region weight (hue near 0 or 6)
+                                let hue_norm = if hue < 0.0 { hue + 6.0 } else { hue };
+                                let red_weight = if hue_norm < 1.0 || hue_norm > 5.0 {
+                                    let dist = if hue_norm < 1.0 { hue_norm } else { 6.0 - hue_norm };
+                                    1.0 - dist
+                                } else {
+                                    0.0
+                                };
+                                
+                                // Saturation reduction factor
+                                let sat = if max > 1e-6 { chroma / max } else { 0.0 };
+                                let mod_factor = 1.0 - 0.2 * red_weight * sat;
+                                
+                                if *forward {
+                                    pixel[0] = lum + (r - lum) * mod_factor;
+                                    pixel[1] = lum + (g - lum) * mod_factor;
+                                    pixel[2] = lum + (b - lum) * mod_factor;
+                                } else {
+                                    let inv = 1.0 / mod_factor.max(1e-6);
+                                    pixel[0] = lum + (r - lum) * inv;
+                                    pixel[1] = lum + (g - lum) * inv;
+                                    pixel[2] = lum + (b - lum) * inv;
+                                }
+                            }
+                        }
+                        FixedFunctionStyle::AcesGlow03 | FixedFunctionStyle::AcesGlow10 => {
+                            // ACES Glow - add glow to bright saturated regions
+                            let [r, g, b] = *pixel;
+                            let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                            
+                            // Glow parameters
+                            let glow_gain = 0.05;
+                            let glow_mid = 0.08;
+                            
+                            // Sigmoid for glow amount
+                            let x = (y - glow_mid) * 50.0;
+                            let sigmoid = 1.0 / (1.0 + (-x).exp());
+                            
+                            // Saturation estimate
+                            let max = r.max(g).max(b);
+                            let min = r.min(g).min(b);
+                            let sat = if max > 1e-6 { (max - min) / max } else { 0.0 };
+                            
+                            let glow = glow_gain * sigmoid * sat;
+                            
+                            if *forward {
+                                pixel[0] = r + glow;
+                                pixel[1] = g + glow;
+                                pixel[2] = b + glow;
+                            } else {
+                                pixel[0] = r - glow;
+                                pixel[1] = g - glow;
+                                pixel[2] = b - glow;
+                            }
+                        }
                         _ => {
-                            // Other fixed functions - pass through for now
+                            // Other fixed functions - XYZ/xyY, XYZ/Luv etc.
                         }
                     }
                 }

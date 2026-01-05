@@ -44,6 +44,7 @@ pub use color::{ColorProcessor, Cdl};
 pub use ops::{ImageProcessor, ResizeFilter};
 pub use processor::{
     Processor, ProcessorBuilder, ProcessorConfig,
+    ColorOpBatch, BatchOp,
     DEFAULT_TILE_SIZE, MIN_TILE_SIZE, MAX_TILE_SIZE, DEFAULT_RAM_PERCENT,
 };
 pub use pipeline::{

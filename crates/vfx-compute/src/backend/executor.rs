@@ -182,6 +182,17 @@ impl<G: GpuPrimitives> TiledExecutor<G> {
 
     /// Execute color operation with automatic tiling.
     pub fn execute_color(&self, img: &mut ComputeImage, op: &ColorOp) -> ComputeResult<()> {
+        self.execute_color_chain(img, std::slice::from_ref(op))
+    }
+
+    /// Execute multiple color operations without GPU round-trips.
+    ///
+    /// This is more efficient than calling `execute_color()` multiple times
+    /// because data stays on GPU between operations.
+    pub fn execute_color_chain(&self, img: &mut ComputeImage, ops: &[ColorOp]) -> ComputeResult<()> {
+        if ops.is_empty() {
+            return Ok(());
+        }
         let strategy = self.select_strategy(img);
 
         if is_verbose() {
@@ -194,35 +205,39 @@ impl<G: GpuPrimitives> TiledExecutor<G> {
         }
 
         match strategy {
-            ProcessingStrategy::SinglePass => self.execute_color_single(img, op),
-            ProcessingStrategy::Tiled { tile_size, .. } => self.execute_color_tiled(img, op, tile_size),
+            ProcessingStrategy::SinglePass => self.execute_color_chain_single(img, ops),
+            ProcessingStrategy::Tiled { tile_size, .. } => self.execute_color_chain_tiled(img, ops, tile_size),
             ProcessingStrategy::Streaming { tile_size } => {
                 // For in-memory images, tiled is sufficient
-                self.execute_color_tiled(img, op, tile_size)
+                self.execute_color_chain_tiled(img, ops, tile_size)
             }
         }
     }
 
-    /// Single-pass color operation.
-    fn execute_color_single(&self, img: &mut ComputeImage, op: &ColorOp) -> ComputeResult<()> {
-        let src = self.gpu.upload(&img.data, img.width, img.height, img.channels)?;
-        let mut dst = self.gpu.allocate(img.width, img.height, img.channels)?;
+    /// Single-pass chained color operations - data stays on GPU.
+    fn execute_color_chain_single(&self, img: &mut ComputeImage, ops: &[ColorOp]) -> ComputeResult<()> {
+        let mut current = self.gpu.upload(&img.data, img.width, img.height, img.channels)?;
+        let mut next = self.gpu.allocate(img.width, img.height, img.channels)?;
 
-        self.apply_color_op(&src, &mut dst, op)?;
+        // Chain operations, ping-ponging between buffers
+        for op in ops {
+            self.apply_color_op(&current, &mut next, op)?;
+            std::mem::swap(&mut current, &mut next);
+        }
 
-        img.data = self.gpu.download(&dst)?;
+        img.data = self.gpu.download(&current)?;
         Ok(())
     }
 
-    /// Tiled color operation.
-    fn execute_color_tiled(&self, img: &mut ComputeImage, op: &ColorOp, tile_size: u32) -> ComputeResult<()> {
+    /// Tiled chained color operations.
+    fn execute_color_chain_tiled(&self, img: &mut ComputeImage, ops: &[ColorOp], tile_size: u32) -> ComputeResult<()> {
         let tiles = generate_tiles(img.width, img.height, tile_size);
         let total = tiles.len();
 
         if is_verbose() {
             let grid_x = (img.width + tile_size - 1) / tile_size;
             let grid_y = (img.height + tile_size - 1) / tile_size;
-            eprintln!("  Tiles: {} ({}x{} grid, {}px each)", total, grid_x, grid_y, tile_size);
+            eprintln!("  Tiles: {} ({}x{} grid, {}px each), {} ops chained", total, grid_x, grid_y, tile_size, ops.len());
         }
 
         for (i, tile) in tiles.iter().enumerate() {
@@ -233,11 +248,16 @@ impl<G: GpuPrimitives> TiledExecutor<G> {
             // Extract tile data
             let tile_data = self.extract_tile(img, tile);
 
-            // Process tile
-            let src = self.gpu.upload(&tile_data, tile.width, tile.height, img.channels)?;
-            let mut dst = self.gpu.allocate(tile.width, tile.height, img.channels)?;
-            self.apply_color_op(&src, &mut dst, op)?;
-            let result = self.gpu.download(&dst)?;
+            // Upload and chain all ops on GPU
+            let mut current = self.gpu.upload(&tile_data, tile.width, tile.height, img.channels)?;
+            let mut next = self.gpu.allocate(tile.width, tile.height, img.channels)?;
+
+            for op in ops {
+                self.apply_color_op(&current, &mut next, op)?;
+                std::mem::swap(&mut current, &mut next);
+            }
+
+            let result = self.gpu.download(&current)?;
 
             // Write back
             self.write_tile(img, tile, &result);

@@ -82,6 +82,14 @@ pub struct Primaries {
     pub name: &'static str,
 }
 
+impl Primaries {
+    /// White point as XYZ (Y=1).
+    #[inline]
+    pub fn white_xyz(&self) -> Vec3 {
+        xy_to_xyz(self.w.0, self.w.1)
+    }
+}
+
 // ============================================================================
 // Standard White Points
 // ============================================================================

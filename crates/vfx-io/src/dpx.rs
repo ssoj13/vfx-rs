@@ -587,7 +587,7 @@ impl DpxReader {
         // Read pixel data based on bit depth
         let data = match header.bit_depth {
             8 => read_8bit(reader, pixel_count)?,
-            10 => read_10bit_packed(reader, pixel_count, header.is_big_endian)?,
+            10 => read_10bit(reader, pixel_count, header.is_big_endian, header.packing)?,
             12 => read_12bit(reader, pixel_count, header.is_big_endian)?,
             16 => read_16bit(reader, pixel_count, header.is_big_endian)?,
             _ => return Err(IoError::UnsupportedBitDepth(format!(
@@ -1091,7 +1091,21 @@ fn read_8bit<R: Read>(reader: &mut R, pixel_count: usize) -> IoResult<Vec<f32>> 
     Ok(buf.iter().map(|&v| v as f32 / 255.0).collect())
 }
 
-fn read_10bit_packed<R: Read>(
+fn read_10bit<R: Read>(
+    reader: &mut R,
+    pixel_count: usize,
+    big_endian: bool,
+    packing: u16,
+) -> IoResult<Vec<f32>> {
+    match packing {
+        0 => read_10bit_method_a(reader, pixel_count, big_endian),
+        1 => read_10bit_method_b(reader, pixel_count),
+        _ => read_10bit_method_a(reader, pixel_count, big_endian), // fallback
+    }
+}
+
+/// Method A: 32-bit aligned, 3x10-bit + 2 padding bits
+fn read_10bit_method_a<R: Read>(
     reader: &mut R,
     pixel_count: usize,
     big_endian: bool,
@@ -1109,6 +1123,32 @@ fn read_10bit_packed<R: Read>(
         data.push(r);
         data.push(g);
         data.push(b);
+    }
+
+    Ok(data)
+}
+
+/// Method B: Bit-stream, no padding between pixels
+fn read_10bit_method_b<R: Read>(
+    reader: &mut R,
+    pixel_count: usize,
+) -> IoResult<Vec<f32>> {
+    let mut data = Vec::with_capacity(pixel_count * 3);
+    let max_val = 1023.0f32;
+    let total_samples = pixel_count * 3;
+    
+    let mut bits: u32 = 0;
+    let mut n_bits = 0;
+    
+    for _ in 0..total_samples {
+        while n_bits < 10 {
+            let byte = read_u8(reader)?;
+            bits = (bits << 8) | (byte as u32);
+            n_bits += 8;
+        }
+        n_bits -= 10;
+        let val = ((bits >> n_bits) & 0x3FF) as f32 / max_val;
+        data.push(val);
     }
 
     Ok(data)

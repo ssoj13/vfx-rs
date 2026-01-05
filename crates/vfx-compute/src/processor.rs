@@ -28,6 +28,114 @@ use crate::ops::ResizeFilter;
 use crate::ComputeResult;
 
 // ============================================================================
+// Batch Operations
+// ============================================================================
+
+/// Individual operation for batching.
+#[derive(Debug, Clone)]
+pub enum BatchOp {
+    /// 4x4 color matrix.
+    Matrix([f32; 16]),
+    /// CDL transform.
+    Cdl(Cdl),
+    /// 1D LUT.
+    Lut1d { lut: Vec<f32>, channels: u32 },
+    /// 3D LUT.
+    Lut3d { lut: Vec<f32>, size: u32 },
+}
+
+/// Batch of color operations to apply without GPU round-trips.
+///
+/// # Example
+/// ```ignore
+/// let batch = ColorOpBatch::new()
+///     .exposure(1.5)
+///     .saturation(1.2)
+///     .contrast(1.1);
+/// processor.apply_color_ops(&mut img, &batch)?;
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct ColorOpBatch {
+    pub(crate) ops: Vec<BatchOp>,
+}
+
+impl ColorOpBatch {
+    /// Create empty batch.
+    pub fn new() -> Self {
+        Self { ops: Vec::new() }
+    }
+
+    /// Add matrix transform.
+    pub fn matrix(mut self, m: &[f32; 16]) -> Self {
+        self.ops.push(BatchOp::Matrix(*m));
+        self
+    }
+
+    /// Add CDL transform.
+    pub fn cdl(mut self, cdl: Cdl) -> Self {
+        self.ops.push(BatchOp::Cdl(cdl));
+        self
+    }
+
+    /// Add exposure adjustment (stops).
+    pub fn exposure(mut self, stops: f32) -> Self {
+        let mult = 2.0f32.powf(stops);
+        let m = [
+            mult, 0.0, 0.0, 0.0,
+            0.0, mult, 0.0, 0.0,
+            0.0, 0.0, mult, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ];
+        self.ops.push(BatchOp::Matrix(m));
+        self
+    }
+
+    /// Add saturation adjustment.
+    pub fn saturation(mut self, sat: f32) -> Self {
+        self.ops.push(BatchOp::Cdl(Cdl {
+            saturation: sat,
+            ..Default::default()
+        }));
+        self
+    }
+
+    /// Add contrast adjustment.
+    pub fn contrast(mut self, c: f32) -> Self {
+        let offset = 0.5 * (1.0 - c);
+        let m = [
+            c, 0.0, 0.0, offset,
+            0.0, c, 0.0, offset,
+            0.0, 0.0, c, offset,
+            0.0, 0.0, 0.0, 1.0,
+        ];
+        self.ops.push(BatchOp::Matrix(m));
+        self
+    }
+
+    /// Add 1D LUT.
+    pub fn lut1d(mut self, lut: Vec<f32>, channels: u32) -> Self {
+        self.ops.push(BatchOp::Lut1d { lut, channels });
+        self
+    }
+
+    /// Add 3D LUT.
+    pub fn lut3d(mut self, lut: Vec<f32>, size: u32) -> Self {
+        self.ops.push(BatchOp::Lut3d { lut, size });
+        self
+    }
+
+    /// Check if batch is empty.
+    pub fn is_empty(&self) -> bool {
+        self.ops.is_empty()
+    }
+
+    /// Number of operations.
+    pub fn len(&self) -> usize {
+        self.ops.len()
+    }
+}
+
+// ============================================================================
 // Configuration
 // ============================================================================
 
@@ -459,6 +567,50 @@ impl Processor {
         Ok(())
     }
 
+    /// Apply multiple color operations without GPU round-trips.
+    ///
+    /// More efficient than calling individual methods when applying
+    /// multiple transforms (e.g., exposure + saturation + matrix).
+    ///
+    /// # Example
+    /// ```ignore
+    /// use vfx_compute::{Processor, ColorOpBatch};
+    ///
+    /// let batch = ColorOpBatch::new()
+    ///     .exposure(1.5)
+    ///     .saturation(1.2)
+    ///     .matrix(&my_matrix);
+    /// proc.apply_color_ops(&mut img, &batch)?;
+    /// ```
+    pub fn apply_color_ops(&self, img: &mut ComputeImage, batch: &ColorOpBatch) -> ComputeResult<()> {
+        if batch.ops.is_empty() {
+            return Ok(());
+        }
+
+        // Upload once
+        let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
+
+        // Apply all ops (backend methods modify handle in-place with buffer swap)
+        for op in &batch.ops {
+            match op {
+                BatchOp::Matrix(m) => self.backend.apply_matrix(handle.as_mut(), m)?,
+                BatchOp::Cdl(cdl) => self.backend.apply_cdl(
+                    handle.as_mut(), cdl.slope, cdl.offset, cdl.power, cdl.saturation
+                )?,
+                BatchOp::Lut1d { lut, channels } => {
+                    self.backend.apply_lut1d(handle.as_mut(), lut, *channels)?;
+                }
+                BatchOp::Lut3d { lut, size } => {
+                    self.backend.apply_lut3d(handle.as_mut(), lut, *size)?;
+                }
+            }
+        }
+
+        // Download once
+        img.data = self.backend.download(handle.as_ref())?;
+        Ok(())
+    }
+
     /// Apply exposure adjustment (in stops).
     /// 
     /// +1.0 = 2x brighter, -1.0 = 2x darker.
@@ -632,6 +784,38 @@ mod tests {
         
         // No change at contrast=1.0
         proc.apply_contrast(&mut img, 1.0).unwrap();
+        assert!((img.data()[0] - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_color_op_batch() {
+        let proc = Processor::cpu().unwrap();
+        let mut img = ComputeImage::from_f32(vec![0.25, 0.25, 0.25], 1, 1, 3).unwrap();
+        
+        // Batch: +1 stop exposure (2x) + saturation (no change for gray)
+        let batch = ColorOpBatch::new()
+            .exposure(1.0)
+            .saturation(1.0);
+        
+        proc.apply_color_ops(&mut img, &batch).unwrap();
+        
+        // Should be 0.5 (doubled)
+        assert!((img.data()[0] - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_color_op_batch_chained() {
+        let proc = Processor::cpu().unwrap();
+        let mut img = ComputeImage::from_f32(vec![0.125, 0.125, 0.125], 1, 1, 3).unwrap();
+        
+        // Chain: +1 stop (2x) + +1 stop (2x) = 4x total
+        let batch = ColorOpBatch::new()
+            .exposure(1.0)
+            .exposure(1.0);
+        
+        proc.apply_color_ops(&mut img, &batch).unwrap();
+        
+        // 0.125 * 4 = 0.5
         assert!((img.data()[0] - 0.5).abs() < 1e-5);
     }
 }

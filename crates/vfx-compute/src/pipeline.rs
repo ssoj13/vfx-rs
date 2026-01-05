@@ -327,6 +327,15 @@ impl ComputeOp {
     pub fn changes_dimensions(&self) -> bool {
         matches!(self, Self::Resize { .. } | Self::Crop { .. } | Self::Rotate90(_))
     }
+
+    /// Returns required overlap in pixels for filter operations.
+    pub fn required_overlap(&self) -> u32 {
+        match self {
+            Self::Blur(radius) => (*radius as u32).max(1) * 2,
+            Self::Sharpen(_) => 2,
+            _ => 0,
+        }
+    }
 }
 
 // ============================================================================
@@ -556,8 +565,19 @@ impl ComputePipeline {
     ) -> ComputeResult<ProcessResult> {
         self.log(&format!("Running tiled with tile_size={}", tile_size));
 
-        // For now, load full image and process
-        // TODO: Implement true tiled processing with TileWorkflow
+        // For file inputs, try streaming if supported
+        #[cfg(feature = "io")]
+        if let (ImageInput::File(in_path), ImageOutput::File(out_path)) = (&input, &output) {
+            // Check if any op needs overlap (filters)
+            let needs_overlap = ops.iter().any(|op| op.required_overlap() > 0);
+            if !needs_overlap && !ops.iter().any(|op| op.changes_dimensions()) {
+                self.log("Using streaming for file-to-file tiled processing");
+                self.run_streaming_file_to_file(in_path, out_path, ops, tile_size)?;
+                return Ok(ProcessResult::Written(out_path.clone()));
+            }
+        }
+
+        // Load full image (fallback for in-memory, overlap ops, or resize)
         let mut img = self.load_input(input)?;
 
         // Check for dimension-changing ops (can't tile those)

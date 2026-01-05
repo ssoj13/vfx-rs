@@ -257,6 +257,19 @@ impl AnyExecutor {
         }
     }
 
+    /// Execute multiple color operations without GPU round-trips.
+    ///
+    /// More efficient than calling `execute_color()` multiple times.
+    pub fn execute_color_chain(&self, img: &mut crate::ComputeImage, ops: &[ColorOp]) -> ComputeResult<()> {
+        match self {
+            Self::Cpu(e) => e.execute_color_chain(img, ops),
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu(e) => e.execute_color_chain(img, ops),
+            #[cfg(feature = "cuda")]
+            Self::Cuda(e) => e.execute_color_chain(img, ops),
+        }
+    }
+
     /// Execute blur with automatic tiling.
     pub fn execute_blur(&self, img: &mut crate::ComputeImage, radius: f32) -> ComputeResult<()> {
         match self {

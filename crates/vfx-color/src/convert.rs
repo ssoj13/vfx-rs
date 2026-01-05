@@ -28,7 +28,7 @@
 //! ```
 
 use vfx_primaries::{Primaries, rgb_to_xyz_matrix, xyz_to_rgb_matrix};
-use vfx_math::{Mat3, Vec3, adapt_matrix};
+use vfx_math::{Mat3, Vec3, adapt_matrix, BRADFORD};
 
 /// General conversion trait.
 ///
@@ -258,6 +258,14 @@ pub fn convert_rgb(
     // Convert primaries via XYZ
     if from_primaries != to_primaries {
         result = result.to_xyz(from_primaries);
+        
+        // Chromatic adaptation if white points differ
+        if from_primaries.w != to_primaries.w {
+            let src_w = from_primaries.white_xyz();
+            let dst_w = to_primaries.white_xyz();
+            result = result.adapt(BRADFORD, src_w, dst_w);
+        }
+        
         result = result.from_xyz(to_primaries);
     }
 
@@ -345,5 +353,33 @@ mod tests {
         assert!(result[0] >= 0.0 && result[0] <= 1.0);
         assert!(result[1] >= 0.0 && result[1] <= 1.0);
         assert!(result[2] >= 0.0 && result[2] <= 1.0);
+    }
+
+    #[test]
+    fn test_chromatic_adaptation_d65_to_d60() {
+        use vfx_primaries::ACES_AP1;
+        
+        // White in sRGB (D65) should stay white in ACEScg (D60)
+        let white = convert_rgb([1.0, 1.0, 1.0], None, &SRGB, &ACES_AP1, None);
+        
+        // After chromatic adaptation, white maps to white
+        assert!((white[0] - 1.0).abs() < 0.02, "R={}", white[0]);
+        assert!((white[1] - 1.0).abs() < 0.02, "G={}", white[1]);
+        assert!((white[2] - 1.0).abs() < 0.02, "B={}", white[2]);
+    }
+
+    #[test]
+    fn test_chromatic_adaptation_roundtrip() {
+        use vfx_primaries::ACES_AP1;
+        
+        let original = [0.5_f32, 0.3, 0.2];
+        
+        // sRGB -> ACEScg -> sRGB
+        let acescg = convert_rgb(original, None, &SRGB, &ACES_AP1, None);
+        let back = convert_rgb(acescg, None, &ACES_AP1, &SRGB, None);
+        
+        assert!((back[0] - original[0]).abs() < 0.001, "R: {} vs {}", back[0], original[0]);
+        assert!((back[1] - original[1]).abs() < 0.001, "G: {} vs {}", back[1], original[1]);
+        assert!((back[2] - original[2]).abs() < 0.001, "B: {} vs {}", back[2], original[2]);
     }
 }
