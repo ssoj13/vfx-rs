@@ -8,7 +8,7 @@ use anyhow::Result;
 use vfx_io::ImageData;
 use vfx_ops::transform::crop;
 
-pub fn run(args: CropArgs, verbose: bool, allow_non_color: bool) -> Result<()> {
+pub fn run(args: CropArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
     let image = super::load_image_layer(&args.input, args.layer.as_deref())?;
     super::ensure_color_processing(&image, "crop", allow_non_color)?;
     let w = image.width as usize;

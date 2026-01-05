@@ -5,7 +5,7 @@ use anyhow::{Result, bail};
 use vfx_io::ImageData;
 use vfx_ops::composite::{over, blend, BlendMode};
 
-pub fn run(args: CompositeArgs, verbose: bool, allow_non_color: bool) -> Result<()> {
+pub fn run(args: CompositeArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
     let fg = super::load_image(&args.fg)?;
     let bg = super::load_image(&args.bg)?;
     super::ensure_color_processing(&fg, "composite", allow_non_color)?;

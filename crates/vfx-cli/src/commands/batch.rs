@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use rayon::prelude::*;
 use vfx_io::ImageData;
 
-pub fn run(args: BatchArgs, verbose: bool, allow_non_color: bool) -> Result<()> {
+pub fn run(args: BatchArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
     // Find matching files
     let files: Vec<PathBuf> = glob::glob(&args.input)?
         .filter_map(|r| r.ok())
@@ -78,7 +78,7 @@ fn process_file(
     args: &std::collections::HashMap<String, String>,
     format: Option<&str>,
     allow_non_color: bool,
-    verbose: bool,
+    verbose: u8,
 ) -> Result<()> {
     // Determine output path
     let stem = input.file_stem()

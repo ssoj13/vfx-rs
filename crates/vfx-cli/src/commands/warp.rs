@@ -5,7 +5,7 @@ use crate::{WarpArgs, commands::{load_image, save_image}};
 use vfx_io::ImageData;
 use vfx_ops::warp;
 
-pub fn run(args: WarpArgs, verbose: bool) -> Result<()> {
+pub fn run(args: WarpArgs, verbose: u8) -> Result<()> {
     if verbose {
         println!("Loading: {}", args.input.display());
     }

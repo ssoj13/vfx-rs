@@ -5,7 +5,7 @@ use crate::{PasteArgs, commands::{load_image, save_image}};
 use vfx_io::ImageData;
 use vfx_ops::transform::paste;
 
-pub fn run(args: PasteArgs, verbose: bool) -> Result<()> {
+pub fn run(args: PasteArgs, verbose: u8) -> Result<()> {
     if verbose {
         println!("Loading background: {}", args.background.display());
         println!("Loading foreground: {}", args.foreground.display());

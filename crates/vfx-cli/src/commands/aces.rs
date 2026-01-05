@@ -11,7 +11,7 @@ use vfx_color::aces::{
 };
 use vfx_color::prelude::srgb;
 
-pub fn run(args: AcesArgs, verbose: bool) -> Result<()> {
+pub fn run(args: AcesArgs, verbose: u8) -> Result<()> {
     if verbose {
         println!("Loading: {}", args.input.display());
     }

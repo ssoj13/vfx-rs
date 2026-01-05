@@ -5,7 +5,7 @@ use anyhow::Result;
 use crate::ViewArgs;
 
 /// Run the view command.
-pub fn run(args: ViewArgs, verbose: bool) -> Result<()> {
+pub fn run(args: ViewArgs, verbose: u8) -> Result<()> {
     let config = vfx_view::ViewerConfig {
         ocio: args.ocio,
         display: args.display,

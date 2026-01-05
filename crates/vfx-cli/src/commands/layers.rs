@@ -41,7 +41,7 @@ fn load_layered(path: &Path) -> Result<LayeredImage> {
 ///
 /// For each file, prints layer names, dimensions, and channel details
 /// including name, type, and semantic kind (Color/Alpha/Depth/Id/etc).
-pub fn run_layers(args: LayersArgs, verbose: bool) -> Result<()> {
+pub fn run_layers(args: LayersArgs, verbose: u8) -> Result<()> {
     for path in &args.input {
         let layered = load_layered(path)?;
 
@@ -60,7 +60,7 @@ pub fn run_layers(args: LayersArgs, verbose: bool) -> Result<()> {
 }
 
 /// Prints layer information in human-readable text format.
-fn print_layers_text(path: &Path, layered: &LayeredImage, verbose: bool) {
+fn print_layers_text(path: &Path, layered: &LayeredImage, verbose: u8) {
     println!("{}", path.display());
     println!("  Layers: {}", layered.layers.len());
 
@@ -119,7 +119,7 @@ fn print_layers_json(path: &Path, layered: &LayeredImage) {
 ///
 /// The layer can be specified by name or index. If no layer is specified,
 /// lists available layers and exits.
-pub fn run_extract_layer(args: ExtractLayerArgs, verbose: bool) -> Result<()> {
+pub fn run_extract_layer(args: ExtractLayerArgs, verbose: u8) -> Result<()> {
     let layered = load_layered(&args.input)?;
 
     // Find the requested layer
@@ -189,7 +189,7 @@ pub fn run_extract_layer(args: ExtractLayerArgs, verbose: bool) -> Result<()> {
 ///
 /// Each input file contributes one or more layers to the output.
 /// Layer names can be customized with --names flag.
-pub fn run_merge_layers(args: MergeLayersArgs, verbose: bool) -> Result<()> {
+pub fn run_merge_layers(args: MergeLayersArgs, verbose: u8) -> Result<()> {
     if args.input.is_empty() {
         anyhow::bail!("No input files specified");
     }

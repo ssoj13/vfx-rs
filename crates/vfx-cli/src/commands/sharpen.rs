@@ -8,7 +8,7 @@ use anyhow::Result;
 use vfx_io::ImageData;
 use vfx_ops::filter::{Kernel, convolve};
 
-pub fn run(args: SharpenArgs, verbose: bool, allow_non_color: bool) -> Result<()> {
+pub fn run(args: SharpenArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
     let image = super::load_image_layer(&args.input, args.layer.as_deref())?;
     super::ensure_color_processing(&image, "sharpen", allow_non_color)?;
     let w = image.width as usize;

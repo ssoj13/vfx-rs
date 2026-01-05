@@ -5,7 +5,7 @@ use anyhow::Result;
 use vfx_io::ImageData;
 use vfx_ops::resize::{resize_f32, Filter};
 
-pub fn run(args: MaketxArgs, verbose: bool, allow_non_color: bool) -> Result<()> {
+pub fn run(args: MaketxArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
     let image = super::load_image(&args.input)?;
     super::ensure_color_processing(&image, "maketx", allow_non_color)?;
 

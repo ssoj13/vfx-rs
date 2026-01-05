@@ -12,7 +12,7 @@ use vfx_io::{Format, FormatWriter, PixelFormat};
 ///
 /// When both input and output are EXR, uses layered I/O to preserve all layers.
 /// Otherwise falls back to single-layer ImageData conversion.
-pub fn run(args: ConvertArgs, verbose: bool) -> Result<()> {
+pub fn run(args: ConvertArgs, verbose: u8) -> Result<()> {
     let input_format = Format::detect(&args.input).unwrap_or(Format::Unknown);
     let output_format = Format::detect(&args.output).unwrap_or(Format::Unknown);
 
@@ -53,7 +53,7 @@ pub fn run(args: ConvertArgs, verbose: bool) -> Result<()> {
 }
 
 /// Converts EXR to EXR preserving all layers and channels.
-fn convert_exr_layered(args: &ConvertArgs, verbose: bool) -> Result<()> {
+fn convert_exr_layered(args: &ConvertArgs, verbose: u8) -> Result<()> {
     let reader = ExrReader::default();
     let layered = reader
         .read_layers(&args.input)

@@ -4,7 +4,7 @@ use crate::GrepArgs;
 use anyhow::Result;
 use vfx_io::Format;
 
-pub fn run(args: GrepArgs, _verbose: bool) -> Result<()> {
+pub fn run(args: GrepArgs, _verbose: u8) -> Result<()> {
     let pattern = if args.ignore_case {
         args.pattern.to_lowercase()
     } else {

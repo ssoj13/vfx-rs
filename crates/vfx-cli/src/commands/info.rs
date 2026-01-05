@@ -11,7 +11,7 @@ use vfx_io::Format;
 /// Runs the info command, displaying image metadata.
 ///
 /// For EXR files with multiple layers, shows layer details when verbose or --all.
-pub fn run(args: InfoArgs, verbose: bool) -> Result<()> {
+pub fn run(args: InfoArgs, verbose: u8) -> Result<()> {
     for path in &args.input {
         let metadata = fs::metadata(path)?;
         let file_size = metadata.len();
@@ -47,7 +47,7 @@ fn print_text(
     image: &vfx_io::ImageData,
     file_size: u64,
     format: Format,
-    verbose: bool,
+    verbose: u8,
     layer_info: &Option<vfx_io::LayeredImage>,
 ) {
     println!("{}", path.display());

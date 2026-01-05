@@ -5,7 +5,7 @@ use anyhow::{Result, bail};
 use vfx_io::ImageData;
 use vfx_lut::cube;
 
-pub fn run(args: LutArgs, verbose: bool, allow_non_color: bool) -> Result<()> {
+pub fn run(args: LutArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
     let image = super::load_image(&args.input)?;
     super::ensure_color_processing(&image, "lut", allow_non_color)?;
 

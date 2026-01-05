@@ -5,7 +5,7 @@ use crate::{RotateArgs, commands::{load_image, save_image}};
 use vfx_io::ImageData;
 use vfx_ops::transform::rotate;
 
-pub fn run(args: RotateArgs, verbose: bool) -> Result<()> {
+pub fn run(args: RotateArgs, verbose: u8) -> Result<()> {
     if verbose {
         println!("Loading: {}", args.input.display());
     }

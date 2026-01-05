@@ -8,7 +8,7 @@ use crate::{UdimArgs, UdimCommand};
 use super::{load_image, save_image};
 
 /// Run UDIM subcommand
-pub fn run(args: UdimArgs, verbose: bool) -> Result<()> {
+pub fn run(args: UdimArgs, verbose: u8) -> Result<()> {
     match args.command {
         UdimCommand::Info { pattern } => run_info(&pattern, verbose),
         UdimCommand::Convert { input, output, compression } => {
@@ -24,7 +24,7 @@ pub fn run(args: UdimArgs, verbose: bool) -> Result<()> {
 }
 
 /// Show UDIM texture set information
-fn run_info(pattern: &Path, verbose: bool) -> Result<()> {
+fn run_info(pattern: &Path, verbose: u8) -> Result<()> {
     let resolver = UdimResolver::new(pattern)
         .with_context(|| format!("Failed to resolve UDIM pattern: {}", pattern.display()))?;
 
@@ -63,7 +63,7 @@ fn run_info(pattern: &Path, verbose: bool) -> Result<()> {
 }
 
 /// Convert all tiles to another format
-fn run_convert(input: &Path, output: &Path, compression: Option<&str>, verbose: bool) -> Result<()> {
+fn run_convert(input: &Path, output: &Path, compression: Option<&str>, verbose: u8) -> Result<()> {
     let resolver = UdimResolver::new(input)
         .with_context(|| format!("Failed to resolve input: {}", input.display()))?;
 
@@ -101,7 +101,7 @@ fn run_convert(input: &Path, output: &Path, compression: Option<&str>, verbose: 
 }
 
 /// Create atlas from UDIM tiles
-fn run_atlas(input: &Path, output: &Path, tile_size: u32, verbose: bool) -> Result<()> {
+fn run_atlas(input: &Path, output: &Path, tile_size: u32, verbose: u8) -> Result<()> {
     let resolver = UdimResolver::new(input)
         .with_context(|| format!("Failed to resolve: {}", input.display()))?;
 
@@ -181,7 +181,7 @@ fn run_atlas(input: &Path, output: &Path, tile_size: u32, verbose: bool) -> Resu
 }
 
 /// Split single image into UDIM tiles
-fn run_split(input: &Path, output: &Path, tile_size: u32, verbose: bool) -> Result<()> {
+fn run_split(input: &Path, output: &Path, tile_size: u32, verbose: u8) -> Result<()> {
     let image = load_image(input)?;
     let data = image.to_f32();
     let w = image.width as usize;

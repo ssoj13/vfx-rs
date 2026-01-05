@@ -17,7 +17,7 @@ use vfx_io::ImageData;
 ///   "BGR"  - swap R and B
 ///   "RRR"  - grayscale from red
 ///   "RGB1" - RGB with alpha=1
-pub fn run_shuffle(args: ChannelShuffleArgs, verbose: bool) -> Result<()> {
+pub fn run_shuffle(args: ChannelShuffleArgs, verbose: u8) -> Result<()> {
     let input = super::load_image(&args.input)?;
     let pattern = args.pattern.to_uppercase();
     
@@ -46,7 +46,7 @@ pub fn run_shuffle(args: ChannelShuffleArgs, verbose: bool) -> Result<()> {
 /// Runs channel-extract: extract specific channels to a new image.
 ///
 /// Channels can be specified by name (R, G, B, A, Z, ID) or index (0, 1, 2).
-pub fn run_extract(args: ChannelExtractArgs, verbose: bool) -> Result<()> {
+pub fn run_extract(args: ChannelExtractArgs, verbose: u8) -> Result<()> {
     let input = super::load_image(&args.input)?;
     
     if verbose {

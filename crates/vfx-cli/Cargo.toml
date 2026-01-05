@@ -24,6 +24,11 @@ anyhow = { workspace = true }
 glob = { workspace = true }
 rayon = { workspace = true }
 
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
 [features]
 default = ["viewer"]
 viewer = ["dep:vfx-view"]

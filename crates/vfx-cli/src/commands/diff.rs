@@ -4,7 +4,7 @@ use crate::DiffArgs;
 use anyhow::{Result, bail};
 use vfx_io::ImageData;
 
-pub fn run(args: DiffArgs, verbose: bool, allow_non_color: bool) -> Result<()> {
+pub fn run(args: DiffArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
     let img_a = super::load_image(&args.a)?;
     let img_b = super::load_image(&args.b)?;
     super::ensure_color_processing(&img_a, "diff", allow_non_color)?;

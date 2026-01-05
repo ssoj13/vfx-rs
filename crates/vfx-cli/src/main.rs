@@ -2,11 +2,110 @@
 //!
 //! Combines functionality of oiiotool, iconvert, iinfo, idiff, maketx
 
+// Allow Option<Option<T>> for CLI log argument:
+// - None = no logging
+// - Some(None) = log to default path
+// - Some(Some(path)) = log to custom path
+#![allow(clippy::option_option)]
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, Args};
-use std::path::PathBuf;
+use std::fs::File;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use tracing_subscriber::{fmt, EnvFilter};
 
 mod commands;
+
+// =============================================================================
+// Logging infrastructure
+// =============================================================================
+
+/// Global logger instance for file logging.
+static LOGGER: Mutex<Option<Logger>> = Mutex::new(None);
+
+/// File logger that writes messages to a log file.
+struct Logger {
+    file: File,
+}
+
+impl Logger {
+    /// Creates a new logger writing to the specified path (append mode).
+    fn new(path: &PathBuf) -> std::io::Result<Self> {
+        let file = File::options().append(true).create(true).open(path)?;
+        Ok(Self { file })
+    }
+
+    /// Writes a message to the log file.
+    fn log(&mut self, msg: &str) {
+        let _ = writeln!(self.file, "{msg}");
+    }
+}
+
+/// Logs a message to stderr and optionally to the log file.
+pub fn log(msg: &str) {
+    eprintln!("{msg}");
+    if let Ok(mut guard) = LOGGER.lock() {
+        if let Some(ref mut logger) = *guard {
+            logger.log(msg);
+        }
+    }
+}
+
+/// Logs a message only if verbose mode is enabled.
+pub fn log_verbose(msg: &str, verbose: u8) {
+    if verbose > 0 {
+        log(msg);
+    }
+}
+
+/// Returns the default log file path (next to the binary).
+fn get_default_log_path() -> PathBuf {
+    if let Ok(exe_path) = std::env::current_exe() {
+        let mut log_path = exe_path;
+        log_path.set_extension("log");
+        log_path
+    } else {
+        PathBuf::from("vfx.log")
+    }
+}
+
+/// Initialize tracing based on verbosity level.
+fn init_tracing(verbose: u8, log_path: Option<&PathBuf>) {
+    // Map verbosity to tracing level
+    let filter = match verbose {
+        0 => "warn",
+        1 => "vfx=info",
+        2 => "vfx=debug",
+        _ => "vfx=trace",
+    };
+    
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(filter));
+    
+    if let Some(path) = log_path {
+        // Log to file
+        let log_dir = path.parent().unwrap_or(Path::new("."));
+        let log_filename = path.file_name().unwrap_or(std::ffi::OsStr::new("vfx.log"));
+        let file_appender = tracing_appender::rolling::never(log_dir, log_filename);
+        
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_target(true)
+            .with_timer(fmt::time::uptime())
+            .with_ansi(false)
+            .with_writer(file_appender)
+            .init();
+    } else if verbose > 0 {
+        // Log to stderr
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_target(true)
+            .with_timer(fmt::time::uptime())
+            .init();
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "vfx")]
@@ -32,9 +131,13 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    /// Verbose output
-    #[arg(short, long, global = true)]
-    verbose: bool,
+    /// Verbose output (-v info, -vv debug, -vvv trace)
+    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
+    verbose: u8,
+
+    /// Write log to file (-l default, -l path.log custom)
+    #[arg(short = 'l', long = "log", global = true)]
+    log: Option<Option<PathBuf>>,
 
     /// Number of threads (0 = auto)
     #[arg(short = 'j', long, global = true, default_value = "0")]
@@ -706,6 +809,28 @@ pub enum UdimCommand {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Initialize logging
+    let log_path = match &cli.log {
+        Some(Some(path)) => Some(path.clone()),
+        Some(None) => Some(get_default_log_path()),
+        None => None,
+    };
+    
+    // Initialize tracing based on verbosity
+    init_tracing(cli.verbose, log_path.as_ref());
+    
+    // Initialize legacy logger if -l/--log flag is set
+    if let Some(ref path) = log_path {
+        if let Ok(logger) = Logger::new(path) {
+            if let Ok(mut guard) = LOGGER.lock() {
+                *guard = Some(logger);
+            }
+            if cli.verbose > 0 {
+                log(&format!("Logging to: {}", path.display()));
+            }
+        }
+    }
 
     // Configure thread pool
     if cli.threads > 0 {
