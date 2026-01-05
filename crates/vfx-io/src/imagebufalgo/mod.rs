@@ -39,6 +39,7 @@ pub mod color;
 pub mod composite;
 pub mod stats;
 pub mod ocio;
+pub mod deep;
 
 // Re-export commonly used functions
 pub use patterns::{zero, fill, checker, noise};
@@ -82,4 +83,13 @@ pub use ocio::{
     ociolook, ociolook_into,
     ociofiletransform, ociofiletransform_into,
     equivalent_colorspace,
+};
+
+// Deep image operations
+pub use deep::{
+    flatten, flatten_into,
+    deepen, deepen_with_z,
+    deep_merge, deep_merge_into,
+    deep_holdout, deep_holdout_matte,
+    deep_tidy, deep_stats, DeepStats,
 };
