@@ -1,3 +1,0 @@
-Logging to: test.log
-   0.000494600s DEBUG vfx::commands::info: Reading image info path=test/owl.exr format=Exr size=12003869
-   0.072750100s DEBUG vfx_io: Reading image path=test/owl.exr format=Exr
