@@ -77,8 +77,11 @@ pub mod prelude {
         LinearSrgb, Rec2020, Rec709, Srgb,
     };
     pub use crate::error::{Error, Result};
+    pub use crate::format::{
+        Aggregate, BaseType, BitDepth, DataFormat, TypeDesc, VecSemantics,
+    };
     pub use crate::image::{Image, ImageView, ImageViewMut};
     pub use crate::pixel::{PixelFormat, Rgb, Rgba};
-    pub use crate::rect::{Rect, Roi};
+    pub use crate::rect::{Rect, Roi, Roi3D};
     pub use crate::spec::ImageSpec;
 }

@@ -497,6 +497,289 @@ impl std::fmt::Display for Roi {
     }
 }
 
+// =============================================================================
+// OIIO-Compatible ROI (Region of Interest) - Full 3D with channel bounds
+// =============================================================================
+
+/// Full 3D Region of Interest with channel bounds (matches OIIO ROI).
+///
+/// Unlike the simpler [`Roi`], this provides complete OIIO compatibility
+/// with X, Y, Z dimensions and channel range specification.
+///
+/// # Coordinate Convention
+///
+/// All ranges are half-open intervals: [begin, end) - the begin is included,
+/// the end is excluded.
+///
+/// # Example
+///
+/// ```rust
+/// use vfx_core::Roi3D;
+///
+/// // Define a region: x=[100,200), y=[50,150), z=[0,1), channels=[0,4)
+/// let roi = Roi3D::new(100, 200, 50, 150, 0, 1, 0, 4);
+///
+/// assert_eq!(roi.width(), 100);
+/// assert_eq!(roi.height(), 100);
+/// assert!(roi.contains(150, 100, 0));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Roi3D {
+    /// X begin (inclusive)
+    pub xbegin: i32,
+    /// X end (exclusive)
+    pub xend: i32,
+    /// Y begin (inclusive)
+    pub ybegin: i32,
+    /// Y end (exclusive)
+    pub yend: i32,
+    /// Z begin (inclusive, for 3D/volumetric images)
+    pub zbegin: i32,
+    /// Z end (exclusive)
+    pub zend: i32,
+    /// Channel begin (inclusive)
+    pub chbegin: i32,
+    /// Channel end (exclusive)
+    pub chend: i32,
+}
+
+impl Default for Roi3D {
+    fn default() -> Self {
+        Self::all()
+    }
+}
+
+impl Roi3D {
+    /// Creates a new ROI with all bounds specified.
+    #[inline]
+    pub const fn new(
+        xbegin: i32,
+        xend: i32,
+        ybegin: i32,
+        yend: i32,
+        zbegin: i32,
+        zend: i32,
+        chbegin: i32,
+        chend: i32,
+    ) -> Self {
+        Self {
+            xbegin,
+            xend,
+            ybegin,
+            yend,
+            zbegin,
+            zend,
+            chbegin,
+            chend,
+        }
+    }
+
+    /// Creates a 2D ROI (z = [0,1), all channels).
+    #[inline]
+    pub const fn new_2d(xbegin: i32, xend: i32, ybegin: i32, yend: i32) -> Self {
+        Self::new(xbegin, xend, ybegin, yend, 0, 1, 0, i32::MAX)
+    }
+
+    /// Creates a ROI from width and height (origin at 0,0).
+    #[inline]
+    pub const fn from_size(width: i32, height: i32) -> Self {
+        Self::new_2d(0, width, 0, height)
+    }
+
+    /// Creates an "all" ROI that matches everything.
+    ///
+    /// This is used to indicate "entire image" without knowing dimensions.
+    #[inline]
+    pub const fn all() -> Self {
+        Self {
+            xbegin: i32::MIN,
+            xend: i32::MAX,
+            ybegin: i32::MIN,
+            yend: i32::MAX,
+            zbegin: i32::MIN,
+            zend: i32::MAX,
+            chbegin: 0,
+            chend: i32::MAX,
+        }
+    }
+
+    /// Returns true if this ROI represents "all" (undefined bounds).
+    #[inline]
+    pub const fn is_all(&self) -> bool {
+        self.xbegin == i32::MIN && self.xend == i32::MAX
+    }
+
+    /// Returns true if this ROI is defined (has valid, finite bounds).
+    #[inline]
+    pub const fn defined(&self) -> bool {
+        !self.is_all()
+    }
+
+    /// Width of the ROI (xend - xbegin).
+    #[inline]
+    pub const fn width(&self) -> i32 {
+        self.xend - self.xbegin
+    }
+
+    /// Height of the ROI (yend - ybegin).
+    #[inline]
+    pub const fn height(&self) -> i32 {
+        self.yend - self.ybegin
+    }
+
+    /// Depth of the ROI (zend - zbegin).
+    #[inline]
+    pub const fn depth(&self) -> i32 {
+        self.zend - self.zbegin
+    }
+
+    /// Number of channels in the ROI.
+    #[inline]
+    pub const fn nchannels(&self) -> i32 {
+        self.chend - self.chbegin
+    }
+
+    /// Total number of pixels in the ROI.
+    ///
+    /// Returns 0 for an "all" ROI (undefined dimensions).
+    #[inline]
+    pub fn npixels(&self) -> u64 {
+        if self.is_all() {
+            0
+        } else {
+            (self.width() as u64) * (self.height() as u64) * (self.depth() as u64)
+        }
+    }
+
+    /// Returns true if the point (x, y, z) is inside this ROI.
+    #[inline]
+    pub const fn contains(&self, x: i32, y: i32, z: i32) -> bool {
+        x >= self.xbegin
+            && x < self.xend
+            && y >= self.ybegin
+            && y < self.yend
+            && z >= self.zbegin
+            && z < self.zend
+    }
+
+    /// Returns true if the point (x, y, z, ch) is inside this ROI including channel.
+    #[inline]
+    pub const fn contains_with_channel(&self, x: i32, y: i32, z: i32, ch: i32) -> bool {
+        self.contains(x, y, z) && ch >= self.chbegin && ch < self.chend
+    }
+
+    /// Returns true if this ROI fully contains another ROI.
+    #[inline]
+    pub const fn contains_roi(&self, other: &Roi3D) -> bool {
+        other.xbegin >= self.xbegin
+            && other.xend <= self.xend
+            && other.ybegin >= self.ybegin
+            && other.yend <= self.yend
+            && other.zbegin >= self.zbegin
+            && other.zend <= self.zend
+            && other.chbegin >= self.chbegin
+            && other.chend <= self.chend
+    }
+
+    /// Returns the union of two ROIs (bounding box containing both).
+    pub fn union(&self, other: &Roi3D) -> Roi3D {
+        if self.is_all() || other.is_all() {
+            return Roi3D::all();
+        }
+        Roi3D {
+            xbegin: self.xbegin.min(other.xbegin),
+            xend: self.xend.max(other.xend),
+            ybegin: self.ybegin.min(other.ybegin),
+            yend: self.yend.max(other.yend),
+            zbegin: self.zbegin.min(other.zbegin),
+            zend: self.zend.max(other.zend),
+            chbegin: self.chbegin.min(other.chbegin),
+            chend: self.chend.max(other.chend),
+        }
+    }
+
+    /// Returns the intersection of two ROIs.
+    ///
+    /// Returns `None` if the ROIs don't overlap.
+    pub fn intersection(&self, other: &Roi3D) -> Option<Roi3D> {
+        let result = Roi3D {
+            xbegin: self.xbegin.max(other.xbegin),
+            xend: self.xend.min(other.xend),
+            ybegin: self.ybegin.max(other.ybegin),
+            yend: self.yend.min(other.yend),
+            zbegin: self.zbegin.max(other.zbegin),
+            zend: self.zend.min(other.zend),
+            chbegin: self.chbegin.max(other.chbegin),
+            chend: self.chend.min(other.chend),
+        };
+
+        if result.xbegin < result.xend
+            && result.ybegin < result.yend
+            && result.zbegin < result.zend
+            && result.chbegin < result.chend
+        {
+            Some(result)
+        } else {
+            None
+        }
+    }
+
+    /// Converts to a simple Rect (loses z and channel info).
+    #[inline]
+    pub fn to_rect(&self) -> Rect {
+        Rect::new(
+            self.xbegin.max(0) as u32,
+            self.ybegin.max(0) as u32,
+            self.width().max(0) as u32,
+            self.height().max(0) as u32,
+        )
+    }
+
+    /// Creates from a simple Rect.
+    #[inline]
+    pub fn from_rect(r: &Rect) -> Self {
+        Self::new_2d(
+            r.x as i32,
+            (r.x + r.width) as i32,
+            r.y as i32,
+            (r.y + r.height) as i32,
+        )
+    }
+}
+
+impl std::fmt::Display for Roi3D {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_all() {
+            write!(f, "Roi3D::All")
+        } else {
+            write!(
+                f,
+                "Roi3D([{},{}), [{},{}), [{},{}), ch[{},{})]",
+                self.xbegin,
+                self.xend,
+                self.ybegin,
+                self.yend,
+                self.zbegin,
+                self.zend,
+                self.chbegin,
+                self.chend
+            )
+        }
+    }
+}
+
+/// Computes the union of two ROIs.
+#[inline]
+pub fn roi_union(a: &Roi3D, b: &Roi3D) -> Roi3D {
+    a.union(b)
+}
+
+/// Computes the intersection of two ROIs.
+#[inline]
+pub fn roi_intersection(a: &Roi3D, b: &Roi3D) -> Option<Roi3D> {
+    a.intersection(b)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -596,5 +879,88 @@ mod tests {
         let resolved = roi.resolve(1920, 1080);
         assert_eq!(resolved.right(), 1920);
         assert_eq!(resolved.bottom(), 1080);
+    }
+
+    // Roi3D tests
+    #[test]
+    fn test_roi3d_new() {
+        let roi = Roi3D::new(100, 200, 50, 150, 0, 1, 0, 4);
+        assert_eq!(roi.width(), 100);
+        assert_eq!(roi.height(), 100);
+        assert_eq!(roi.depth(), 1);
+        assert_eq!(roi.nchannels(), 4);
+    }
+
+    #[test]
+    fn test_roi3d_all() {
+        let roi = Roi3D::all();
+        assert!(roi.is_all());
+        assert!(!roi.defined());
+        assert_eq!(roi.npixels(), 0);
+    }
+
+    #[test]
+    fn test_roi3d_contains() {
+        let roi = Roi3D::new(100, 200, 50, 150, 0, 1, 0, 4);
+        assert!(roi.contains(100, 50, 0));
+        assert!(roi.contains(150, 100, 0));
+        assert!(!roi.contains(200, 150, 0)); // End is exclusive
+        assert!(!roi.contains(99, 50, 0)); // Before begin
+    }
+
+    #[test]
+    fn test_roi3d_contains_with_channel() {
+        let roi = Roi3D::new(0, 100, 0, 100, 0, 1, 0, 3);
+        assert!(roi.contains_with_channel(50, 50, 0, 0));
+        assert!(roi.contains_with_channel(50, 50, 0, 2));
+        assert!(!roi.contains_with_channel(50, 50, 0, 3)); // Channel end is exclusive
+    }
+
+    #[test]
+    fn test_roi3d_union() {
+        let a = Roi3D::new_2d(0, 100, 0, 100);
+        let b = Roi3D::new_2d(50, 150, 50, 150);
+        let u = a.union(&b);
+        assert_eq!(u.xbegin, 0);
+        assert_eq!(u.xend, 150);
+        assert_eq!(u.ybegin, 0);
+        assert_eq!(u.yend, 150);
+    }
+
+    #[test]
+    fn test_roi3d_intersection() {
+        let a = Roi3D::new_2d(0, 100, 0, 100);
+        let b = Roi3D::new_2d(50, 150, 50, 150);
+        let i = a.intersection(&b).unwrap();
+        assert_eq!(i.xbegin, 50);
+        assert_eq!(i.xend, 100);
+        assert_eq!(i.ybegin, 50);
+        assert_eq!(i.yend, 100);
+    }
+
+    #[test]
+    fn test_roi3d_no_intersection() {
+        let a = Roi3D::new_2d(0, 50, 0, 50);
+        let b = Roi3D::new_2d(100, 150, 100, 150);
+        assert!(a.intersection(&b).is_none());
+    }
+
+    #[test]
+    fn test_roi3d_npixels() {
+        let roi = Roi3D::new(0, 100, 0, 200, 0, 3, 0, 4);
+        assert_eq!(roi.npixels(), 100 * 200 * 3);
+    }
+
+    #[test]
+    fn test_roi3d_to_from_rect() {
+        let rect = Rect::new(10, 20, 100, 50);
+        let roi = Roi3D::from_rect(&rect);
+        assert_eq!(roi.xbegin, 10);
+        assert_eq!(roi.xend, 110);
+        assert_eq!(roi.ybegin, 20);
+        assert_eq!(roi.yend, 70);
+
+        let back = roi.to_rect();
+        assert_eq!(back, rect);
     }
 }
