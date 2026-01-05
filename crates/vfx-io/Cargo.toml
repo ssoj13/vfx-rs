@@ -64,8 +64,9 @@ libheif-rs = { version = "2.5", optional = true }
 byteorder = "1.5"
 
 # WebP/AVIF support via image crate
-# WebP: webp feature for full encode/decode
-# AVIF: avif for encoding only (ravif) - decoding requires system dav1d library
+# WebP: full encode/decode
+# AVIF: write-only (ravif encoder). For read: install dav1d, add "avif-native" feature
+# TODO: dav1d через vcpkg не подхватывается pkg-config, разобраться позже
 image = { version = "0.25", optional = true, default-features = false, features = ["webp", "avif"] }
 
 # JPEG2000 support (requires OpenJPEG)

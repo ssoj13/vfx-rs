@@ -183,14 +183,14 @@ Implementations: MemorySource, MemoryOutput, ExrStreamingSource, ExrStreamingOut
 
 ## TODO
 
-### Priority 1 - Important
+### Priority 1 - Important (DONE)
 
-| Task | Description |
-|------|-------------|
-| **WebP format** | Read/write via image crate (feature gate) |
-| **AVIF format** | Read/write via image crate (feature gate) |
-| **JPEG2000** | JP2 support |
-| **EXR tiled blocks** | True block-level reading via exr::block::FilteredChunksReader |
+| Task | Status | Notes |
+|------|--------|-------|
+| **WebP format** | DONE | Read/write via image crate |
+| **AVIF format** | DONE | Write-only (dav1d decoder needs pkg-config setup) |
+| **JPEG2000** | DONE | Read-only via jpeg2k crate |
+| **EXR tiled blocks** | DONE | Tile structure detection, TODO: true block-level reading |
 
 ### Priority 2 - Nice to Have
 

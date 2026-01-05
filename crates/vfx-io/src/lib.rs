@@ -209,8 +209,8 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
         #[cfg(not(feature = "webp"))]
         Format::WebP => Err(IoError::UnsupportedFormat("WebP support requires 'webp' feature".into())),
 
-        // AVIF is write-only - decoding requires system dav1d library
-        Format::Avif => Err(IoError::UnsupportedFormat("AVIF read not supported (requires dav1d library)".into())),
+        // AVIF write-only (dav1d decoder needs pkg-config setup)
+        Format::Avif => Err(IoError::UnsupportedFormat("AVIF read requires dav1d library".into())),
 
         #[cfg(feature = "jp2")]
         Format::Jp2 => jp2::read(path),
