@@ -41,6 +41,19 @@ pub fn detect_backends() -> Vec<BackendInfo> {
         });
     }
     
+    #[cfg(feature = "cuda")]
+    {
+        let cuda_available = super::CudaBackend::is_available();
+        backends.push(BackendInfo {
+            backend: Backend::Cuda,
+            name: "CUDA",
+            available: cuda_available,
+            // CUDA gets higher priority than wgpu when available
+            priority: if cuda_available { 150 } else { 0 },
+            description: "NVIDIA GPU via CUDA",
+        });
+    }
+    
     backends.sort_by(|a, b| b.priority.cmp(&a.priority));
     backends
 }

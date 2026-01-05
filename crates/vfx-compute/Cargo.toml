@@ -10,11 +10,13 @@ description = "Unified compute backend for VFX workflows (CPU + GPU)"
 [features]
 default = ["io"]
 wgpu = ["dep:wgpu", "dep:pollster"]
+cuda = ["dep:cudarc"]
 io = ["dep:vfx-io"]
 
 [dependencies]
 # GPU compute (optional)
 wgpu = { version = "24", optional = true }
+cudarc = { version = "0.16", optional = true }
 bytemuck = { version = "1.21", features = ["derive"] }
 pollster = { version = "0.4", optional = true }
 
