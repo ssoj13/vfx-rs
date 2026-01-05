@@ -1,0 +1,30 @@
+[package]
+name = "vfx-rs-py"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Python bindings for vfx-rs"
+readme = "README.md"
+
+[lib]
+name = "vfx_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3.workspace = true
+numpy.workspace = true
+
+# Internal crates
+vfx-io = { path = "../vfx-io", features = ["exr", "png", "jpeg", "tiff", "dpx", "hdr"] }
+vfx-compute = { path = "../vfx-compute", features = ["io"] }
+vfx-lut = { path = "../vfx-lut" }
+vfx-ops = { path = "../vfx-ops" }
+
+[features]
+default = []
+# Optional format support
+heif = ["vfx-io/heif"]
+webp = ["vfx-io/webp"]
+avif = ["vfx-io/avif"]
+jp2 = ["vfx-io/jp2"]
+all-formats = ["heif", "webp", "avif", "jp2"]

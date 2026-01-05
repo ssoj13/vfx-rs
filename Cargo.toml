@@ -16,6 +16,7 @@ members = [
     "crates/vfx-tests",
     "crates/vfx-bench",
     "crates/vfx-ocio",
+    "crates/vfx-rs-py",
 ]
 
 [workspace.package]
@@ -64,6 +65,10 @@ lcms2 = "6.1"
 
 # Utilities
 thiserror = "2.0"
+
+# Python bindings
+pyo3 = { version = "0.23", features = ["extension-module"] }
+numpy = "0.23"
 
 # Testing
 approx = "0.5"
