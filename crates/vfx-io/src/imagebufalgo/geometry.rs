@@ -400,6 +400,363 @@ pub fn fit(src: &ImageBuf, width: u32, height: u32, filter: ResizeFilter, roi: O
     resize(src, new_w, new_h, filter, Some(roi))
 }
 
+/// Pastes one image onto another at a specified location.
+///
+/// # Arguments
+///
+/// * `dst` - Destination image (modified in place)
+/// * `xbegin` - X coordinate in dst where paste begins
+/// * `ybegin` - Y coordinate in dst where paste begins
+/// * `zbegin` - Z coordinate in dst where paste begins
+/// * `chbegin` - Channel offset in dst
+/// * `src` - Source image to paste
+/// * `roi` - Optional region of src to paste (defaults to entire src)
+///
+/// # Example
+///
+/// ```ignore
+/// use vfx_io::imagebufalgo::paste;
+///
+/// // Paste src into dst at position (100, 100)
+/// paste(&mut dst, 100, 100, 0, 0, &src, None);
+/// ```
+pub fn paste(
+    dst: &mut ImageBuf,
+    xbegin: i32,
+    ybegin: i32,
+    zbegin: i32,
+    chbegin: i32,
+    src: &ImageBuf,
+    roi: Option<Roi3D>,
+) -> bool {
+    let roi = roi.unwrap_or_else(|| src.roi());
+    paste_into(dst, xbegin, ybegin, zbegin, chbegin, src, Some(roi))
+}
+
+/// Pastes src into dst at specified location.
+pub fn paste_into(
+    dst: &mut ImageBuf,
+    xbegin: i32,
+    ybegin: i32,
+    zbegin: i32,
+    chbegin: i32,
+    src: &ImageBuf,
+    roi: Option<Roi3D>,
+) -> bool {
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let src_nch = src.nchannels() as usize;
+    let dst_nch = dst.nchannels() as usize;
+    let chbegin_usize = chbegin.max(0) as usize;
+
+    let mut src_pixel = vec![0.0f32; src_nch];
+    let mut dst_pixel = vec![0.0f32; dst_nch];
+
+    let dst_roi = dst.roi();
+
+    for src_z in roi.zbegin..roi.zend {
+        let dst_z = zbegin + (src_z - roi.zbegin);
+        if dst_z < dst_roi.zbegin || dst_z >= dst_roi.zend {
+            continue;
+        }
+
+        for src_y in roi.ybegin..roi.yend {
+            let dst_y = ybegin + (src_y - roi.ybegin);
+            if dst_y < dst_roi.ybegin || dst_y >= dst_roi.yend {
+                continue;
+            }
+
+            for src_x in roi.xbegin..roi.xend {
+                let dst_x = xbegin + (src_x - roi.xbegin);
+                if dst_x < dst_roi.xbegin || dst_x >= dst_roi.xend {
+                    continue;
+                }
+
+                src.getpixel(src_x, src_y, src_z, &mut src_pixel, WrapMode::Black);
+                dst.getpixel(dst_x, dst_y, dst_z, &mut dst_pixel, WrapMode::Black);
+
+                // Copy channels from src to dst with offset
+                for c in 0..src_nch {
+                    let dst_c = chbegin_usize + c;
+                    if dst_c < dst_nch {
+                        dst_pixel[dst_c] = src_pixel[c];
+                    }
+                }
+
+                dst.setpixel(dst_x, dst_y, dst_z, &dst_pixel);
+            }
+        }
+    }
+
+    true
+}
+
+/// Rotates an image by an arbitrary angle (in radians).
+///
+/// The image is rotated around its center. Pixels that fall outside
+/// the image bounds after rotation are set to black.
+///
+/// # Arguments
+///
+/// * `src` - Source image
+/// * `angle` - Rotation angle in radians (positive = counter-clockwise)
+/// * `filter` - Interpolation filter for sampling
+/// * `roi` - Optional region (defaults to entire image)
+///
+/// # Example
+///
+/// ```ignore
+/// use vfx_io::imagebufalgo::{rotate, ResizeFilter};
+/// use std::f32::consts::PI;
+///
+/// let rotated = rotate(&src, PI / 4.0, ResizeFilter::Bilinear, None); // 45 degrees
+/// ```
+pub fn rotate(
+    src: &ImageBuf,
+    angle: f32,
+    filter: ResizeFilter,
+    roi: Option<Roi3D>,
+) -> ImageBuf {
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let mut dst = ImageBuf::new(src.spec().clone(), InitializePixels::Yes);
+    rotate_into(&mut dst, src, angle, filter, Some(roi));
+    dst
+}
+
+/// Rotates src by arbitrary angle into dst.
+pub fn rotate_into(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    angle: f32,
+    filter: ResizeFilter,
+    roi: Option<Roi3D>,
+) {
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let nch = src.nchannels() as usize;
+    let mut pixel = vec![0.0f32; nch];
+
+    // Center of rotation
+    let cx = (roi.xbegin + roi.xend) as f32 / 2.0;
+    let cy = (roi.ybegin + roi.yend) as f32 / 2.0;
+
+    let cos_a = angle.cos();
+    let sin_a = angle.sin();
+
+    let dst_roi = dst.roi();
+
+    for z in dst_roi.zbegin..dst_roi.zend {
+        for y in dst_roi.ybegin..dst_roi.yend {
+            for x in dst_roi.xbegin..dst_roi.xend {
+                // Map dst coords back to src coords (inverse rotation)
+                let dx = x as f32 - cx;
+                let dy = y as f32 - cy;
+
+                let src_x = cx + dx * cos_a + dy * sin_a;
+                let src_y = cy - dx * sin_a + dy * cos_a;
+
+                // Check bounds
+                if src_x < roi.xbegin as f32 || src_x >= roi.xend as f32 ||
+                   src_y < roi.ybegin as f32 || src_y >= roi.yend as f32 {
+                    // Outside source bounds - leave as black
+                    continue;
+                }
+
+                match filter {
+                    ResizeFilter::Nearest => {
+                        let sx = src_x.floor() as i32;
+                        let sy = src_y.floor() as i32;
+                        src.getpixel(sx, sy, z, &mut pixel, WrapMode::Black);
+                    }
+                    ResizeFilter::Bilinear => {
+                        src.interppixel(src_x, src_y, &mut pixel, WrapMode::Black);
+                    }
+                    ResizeFilter::Bicubic | ResizeFilter::Lanczos3 => {
+                        src.interppixel_bicubic(src_x, src_y, &mut pixel, WrapMode::Black);
+                    }
+                }
+
+                dst.setpixel(x, y, z, &pixel);
+            }
+        }
+    }
+}
+
+/// Circularly shifts an image by the specified amount.
+///
+/// Pixels that shift off one edge wrap around to the opposite edge.
+///
+/// # Arguments
+///
+/// * `src` - Source image
+/// * `xshift` - Horizontal shift (positive = right)
+/// * `yshift` - Vertical shift (positive = down)
+/// * `zshift` - Depth shift
+/// * `roi` - Optional region (defaults to entire image)
+pub fn circular_shift(
+    src: &ImageBuf,
+    xshift: i32,
+    yshift: i32,
+    zshift: i32,
+    roi: Option<Roi3D>,
+) -> ImageBuf {
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let mut dst = ImageBuf::new(src.spec().clone(), InitializePixels::No);
+    circular_shift_into(&mut dst, src, xshift, yshift, zshift, Some(roi));
+    dst
+}
+
+/// Circularly shifts src into dst.
+pub fn circular_shift_into(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    xshift: i32,
+    yshift: i32,
+    zshift: i32,
+    roi: Option<Roi3D>,
+) {
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let nch = src.nchannels() as usize;
+    let mut pixel = vec![0.0f32; nch];
+
+    let w = roi.width();
+    let h = roi.height();
+    let d = roi.depth();
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                // Calculate source position with wrapping
+                let src_x = ((x - roi.xbegin - xshift) % w + w) % w + roi.xbegin;
+                let src_y = ((y - roi.ybegin - yshift) % h + h) % h + roi.ybegin;
+                let src_z = ((z - roi.zbegin - zshift) % d + d) % d + roi.zbegin;
+
+                src.getpixel(src_x, src_y, src_z, &mut pixel, WrapMode::Black);
+                dst.setpixel(x, y, z, &pixel);
+            }
+        }
+    }
+}
+
+/// Applies an affine warp transformation using a 3x3 matrix.
+///
+/// # Arguments
+///
+/// * `src` - Source image
+/// * `matrix` - 3x3 transformation matrix (row-major)
+/// * `filter` - Interpolation filter
+/// * `roi` - Optional output region
+///
+/// The matrix should be the INVERSE of the transform you want to apply,
+/// as we sample from src for each dst pixel.
+pub fn warp(
+    src: &ImageBuf,
+    matrix: &[f32; 9],
+    filter: ResizeFilter,
+    roi: Option<Roi3D>,
+) -> ImageBuf {
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let mut dst = ImageBuf::new(src.spec().clone(), InitializePixels::Yes);
+    warp_into(&mut dst, src, matrix, filter, Some(roi));
+    dst
+}
+
+/// Applies affine warp into dst.
+pub fn warp_into(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    matrix: &[f32; 9],
+    filter: ResizeFilter,
+    roi: Option<Roi3D>,
+) {
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let nch = src.nchannels() as usize;
+    let mut pixel = vec![0.0f32; nch];
+
+    let dst_roi = dst.roi();
+
+    // Matrix elements (row-major 3x3)
+    let m00 = matrix[0];
+    let m01 = matrix[1];
+    let m02 = matrix[2];
+    let m10 = matrix[3];
+    let m11 = matrix[4];
+    let m12 = matrix[5];
+    let m20 = matrix[6];
+    let m21 = matrix[7];
+    let m22 = matrix[8];
+
+    for z in dst_roi.zbegin..dst_roi.zend {
+        for y in dst_roi.ybegin..dst_roi.yend {
+            for x in dst_roi.xbegin..dst_roi.xend {
+                let xf = x as f32;
+                let yf = y as f32;
+
+                // Apply inverse transform (homogeneous coords)
+                let w = m20 * xf + m21 * yf + m22;
+                if w.abs() < 1e-10 {
+                    continue;
+                }
+                let src_x = (m00 * xf + m01 * yf + m02) / w;
+                let src_y = (m10 * xf + m11 * yf + m12) / w;
+
+                // Check bounds
+                if src_x < roi.xbegin as f32 || src_x >= roi.xend as f32 ||
+                   src_y < roi.ybegin as f32 || src_y >= roi.yend as f32 {
+                    continue;
+                }
+
+                match filter {
+                    ResizeFilter::Nearest => {
+                        let sx = src_x.floor() as i32;
+                        let sy = src_y.floor() as i32;
+                        src.getpixel(sx, sy, z, &mut pixel, WrapMode::Black);
+                    }
+                    ResizeFilter::Bilinear => {
+                        src.interppixel(src_x, src_y, &mut pixel, WrapMode::Black);
+                    }
+                    ResizeFilter::Bicubic | ResizeFilter::Lanczos3 => {
+                        src.interppixel_bicubic(src_x, src_y, &mut pixel, WrapMode::Black);
+                    }
+                }
+
+                dst.setpixel(x, y, z, &pixel);
+            }
+        }
+    }
+}
+
+/// Reorients an image based on EXIF orientation tag.
+///
+/// # Arguments
+///
+/// * `src` - Source image
+/// * `orientation` - EXIF orientation value (1-8)
+///
+/// Orientation values:
+/// - 1: Normal
+/// - 2: Flip horizontal
+/// - 3: Rotate 180
+/// - 4: Flip vertical
+/// - 5: Transpose (flip + rotate90)
+/// - 6: Rotate 90 CW
+/// - 7: Transverse (flip + rotate270)
+/// - 8: Rotate 270 CW
+pub fn reorient(src: &ImageBuf, orientation: u8) -> ImageBuf {
+    match orientation {
+        1 => src.clone(),
+        2 => flop(src, None),
+        3 => rotate180(src, None),
+        4 => flip(src, None),
+        5 => transpose(src, None),
+        6 => rotate90(src, None),
+        7 => {
+            let flipped = flip(src, None);
+            rotate90(&flipped, None)
+        },
+        8 => rotate270(src, None),
+        _ => src.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
