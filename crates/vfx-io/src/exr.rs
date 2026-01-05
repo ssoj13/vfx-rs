@@ -841,6 +841,21 @@ pub fn write_layers<P: AsRef<Path>>(path: P, image: &LayeredImage) -> IoResult<(
     ExrWriter::new().write_layers(path, image)
 }
 
+/// Probes EXR file to get dimensions without loading pixel data.
+///
+/// Reads only the header metadata, making it very fast for large files.
+pub fn probe_dimensions<P: AsRef<Path>>(path: P) -> IoResult<(u32, u32)> {
+    let meta = exr::meta::MetaData::read_from_file(path.as_ref(), false)
+        .map_err(|e| IoError::DecodeError(format!("EXR probe failed: {}", e)))?;
+    
+    if let Some(header) = meta.headers.first() {
+        let size = header.layer_size;
+        Ok((size.0 as u32, size.1 as u32))
+    } else {
+        Err(IoError::DecodeError("EXR has no layers".into()))
+    }
+}
+
 // ============================================================================
 // Tests
 // ============================================================================

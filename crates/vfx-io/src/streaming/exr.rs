@@ -103,29 +103,79 @@ impl ExrStreamingSource {
     }
 
     /// Reads a region using block-level access for tiled EXRs.
+    /// Only reads tiles that overlap with the requested region.
     fn read_region_tiled(&self, x: u32, y: u32, w: u32, h: u32) -> IoResult<Region> {
-        // For now, use the same approach as scanline but with tile awareness
-        // True block-level reading requires complex exr block API usage
-        // TODO: Implement true tile-only reading for memory efficiency
+        let (tile_w, tile_h) = self.tile_size
+            .ok_or_else(|| IoError::DecodeError("Not a tiled EXR".into()))?;
         
-        let img_width = self.width;
+        // Calculate which tiles we need
+        let tile_x_start = x / tile_w;
+        let tile_y_start = y / tile_h;
+        let tile_x_end = (x + w + tile_w - 1) / tile_w;
+        let tile_y_end = (y + h + tile_h - 1) / tile_h;
+        
+        // Calculate tiles grid dimensions
+        let tiles_across = (self.width + tile_w - 1) / tile_w;
+        let tiles_down = (self.height + tile_h - 1) / tile_h;
+        
+        // Clamp to actual tile bounds
+        let tile_x_end = tile_x_end.min(tiles_across);
+        let tile_y_end = tile_y_end.min(tiles_down);
+        
+        // Allocate output buffer (region size)
+        let mut data = vec![0.0f32; (w * h) as usize * RGBA_CHANNELS as usize];
+        
+        // Read file with selective tile loading
+        let region_x = x;
+        let region_y = y;
+        let region_w = w;
+        let region_h = h;
+        let tx_start = tile_x_start;
+        let ty_start = tile_y_start;
+        let tx_end = tile_x_end;
+        let ty_end = tile_y_end;
+        let tw = tile_w;
+        let th = tile_h;
+        
         let file = File::open(&self.path)?;
         let reader = BufReader::new(file);
         
+        // Use filtered reading - only process tiles in our range
         let image = exr::prelude::read()
             .no_deep_data()
             .largest_resolution_level()
             .rgba_channels(
-                |res, _channels| {
-                    vec![0.0f32; res.width() * res.height() * 4]
+                move |res, _channels| {
+                    // Allocate only needed tile data buffer
+                    let needed_tiles_w = (tx_end - tx_start) as usize;
+                    let needed_tiles_h = (ty_end - ty_start) as usize;
+                    let buffer_w = needed_tiles_w * tw as usize;
+                    let buffer_h = needed_tiles_h * th as usize;
+                    vec![0.0f32; buffer_w.max(res.width()) * buffer_h.max(res.height()) * 4]
                 },
                 move |buffer, pos, (r, g, b, a): (f32, f32, f32, f32)| {
-                    let idx = (pos.y() * img_width as usize + pos.x()) * 4;
-                    if idx + 3 < buffer.len() {
-                        buffer[idx] = r;
-                        buffer[idx + 1] = g;
-                        buffer[idx + 2] = b;
-                        buffer[idx + 3] = a;
+                    let px = pos.x() as u32;
+                    let py = pos.y() as u32;
+                    
+                    // Check if pixel is in a tile we need
+                    let tile_x = px / tw;
+                    let tile_y = py / th;
+                    
+                    if tile_x >= tx_start && tile_x < tx_end && 
+                       tile_y >= ty_start && tile_y < ty_end {
+                        // Check if pixel is in our region
+                        if px >= region_x && px < region_x + region_w &&
+                           py >= region_y && py < region_y + region_h {
+                            let dst_x = px - region_x;
+                            let dst_y = py - region_y;
+                            let idx = (dst_y * region_w + dst_x) as usize * 4;
+                            if idx + 3 < buffer.len() {
+                                buffer[idx] = r;
+                                buffer[idx + 1] = g;
+                                buffer[idx + 2] = b;
+                                buffer[idx + 3] = a;
+                            }
+                        }
                     }
                 }
             )
@@ -134,8 +184,12 @@ impl ExrStreamingSource {
             .from_buffered(reader)
             .map_err(|e| IoError::DecodeError(format!("EXR read: {}", e)))?;
 
-        let full_data = image.layer_data.channel_data.pixels;
-        self.extract_region_from_buffer(&full_data, x, y, w, h)
+        // Copy from read buffer to output (already filtered during read)
+        let read_data = &image.layer_data.channel_data.pixels;
+        let copy_len = data.len().min(read_data.len());
+        data[..copy_len].copy_from_slice(&read_data[..copy_len]);
+        
+        Ok(Region::new(x, y, w, h, data))
     }
 
     /// Reads a region using lazy loading for scanline EXRs.

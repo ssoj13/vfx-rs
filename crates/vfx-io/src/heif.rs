@@ -346,7 +346,12 @@ fn extract_nclx_metadata(handle: &libheif_rs::ImageHandle, bit_depth: u8) -> Opt
         primaries,
         matrix,
         full_range: nclx.full_range_flag() != 0,  // u8 to bool
-        max_cll: None,  // TODO: extract from MDCV/CLLI metadata boxes
+        // CLLI/MDCV extraction requires libheif-sys FFI calls:
+        // - heif_image_handle_get_content_light_level() for max_cll/max_fall
+        // - heif_image_handle_get_mastering_display_colour_volume() for display metadata
+        // libheif-rs 2.x does not expose these functions in its safe wrapper.
+        // See: https://github.com/Cykooz/libheif-rs/issues for feature requests.
+        max_cll: None,
         max_fall: None,
         bit_depth,
     })

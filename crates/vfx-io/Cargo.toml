@@ -66,8 +66,16 @@ byteorder = "1.5"
 
 # WebP/AVIF support via image crate
 # WebP: full encode/decode
-# AVIF: write-only (ravif encoder). For read: install dav1d, add "avif-native" feature
-# TODO: dav1d через vcpkg не подхватывается pkg-config, разобраться позже
+# AVIF: write-only (ravif encoder). For AVIF read support:
+#   1. Install dav1d system library
+#   2. Enable "avif-native" feature in image crate
+#
+# Known issue: dav1d via vcpkg on Windows is not detected by pkg-config.
+# Workarounds:
+#   - Set DAV1D_DIR environment variable to vcpkg installation path
+#   - Use MSYS2: pacman -S mingw-w64-x86_64-dav1d
+#   - Build dav1d from source with meson and set PKG_CONFIG_PATH
+# See: https://code.videolan.org/videolan/dav1d
 image = { version = "0.25", optional = true, default-features = false, features = ["webp", "avif"] }
 
 # JPEG2000 support (requires OpenJPEG)

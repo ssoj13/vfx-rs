@@ -302,7 +302,25 @@ impl LayerProcessor {
 
             // If we have both color and spatial ops, apply spatial to result
             if !color_ops.is_empty() && !spatial_ops.is_empty() {
-                // TODO: Apply spatial ops to color result
+                // Collect processed color channels
+                let color_channels: Vec<ImageChannel> = color_group.indices.iter()
+                    .filter_map(|&idx| output_channels[idx].clone())
+                    .collect();
+                
+                // Apply spatial ops to the color-processed result
+                let spatial_result = self.apply_ops_to_channels(
+                    &color_channels,
+                    layer.width,
+                    layer.height,
+                    &spatial_ops,
+                )?;
+                
+                // Update output with doubly-processed channels
+                for (i, &layer_idx) in color_group.indices.iter().enumerate() {
+                    if i < spatial_result.len() {
+                        output_channels[layer_idx] = Some(spatial_result[i].clone());
+                    }
+                }
             }
         }
 
@@ -406,6 +424,60 @@ impl LayerProcessor {
         }
 
         Ok(channels)
+    }
+
+    /// Apply ops directly to a Vec of channels (for chaining color -> spatial).
+    fn apply_ops_to_channels(
+        &mut self,
+        channels: &[ImageChannel],
+        width: u32,
+        height: u32,
+        ops: &[&ComputeOp],
+    ) -> ComputeResult<Vec<ImageChannel>> {
+        if ops.is_empty() || channels.is_empty() {
+            return Ok(channels.to_vec());
+        }
+
+        let pixel_count = (width * height) as usize;
+        let num_channels = channels.len();
+
+        // Pack into interleaved f32
+        let mut data = vec![0.0f32; pixel_count * num_channels];
+        for (ch_idx, ch) in channels.iter().enumerate() {
+            let samples = ch.samples.to_f32();
+            for (px, &val) in samples.iter().enumerate() {
+                if px < pixel_count {
+                    data[px * num_channels + ch_idx] = val;
+                }
+            }
+        }
+
+        // Process on GPU
+        let mut img = ComputeImage::from_f32(data, width, height, num_channels as u32)?;
+        for op in ops {
+            img = self.apply_op(img, op)?;
+        }
+
+        // Unpack
+        let result_data = img.data();
+        let mut output = Vec::with_capacity(num_channels);
+
+        for (ch_idx, source) in channels.iter().enumerate() {
+            let mut samples = Vec::with_capacity(pixel_count);
+            for px in 0..pixel_count {
+                samples.push(result_data[px * num_channels + ch_idx]);
+            }
+            output.push(ImageChannel {
+                name: source.name.clone(),
+                kind: source.kind,
+                sample_type: source.sample_type,
+                samples: ChannelSamples::F32(samples),
+                sampling: source.sampling,
+                quantize_linearly: source.quantize_linearly,
+            });
+        }
+
+        Ok(output)
     }
 
     /// Apply single operation.

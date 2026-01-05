@@ -942,13 +942,18 @@ impl ComputePipelineBuilder {
 
 /// Probes file to get image dimensions without full load.
 ///
-/// Currently loads the file to get dimensions. Future optimization:
-/// implement header-only probing for each format.
+/// Uses vfx-io's header-only probing for efficiency.
+#[cfg(feature = "io")]
 fn probe_dimensions(path: &Path) -> ComputeResult<(u32, u32)> {
-    // TODO: Implement header-only probing for efficiency
-    // For now, load the file to get dimensions
-    let img = load_image_file(path)?;
-    Ok((img.width, img.height))
+    vfx_io::probe_dimensions(path).map_err(|e| {
+        ComputeError::OperationFailed(format!("Failed to probe {}: {}", path.display(), e))
+    })
+}
+
+/// Fallback probe when io feature is disabled.
+#[cfg(not(feature = "io"))]
+fn probe_dimensions(_path: &Path) -> ComputeResult<(u32, u32)> {
+    Err(ComputeError::OperationFailed("I/O feature required for probing".into()))
 }
 
 /// Loads image file into ComputeImage.
