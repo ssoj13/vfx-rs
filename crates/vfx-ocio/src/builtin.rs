@@ -46,6 +46,12 @@ pub fn aces_1_3() -> Config {
     config.add_colorspace(srgb_linear());
     config.add_colorspace(srgb());
     config.add_colorspace(rec709());
+    config.add_colorspace(display_p3());
+    config.add_colorspace(rec2020_linear());
+    config.add_colorspace(rec2020());
+    config.add_colorspace(dci_p3());
+    config.add_colorspace(log_c());
+    config.add_colorspace(slog3());
 
     // Define roles
     config.set_role(role::names::REFERENCE, "ACES2065-1");
@@ -57,15 +63,62 @@ pub fn aces_1_3() -> Config {
     config.set_role(role::names::ACES_INTERCHANGE, "ACES2065-1");
 
     // Define displays
+    
+    // sRGB display (most common for computer monitors)
     let mut srgb_display = Display::new("sRGB");
-    srgb_display.add_view(View::new("ACES 1.0 - SDR Video", "sRGB"));
-    srgb_display.add_view(View::new("Raw", "Raw"));
+    srgb_display.add_view(View::new("ACES 1.0 - SDR Video", "sRGB")
+        .with_description("ACES Output Transform for sRGB monitors"));
+    srgb_display.add_view(View::new("Un-tone-mapped", "Linear sRGB")
+        .with_description("Linear output without tone mapping"));
+    srgb_display.add_view(View::new("Log", "ACEScct")
+        .with_description("ACEScct log view for grading"));
+    srgb_display.add_view(View::new("Raw", "Raw")
+        .with_description("Bypass color management"));
     config.add_display(srgb_display);
 
+    // Rec.709 display (broadcast video)
     let mut rec709_display = Display::new("Rec.709");
-    rec709_display.add_view(View::new("ACES 1.0 - SDR Video", "Rec.709"));
-    rec709_display.add_view(View::new("Raw", "Raw"));
+    rec709_display.add_view(View::new("ACES 1.0 - SDR Video", "Rec.709")
+        .with_description("ACES Output Transform for Rec.709 broadcast"));
+    rec709_display.add_view(View::new("Un-tone-mapped", "Linear sRGB")
+        .with_description("Linear output without tone mapping"));
+    rec709_display.add_view(View::new("Log", "ACEScct")
+        .with_description("ACEScct log view for grading"));
+    rec709_display.add_view(View::new("Raw", "Raw")
+        .with_description("Bypass color management"));
     config.add_display(rec709_display);
+
+    // Display P3 (Apple devices, modern monitors)
+    let mut p3_display = Display::new("Display P3");
+    p3_display.add_view(View::new("ACES 1.0 - SDR Video", "Display P3")
+        .with_description("ACES Output Transform for P3-D65 displays"));
+    p3_display.add_view(View::new("Un-tone-mapped", "Linear sRGB")
+        .with_description("Linear output without tone mapping"));
+    p3_display.add_view(View::new("Log", "ACEScct")
+        .with_description("ACEScct log view for grading"));
+    p3_display.add_view(View::new("Raw", "Raw")
+        .with_description("Bypass color management"));
+    config.add_display(p3_display);
+
+    // Rec.2020 display (HDR, wide gamut)
+    let mut rec2020_display = Display::new("Rec.2020");
+    rec2020_display.add_view(View::new("ACES 1.0 - SDR Video", "Rec.2020")
+        .with_description("ACES Output Transform for Rec.2020 displays"));
+    rec2020_display.add_view(View::new("Un-tone-mapped", "Linear Rec.2020")
+        .with_description("Linear output without tone mapping"));
+    rec2020_display.add_view(View::new("Log", "ACEScct")
+        .with_description("ACEScct log view for grading"));
+    rec2020_display.add_view(View::new("Raw", "Raw")
+        .with_description("Bypass color management"));
+    config.add_display(rec2020_display);
+
+    // DCI-P3 (digital cinema projection)
+    let mut dci_display = Display::new("DCI-P3");
+    dci_display.add_view(View::new("ACES 1.0 - SDR Cinema", "DCI-P3")
+        .with_description("ACES Output Transform for DCI-P3 cinema"));
+    dci_display.add_view(View::new("Raw", "Raw")
+        .with_description("Bypass color management"));
+    config.add_display(dci_display);
 
     config
 }
@@ -369,6 +422,251 @@ fn rec709() -> ColorSpace {
         .build()
 }
 
+/// Display P3 (P3-D65) color space.
+fn display_p3() -> ColorSpace {
+    // P3-D65 to AP0 matrix
+    let to_ref = Transform::group(vec![
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "sRGB".into(),
+            direction: TransformDirection::Inverse,
+        }),
+        // P3-D65 to ACES (AP0)
+        Transform::matrix([
+            0.5151187942, 0.2919589294, 0.1929222764, 0.0,
+            0.0841182254, 0.8099430564, 0.1059387182, 0.0,
+            0.0154829796, 0.0819247812, 0.9025922392, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+    ]);
+
+    let from_ref = Transform::group(vec![
+        // AP0 to P3-D65
+        Transform::matrix([
+            2.0248982044, -0.6891712546, -0.3357269498, 0.0,
+            -0.1836317626, 1.2894847552, -0.1058529926, 0.0,
+            0.0039320418, -0.0981164038, 1.0941843620, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "sRGB".into(),
+            direction: TransformDirection::Forward,
+        }),
+    ]);
+
+    ColorSpace::builder("Display P3")
+        .alias("P3-D65")
+        .alias("Apple Display P3")
+        .alias("Output - P3-D65")
+        .family(Family::Display)
+        .encoding(Encoding::Sdr)
+        .description("Display P3 (P3-D65) color space")
+        .to_reference(to_ref)
+        .from_reference(from_ref)
+        .build()
+}
+
+/// Linear Rec.2020 primaries.
+fn rec2020_linear() -> ColorSpace {
+    // Rec.2020 to AP0 matrix
+    let to_ref = Transform::matrix([
+        0.6792977466, 0.1525063889, 0.1681958645, 0.0,
+        0.0460199776, 0.8591548740, 0.0948251484, 0.0,
+        -0.0004361738, 0.0286956958, 0.9717404780, 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    ]);
+
+    let from_ref = Transform::matrix([
+        1.4909155618, -0.2680460424, -0.2228695194, 0.0,
+        -0.0803196566, 1.1819825628, -0.1016629062, 0.0,
+        0.0032146704, -0.0347148330, 1.0314999626, 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    ]);
+
+    ColorSpace::builder("Linear Rec.2020")
+        .alias("Linear BT.2020")
+        .alias("lin_rec2020")
+        .family(Family::Utility)
+        .encoding(Encoding::SceneLinear)
+        .description("Linear Rec.2020 / BT.2020 primaries")
+        .to_reference(to_ref)
+        .from_reference(from_ref)
+        .build()
+}
+
+/// Rec.2020 (BT.2020) video color space.
+fn rec2020() -> ColorSpace {
+    let to_ref = Transform::group(vec![
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "Rec2020".into(),
+            direction: TransformDirection::Inverse,
+        }),
+        Transform::matrix([
+            0.6792977466, 0.1525063889, 0.1681958645, 0.0,
+            0.0460199776, 0.8591548740, 0.0948251484, 0.0,
+            -0.0004361738, 0.0286956958, 0.9717404780, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+    ]);
+
+    let from_ref = Transform::group(vec![
+        Transform::matrix([
+            1.4909155618, -0.2680460424, -0.2228695194, 0.0,
+            -0.0803196566, 1.1819825628, -0.1016629062, 0.0,
+            0.0032146704, -0.0347148330, 1.0314999626, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "Rec2020".into(),
+            direction: TransformDirection::Forward,
+        }),
+    ]);
+
+    ColorSpace::builder("Rec.2020")
+        .alias("rec2020")
+        .alias("BT.2020")
+        .alias("Output - Rec.2020")
+        .family(Family::Display)
+        .encoding(Encoding::Sdr)
+        .description("Rec.2020 / BT.2020 video color space")
+        .to_reference(to_ref)
+        .from_reference(from_ref)
+        .build()
+}
+
+/// DCI-P3 (theatrical projection) color space.
+fn dci_p3() -> ColorSpace {
+    // DCI-P3 uses Gamma 2.6 and DCI white point
+    let to_ref = Transform::group(vec![
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "Gamma2.6".into(),
+            direction: TransformDirection::Inverse,
+        }),
+        // DCI-P3 to AP0 (via XYZ)
+        Transform::matrix([
+            0.4866321373, 0.2656683624, 0.1981150162, 0.0,
+            0.0877854641, 0.7568287930, 0.1553857430, 0.0,
+            -0.0002324447, 0.0010546067, 0.9991778380, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+    ]);
+
+    let from_ref = Transform::group(vec![
+        // AP0 to DCI-P3
+        Transform::matrix([
+            2.2043664540, -0.7744940212, -0.4298724328, 0.0,
+            -0.2459786142, 1.3703285780, -0.1243499638, 0.0,
+            0.0003108518, -0.0013756698, 1.0010648180, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "Gamma2.6".into(),
+            direction: TransformDirection::Forward,
+        }),
+    ]);
+
+    ColorSpace::builder("DCI-P3")
+        .alias("dci_p3")
+        .alias("Output - DCI-P3")
+        .family(Family::Display)
+        .encoding(Encoding::Sdr)
+        .description("DCI-P3 theatrical projection color space")
+        .to_reference(to_ref)
+        .from_reference(from_ref)
+        .build()
+}
+
+/// ARRI LogC (AWG, EI800).
+fn log_c() -> ColorSpace {
+    // LogC AWG to AP0
+    let to_ref = Transform::group(vec![
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "LogC".into(),
+            direction: TransformDirection::Inverse,
+        }),
+        // ARRI Wide Gamut to AP0
+        Transform::matrix([
+            0.6801055702, 0.2369556215, 0.0829388083, 0.0,
+            0.0854100974, 1.0178331760, -0.1032432734, 0.0,
+            0.0020715932, -0.0625625618, 1.0604909686, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+    ]);
+
+    let from_ref = Transform::group(vec![
+        // AP0 to AWG
+        Transform::matrix([
+            1.5350697176, -0.3884437084, -0.1466260092, 0.0,
+            -0.1230878094, 1.0207697712, 0.1023180382, 0.0,
+            -0.0080797810, 0.0604767616, 0.9476030194, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "LogC".into(),
+            direction: TransformDirection::Forward,
+        }),
+    ]);
+
+    ColorSpace::builder("ARRI LogC")
+        .alias("LogC")
+        .alias("Input - ARRI - LogC")
+        .family(Family::Input)
+        .encoding(Encoding::Log)
+        .allocation(AllocationInfo {
+            alloc_type: AllocationType::Uniform,
+            vars: [0.0, 1.0],
+        })
+        .description("ARRI LogC (AWG, EI800)")
+        .to_reference(to_ref)
+        .from_reference(from_ref)
+        .build()
+}
+
+/// Sony S-Log3 / S-Gamut3.Cine.
+fn slog3() -> ColorSpace {
+    let to_ref = Transform::group(vec![
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "SLog3".into(),
+            direction: TransformDirection::Inverse,
+        }),
+        // S-Gamut3.Cine to AP0
+        Transform::matrix([
+            0.6387886672, 0.2723514337, 0.0888598991, 0.0,
+            0.0916282100, 0.9417939632, -0.0334221732, 0.0,
+            0.0188249176, 0.0378148474, 0.9433602350, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+    ]);
+
+    let from_ref = Transform::group(vec![
+        // AP0 to S-Gamut3.Cine
+        Transform::matrix([
+            1.6269474718, -0.4700540304, -0.1568934414, 0.0,
+            -0.1631574952, 1.1045542168, 0.0586032784, 0.0,
+            -0.0210079082, -0.0326451154, 1.0536530236, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]),
+        Transform::BuiltinTransfer(BuiltinTransferTransform {
+            style: "SLog3".into(),
+            direction: TransformDirection::Forward,
+        }),
+    ]);
+
+    ColorSpace::builder("Sony S-Log3")
+        .alias("SLog3")
+        .alias("S-Log3")
+        .alias("Input - Sony - S-Log3")
+        .family(Family::Input)
+        .encoding(Encoding::Log)
+        .allocation(AllocationInfo {
+            alloc_type: AllocationType::Uniform,
+            vars: [0.0, 1.0],
+        })
+        .description("Sony S-Log3 / S-Gamut3.Cine")
+        .to_reference(to_ref)
+        .from_reference(from_ref)
+        .build()
+}
+
 // ============================================================================
 // Builtin transform registry
 // ============================================================================
@@ -417,7 +715,9 @@ mod tests {
     #[test]
     fn aces_config_has_colorspaces() {
         let config = aces_1_3();
-        assert!(config.colorspaces().len() >= 8);
+        // 14 colorspaces: ACES2065-1, ACEScg, ACEScct, ACEScc, Raw, Linear sRGB, sRGB,
+        // Rec.709, Display P3, Linear Rec.2020, Rec.2020, DCI-P3, ARRI LogC, Sony S-Log3
+        assert!(config.colorspaces().len() >= 14, "Found {} colorspaces", config.colorspaces().len());
     }
 
     #[test]
@@ -460,6 +760,33 @@ mod tests {
     #[test]
     fn available_configs_not_empty() {
         assert!(!available_configs().is_empty());
+    }
+
+    #[test]
+    fn aces_config_has_displays() {
+        let config = aces_1_3();
+        // 5 displays: sRGB, Rec.709, Display P3, Rec.2020, DCI-P3
+        let displays = config.displays().displays();
+        assert!(displays.len() >= 5, "Found {} displays", displays.len());
+        
+        // Check each display has views
+        for display in displays {
+            assert!(!display.views().is_empty(), "Display {} has no views", display.name());
+        }
+    }
+
+    #[test]
+    fn aces_camera_colorspaces() {
+        let config = aces_1_3();
+        
+        // Test camera input colorspaces exist
+        assert!(config.colorspace("ARRI LogC").is_some());
+        assert!(config.colorspace("Sony S-Log3").is_some());
+        
+        // Test display colorspaces exist
+        assert!(config.colorspace("Display P3").is_some());
+        assert!(config.colorspace("Rec.2020").is_some());
+        assert!(config.colorspace("DCI-P3").is_some());
     }
 
     #[test]

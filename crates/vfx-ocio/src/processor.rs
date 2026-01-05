@@ -61,6 +61,29 @@ fn apply_transfer(v: f32, style: TransferStyle, forward: bool) -> f32 {
             }
         }
         
+        TransferStyle::Rec2020 => {
+            // Rec.2020 uses same formula as Rec.709 but with different constants
+            // For 12-bit: alpha = 1.0993, beta = 0.0181
+            const ALPHA: f32 = 1.09929682680944;
+            const BETA: f32 = 0.018053968510807;
+            
+            if forward {
+                // Linear to Rec.2020
+                if v < BETA {
+                    v * 4.5
+                } else {
+                    ALPHA * v.powf(0.45) - (ALPHA - 1.0)
+                }
+            } else {
+                // Rec.2020 to linear
+                if v < BETA * 4.5 {
+                    v / 4.5
+                } else {
+                    ((v + (ALPHA - 1.0)) / ALPHA).powf(1.0 / 0.45)
+                }
+            }
+        }
+        
         TransferStyle::Gamma22 => {
             if forward { v.max(0.0).powf(1.0 / 2.2) } else { v.max(0.0).powf(2.2) }
         }
@@ -692,6 +715,8 @@ pub enum TransferStyle {
     Srgb,
     /// Rec.709 OETF.
     Rec709,
+    /// Rec.2020 OETF.
+    Rec2020,
     /// Gamma 2.2.
     Gamma22,
     /// Gamma 2.4.
@@ -969,6 +994,7 @@ impl Processor {
                 let style = match bt.style.to_lowercase().as_str() {
                     "srgb" | "srgb_texture" => TransferStyle::Srgb,
                     "rec709" | "bt709" | "rec.709" => TransferStyle::Rec709,
+                    "rec2020" | "bt2020" | "rec.2020" => TransferStyle::Rec2020,
                     "gamma22" | "gamma_2.2" => TransferStyle::Gamma22,
                     "gamma24" | "gamma_2.4" => TransferStyle::Gamma24,
                     "gamma26" | "gamma_2.6" | "dci" => TransferStyle::Gamma26,
@@ -978,7 +1004,7 @@ impl Processor {
                     "acescct" => TransferStyle::AcesCct,
                     "acescc" => TransferStyle::AcesCc,
                     "log3g10" | "redlog3g10" => TransferStyle::Log3G10,
-                    "logc3" | "arri_logc3" => TransferStyle::LogC3,
+                    "logc" | "logc3" | "arri_logc3" => TransferStyle::LogC3,
                     "logc4" | "arri_logc4" => TransferStyle::LogC4,
                     "slog3" | "sony_slog3" => TransferStyle::SLog3,
                     "vlog" | "panasonic_vlog" => TransferStyle::VLog,
