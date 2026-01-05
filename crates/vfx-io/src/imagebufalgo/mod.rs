@@ -9,12 +9,14 @@
 //! - [`channels`] - Channel operations (shuffle, append, extract)
 //! - [`geometry`] - Geometric operations (crop, flip, rotate, resize)
 //! - [`arithmetic`] - Arithmetic operations (add, sub, mul, div, over)
+//! - [`color`] - Color operations (saturate, contrast, color maps, gamma)
+//! - [`composite`] - Compositing operations (Porter-Duff, blend modes)
 //!
 //! # Example
 //!
 //! ```ignore
 //! use vfx_io::imagebuf::{ImageBuf, InitializePixels};
-//! use vfx_io::imagebufalgo::{fill, add, flip};
+//! use vfx_io::imagebufalgo::{fill, add, flip, saturate};
 //! use vfx_core::ImageSpec;
 //!
 //! // Create and fill an image
@@ -24,15 +26,37 @@
 //!
 //! // Apply operations
 //! let flipped = flip(&buf, None);
+//! let desaturated = saturate(&flipped, 0.5, 0, None);
 //! ```
 
 pub mod patterns;
 pub mod channels;
 pub mod geometry;
 pub mod arithmetic;
+pub mod color;
+pub mod composite;
 
 // Re-export commonly used functions
 pub use patterns::{zero, fill, checker, noise};
 pub use channels::{channels, channel_append, channel_sum};
 pub use geometry::{crop, cut, flip, flop, transpose, rotate90, rotate180, rotate270, resize};
 pub use arithmetic::{add, sub, mul, div, abs, absdiff, pow, clamp, invert, over};
+
+// Color operations
+pub use color::{
+    premult, unpremult, repremult,
+    saturate, contrast_remap,
+    color_map, ColorMapName,
+    colormatrixtransform,
+    rangecompress, rangeexpand,
+    srgb_to_linear, linear_to_srgb,
+};
+
+// Compositing operations
+pub use composite::{
+    // Porter-Duff
+    under, in_op, out, atop, xor,
+    // Blend modes
+    screen, multiply, overlay, hardlight, softlight,
+    difference, exclusion, colordodge, colorburn, add_blend,
+};
