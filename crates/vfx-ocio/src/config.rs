@@ -1691,6 +1691,136 @@ impl Config {
     pub fn look(&self, name: &str) -> Option<&Look> {
         self.looks.get(name)
     }
+
+    // ========================================================================
+    // View transform management (OCIO v2)
+    // ========================================================================
+
+    /// Returns the number of view transforms.
+    #[inline]
+    pub fn num_view_transforms(&self) -> usize {
+        self.displays.num_view_transforms()
+    }
+
+    /// Returns all view transforms.
+    #[inline]
+    pub fn view_transforms(&self) -> &[ViewTransform] {
+        self.displays.view_transforms()
+    }
+
+    /// Returns a view transform by name.
+    pub fn view_transform(&self, name: &str) -> Option<&ViewTransform> {
+        self.displays.view_transform(name)
+    }
+
+    /// Adds a view transform.
+    pub fn add_view_transform(&mut self, vt: ViewTransform) {
+        self.displays.add_view_transform(vt);
+    }
+
+    /// Returns view transform name at index.
+    pub fn view_transform_name_at(&self, index: usize) -> Option<&str> {
+        self.displays.view_transforms().get(index).map(|vt| vt.name())
+    }
+
+    // ========================================================================
+    // Named transform support (OCIO v2)
+    // ========================================================================
+
+    // Note: Named transforms would require additional storage and parsing
+    // from OCIO v2 configs. For now, we provide the infrastructure.
+
+    /// Placeholder for named transform count.
+    /// Named transforms are a v2 feature for reusable transform definitions.
+    pub fn num_named_transforms(&self) -> usize {
+        // TODO: Add named_transforms storage when implementing full v2 support
+        0
+    }
+
+    // ========================================================================
+    // Shared view support (OCIO v2)
+    // ========================================================================
+
+    /// Gets the number of shared views.
+    /// Shared views are display-independent views defined at the config level.
+    pub fn num_shared_views(&self) -> usize {
+        // TODO: Add shared_views storage when implementing full v2 support
+        0
+    }
+
+    // ========================================================================
+    // Additional OCIO compatibility methods
+    // ========================================================================
+
+    /// Gets the reference color space name.
+    ///
+    /// Returns the color space assigned to the "reference" role.
+    pub fn reference_space(&self) -> Option<&str> {
+        self.roles.reference()
+    }
+
+    /// Gets the scene-linear color space name.
+    ///
+    /// Returns the color space assigned to the "scene_linear" role.
+    pub fn scene_linear_space(&self) -> Option<&str> {
+        self.roles.scene_linear()
+    }
+
+    /// Gets the data color space name.
+    ///
+    /// Returns the color space assigned to the "data" role.
+    pub fn data_space(&self) -> Option<&str> {
+        self.roles.data()
+    }
+
+    /// Resolves a color space name, including role resolution.
+    ///
+    /// If the name is a role, returns the color space assigned to that role.
+    /// Otherwise returns the name unchanged if the color space exists.
+    pub fn resolve_colorspace_name(&self, name: &str) -> Option<&str> {
+        // First check if it's a role
+        if let Some(cs_name) = self.roles.get(name) {
+            if self.colorspaces.iter().any(|cs| cs.matches_name(cs_name)) {
+                return Some(cs_name);
+            }
+        }
+        // Then check if it's a direct color space name
+        self.colorspaces
+            .iter()
+            .find(|cs| cs.matches_name(name))
+            .map(|cs| cs.name())
+    }
+
+    /// Creates a display/view processor using display and view names.
+    ///
+    /// This is a convenience method that combines source color space,
+    /// display, and view into a single processor.
+    pub fn create_display_view_processor(
+        &self,
+        src: &str,
+        display: &str,
+        view: &str,
+    ) -> OcioResult<Processor> {
+        self.display_processor(src, display, view)
+    }
+
+    /// Returns the inverse direction processor for a color conversion.
+    pub fn inverse_processor(&self, src: &str, dst: &str) -> OcioResult<Processor> {
+        // Simply swap src and dst
+        self.processor(dst, src)
+    }
+
+    /// Checks if this is an OCIO v2 config.
+    #[inline]
+    pub fn is_v2(&self) -> bool {
+        self.version == ConfigVersion::V2
+    }
+
+    /// Checks if this is an OCIO v1 config.
+    #[inline]
+    pub fn is_v1(&self) -> bool {
+        self.version == ConfigVersion::V1
+    }
 }
 
 // ============================================================================
