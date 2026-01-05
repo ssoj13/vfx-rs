@@ -10,6 +10,7 @@ mod image;
 mod io;
 mod processor;
 mod lut;
+mod format;
 
 pub use image::Image;
 pub use processor::Processor;
@@ -53,6 +54,7 @@ fn vfx_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Core types
     m.add_class::<Image>()?;
     m.add_class::<Processor>()?;
+    m.add_class::<format::BitDepth>()?;
     
     // Top-level I/O
     m.add_function(wrap_pyfunction!(read, m)?)?;

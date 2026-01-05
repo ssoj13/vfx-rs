@@ -121,13 +121,27 @@ fn read_dpx(path: PathBuf) -> PyResult<Image> {
 }
 
 /// Write a DPX file.
+///
+/// Args:
+///     path: Output file path
+///     image: Image to write
+///     bit_depth: BitDepth.Bit8/10/12/16 or int (default: 10)
+///
+/// Example:
+///     io.write_dpx("out.dpx", img, bit_depth=BitDepth.Bit10)
+///     io.write_dpx("out.dpx", img, bit_depth=10)  # also works
 #[pyfunction]
-#[pyo3(signature = (path, image, bit_depth=10))]
-fn write_dpx(path: PathBuf, image: &Image, bit_depth: u8) -> PyResult<()> {
+#[pyo3(signature = (path, image, bit_depth=None))]
+fn write_dpx(path: PathBuf, image: &Image, bit_depth: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
     use vfx_io::dpx::{DpxWriter, DpxWriterOptions, BitDepth};
     use vfx_io::FormatWriter;
     
-    let depth = match bit_depth {
+    let bits = match bit_depth {
+        Some(v) => crate::format::BitDepth::from_py(v)?,
+        None => 10, // DPX default
+    };
+    
+    let depth = match bits {
         8 => BitDepth::Bit8,
         10 => BitDepth::Bit10,
         12 => BitDepth::Bit12,
