@@ -1,96 +1,370 @@
-# VFX-RS Architecture & Dataflows
+# VFX-RS Dataflow & Architecture Guide
 
-This document describes the internal architecture, dataflows, and codepaths of the `vfx-rs` project.
+## Purpose
 
-## Architecture Map
+This document provides visual dataflow diagrams for understanding the vfx-rs architecture. Use this as a reference for navigating the codebase.
 
-```mermaid
-graph TD
-    subgraph "Application Layer"
-        CLI[vfx-cli]
-        Tests[vfx-tests]
-    end
+## 1. Crate Dependency Graph
 
-    subgraph "Processing Layer"
-        OCIO[vfx-ocio]
-        Color[vfx-color]
-        Compute[vfx-compute]
-        Ops[vfx-ops]
-    end
-
-    subgraph "I/O Layer"
-        IO[vfx-io]
-        ICC[vfx-icc]
-    end
-
-    subgraph "Foundation Layer"
-        Core[vfx-core]
-        Math[vfx-math]
-        Lut[vfx-lut]
-        Transfer[vfx-transfer]
-        Primaries[vfx-primaries]
-    end
-
-    CLI --> IO
-    CLI --> OCIO
-    CLI --> Compute
-    
-    IO --> Core
-    OCIO --> Core
-    Compute --> Core
-    
-    Ops --> Core
-    Color --> OCIO
-    Color --> Compute
-    
-    Core --> Math
-    Lut --> Math
-    Transfer --> Math
+```
+                    +------------+
+                    | vfx-core   |
+                    | (types)    |
+                    +-----+------+
+                          |
+      +--------+----------+----------+--------+
+      |        |          |          |        |
+      v        v          v          v        v
++--------+ +--------+ +--------+ +--------+ +--------+
+|vfx-math| |vfx-xfer| |vfx-prim| |vfx-lut | |vfx-icc |
+|(matrix)| |(EOTF)  | |(gamut) | |(1D/3D) | |(ICC)   |
++---+----+ +---+----+ +---+----+ +---+----+ +--------+
+    |          |          |          |
+    +----------+----------+----------+
+                    |
+                    v
+              +-----------+
+              | vfx-color |
+              |(transform)|
+              +-----+-----+
+                    |
+        +-----------+-----------+
+        |           |           |
+        v           v           v
+   +--------+  +--------+  +----------+
+   | vfx-io |  |vfx-ops |  | vfx-ocio |
+   |(file)  |  |(ops)   |  |(compat)  |
+   +---+----+  +---+----+  +----------+
+       |           |
+       +-----------+
+             |
+             v
+       +-----------+
+       |vfx-compute|
+       | (GPU/CPU) |
+       +-----+-----+
+             |
+     +-------+-------+
+     |               |
+     v               v
++----------+   +----------+
+| vfx-cli  |   |vfx-rs-py |
+|(cmdline) |   | (Python) |
++----------+   +----------+
 ```
 
-## Dataflow: Image Loading & Processing
+## 2. Image Processing Pipeline
 
-The following diagram illustrates how image data flows from a file through the processing pipeline back to disk.
+### 2.1 Read -> Process -> Write
 
-```mermaid
-sequenceDiagram
-    participant File as Image File
-    participant IO as vfx-io
-    participant Core as vfx-core
-    participant Compute as vfx-compute
-    participant OCIO as vfx-ocio
-    
-    File->>IO: read()
-    IO->>IO: Detect Format
-    IO->>Core: Create ImageSpec
-    IO->>Core: Populate Attrs
-    IO-->>IO: Decode Pixels
-    IO->>Compute: ImageData (dynamic)
-    
-    Compute->>Compute: Upload to GPU
-    Compute->>Compute: Create ComputeImage (f32)
-    
-    OCIO->>OCIO: Compile Processor (src -> dst)
-    OCIO->>Compute: Apply Compiled Ops
-    Compute->>Compute: GPU Kernels
-    
-    Compute->>IO: Download result
-    IO->>File: write()
+```
+[File on Disk]
+      |
+      v
++------------------+
+| Format Detection |
+| (extension/magic)|
++--------+---------+
+         |
+   +-----+-----+-----+-----+-----+-----+
+   |     |     |     |     |     |     |
+   v     v     v     v     v     v     v
+ EXR   PNG  JPEG  TIFF  DPX   HDR  HEIF
+   |     |     |     |     |     |     |
+   +-----+-----+-----+-----+-----+-----+
+         |
+         v
++------------------+
+| ImageData        |
+| {width, height,  |
+|  channels, data} |
++--------+---------+
+         |
+         v
++------------------+
+| Processor        |
+| (CPU or GPU)     |
++--------+---------+
+         |
+   +-----+-----+-----+
+   |           |     |
+   v           v     v
+exposure  saturation CDL
+   |           |     |
+   +-----+-----+-----+
+         |
+         v
++------------------+
+| Output Format    |
++--------+---------+
+         |
+         v
+[File on Disk]
 ```
 
-## Codepath: Color Transformation
+### 2.2 Color Transform Pipeline
 
-How a color transform is resolved and executed:
+```
+[Input RGB (unknown space)]
+         |
+         v
++-------------------+
+| Identify Source   |
+| (EXIF/ICC/OCIO)   |
++--------+----------+
+         |
+         v
++-------------------+
+| Linearization     |
+| (EOTF inverse)    |
+| sRGB: x^2.4       |
+| PQ: ST.2084^-1    |
++--------+----------+
+         |
+         v
++-------------------+
+| RGB -> XYZ        |
+| (3x3 matrix)      |
++--------+----------+
+         |
+         v
++-------------------+
+| Chromatic Adapt   |
+| (Bradford/CAT02)  |
+| D65 <-> DCI-P3    |
++--------+----------+
+         |
+         v
++-------------------+
+| XYZ -> RGB        |
+| (target primaries)|
++--------+----------+
+         |
+         v
++-------------------+
+| Apply Grading     |
+| (CDL/LUT/etc)     |
++--------+----------+
+         |
+         v
++-------------------+
+| Output Transfer   |
+| (OETF)            |
++--------+----------+
+         |
+         v
+[Output RGB (target space)]
+```
 
-1. **Config Loading**: `vfx_ocio::Config::from_file()` parses YAML into internal structures.
-2. **Processor Creation**: `config.processor(src, dst)` builds a chain of `Transform` objects.
-3. **Compilation**: `Processor::from_transform()` converts high-level transforms into optimized `Op` variants (Matrix, LUT, CDL, etc.).
-4. **Execution**:
-    - **CPU Path**: `processor.apply_rgb()` loops over pixels, applying each `Op` sequentially.
-    - **GPU Path (Planned)**: `vfx-compute` generates a shader or kernel params from `Op` list and executes on GPU.
+## 3. Compute Backend Selection
 
-## Key Discrepancies & Improvements
+```
+           +------------------+
+           | Processor::auto()|
+           +--------+---------+
+                    |
+                    v
+           +------------------+
+           | Check GPU        |
+           | availability     |
+           +--------+---------+
+                    |
+            +-------+-------+
+            |               |
+         [GPU OK]       [No GPU]
+            |               |
+            v               v
+     +-----------+   +-----------+
+     |   wgpu    |   |    CPU    |
+     | (compute) |   |  (rayon)  |
+     +-----+-----+   +-----+-----+
+           |               |
+           +-------+-------+
+                   |
+                   v
+           +------------------+
+           | Tile Scheduler   |
+           | (64-512px tiles) |
+           +--------+---------+
+                    |
+            +-------+-------+
+            |       |       |
+            v       v       v
+         Tile0   Tile1   TileN
+            |       |       |
+            +-------+-------+
+                    |
+                    v
+           +------------------+
+           | Merge Results    |
+           +------------------+
+```
 
-- **Ground Truth**: `vfx-core` is being unified to be the single source of truth for metadata (`Attrs`) and image specifications (`ImageSpec`).
-- **Processing Backend**: `vfx-compute` is the unified backend for both generic image operations (`vfx-ops`) and color management (`vfx-ocio`).
-- **Memory Safety**: Leverages Rust's ownership model to ensure zero-copy views (`ImageView`) across the pipeline while maintaining thread-safety.
+## 4. Format-Specific I/O
+
+### 4.1 EXR Pipeline
+
+```
+[.exr file]
+     |
+     v
++------------------+
+| OpenEXR crate    |
+| (exr = "1.7")    |
++--------+---------+
+     |
+     +-- Read header (channels, compression)
+     |
+     +-- Decode tiles/scanlines
+     |
+     +-- Convert to f32 (or keep f16)
+     |
+     v
++------------------+
+| ImageData        |
+| format: F32/F16  |
+| channels: 3-4    |
++------------------+
+```
+
+### 4.2 DPX Pipeline
+
+```
+[.dpx file]
+     |
+     v
++------------------+
+| Parse Headers    |
+| (file/image/     |
+|  orient/film/tv) |
++--------+---------+
+     |
+     +-- BitDepth: 8/10/12/16
+     |
+     +-- Packing: Filled/Packed
+     |
+     +-- Encoding: Linear/Log
+     |
+     v
++------------------+
+| Unpack bits      |
+| (handle endian)  |
++--------+---------+
+     |
+     v
++------------------+
+| Normalize to f32 |
+| 10-bit: /1023.0  |
++------------------+
+```
+
+## 5. Python API (vfx-rs-py)
+
+### 5.1 Module Structure
+
+```
+vfx_rs (PyModule)
+   |
+   +-- Image (PyClass)
+   |      +-- width, height, channels, format
+   |      +-- numpy() -> np.ndarray
+   |      +-- copy() -> Image
+   |
+   +-- Processor (PyClass)
+   |      +-- backend (cpu/wgpu)
+   |      +-- exposure(img, stops)
+   |      +-- saturation(img, factor)
+   |      +-- contrast(img, factor)
+   |      +-- cdl(img, slope, offset, power, sat)
+   |
+   +-- read(path) -> Image
+   +-- write(path, image)
+   |
+   +-- io (SubModule)
+   |      +-- read_exr, write_exr
+   |      +-- read_png, write_png
+   |      +-- read_jpeg, write_jpeg
+   |      +-- read_tiff, write_tiff
+   |      +-- read_dpx, write_dpx
+   |      +-- read_hdr, write_hdr
+   |
+   +-- lut (SubModule)
+          +-- Lut1D, Lut3D
+          +-- ProcessList (CLF)
+          +-- read_cube, read_cube_1d, read_cube_3d
+          +-- read_clf
+```
+
+### 5.2 Typical Usage
+
+```python
+import vfx_rs
+import numpy as np
+
+# Read
+img = vfx_rs.read("input.exr")
+
+# Process
+proc = vfx_rs.Processor()  # auto GPU/CPU
+proc.exposure(img, 0.5)    # +0.5 stops
+proc.saturation(img, 1.2)  # boost saturation
+proc.cdl(img, 
+    slope=[1.1, 1.0, 0.9],   # warm
+    offset=[0.01, 0.0, -0.01],
+    power=[1.0, 1.0, 1.0],
+    saturation=1.0
+)
+
+# Numpy access
+arr = img.numpy()  # (H, W, C) float32
+arr = arr * 2.0    # direct manipulation
+img = vfx_rs.Image(arr)
+
+# Write
+vfx_rs.write("output.exr", img)
+```
+
+## 6. Key Type Locations
+
+| Type | Location | Purpose |
+|------|----------|---------|
+| `ImageData` | `vfx-io/src/lib.rs` | Runtime image buffer |
+| `Image<C,T,N>` | `vfx-core/src/image.rs` | Compile-time typed image |
+| `ImageSpec` | `vfx-core/src/spec.rs` | Image metadata spec |
+| `PixelFormat` | `vfx-io/src/lib.rs` | Runtime pixel format |
+| `ChannelFormat` | `vfx-core/src/spec.rs` | Compile-time format |
+| `Processor` | `vfx-compute/src/processor.rs` | GPU/CPU processor |
+| `Pipeline` | `vfx-compute/src/pipeline.rs` | Multi-stage pipeline |
+| `ColorSpace` | `vfx-ocio/src/colorspace.rs` | OCIO-compatible space |
+
+## 7. Critical Files for Refactoring
+
+### Type Unification Targets
+
+1. **BitDepth** - unify 6 definitions into `vfx-core/src/format.rs`
+   - `vfx-ocio/colorspace.rs:133`
+   - `vfx-ocio/processor.rs:581`
+   - `vfx-lut/clf.rs:72`
+   - `vfx-io/dpx.rs:82`
+   - `vfx-io/png.rs:68`
+   - `vfx-io/tiff.rs:70`
+
+2. **AttrValue** - canonical at `vfx-io/attrs/value.rs:58`
+   - Remove `vfx-io/metadata.rs:9`
+   - Remove `vfx-core/spec.rs:169`
+
+3. **PixelFormat/ChannelFormat** - merge in `vfx-core`
+   - `vfx-io/lib.rs:482` (PixelFormat)
+   - `vfx-core/spec.rs:89` (ChannelFormat)
+
+## 8. Testing Strategy
+
+```
+cargo test                    # All unit tests
+cargo test -p vfx-io          # Single crate
+cargo test --features all     # All features
+python test.py                # Visual quality tests
+cargo bench                   # Performance benchmarks
+```
+
+Output directory: `C:\projects\projects.rust\_vfx-rs\test\out\`
