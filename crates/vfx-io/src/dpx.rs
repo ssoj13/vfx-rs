@@ -78,6 +78,13 @@ const HEADER_SIZE: u32 = 2048;
 /// | 10-bit | Packed 3 per u32 | 4 |
 /// | 12-bit | 2 bytes/channel | 6 |
 /// | 16-bit | 2 bytes/channel | 6 |
+/// DPX-specific bit depth for write options.
+///
+/// NOTE: This is NOT a duplicate of `vfx_core::BitDepth`.
+/// This enum is specific to DPX writer configuration:
+/// - Different default (10-bit is film industry standard)
+/// - Only integer depths (no float)
+/// - Maps to DPX file format spec
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BitDepth {
     /// 8 bits per channel (0-255).

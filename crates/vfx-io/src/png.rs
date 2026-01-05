@@ -64,6 +64,12 @@ use std::path::Path;
 ///
 /// - **Eight**: Web, general use, compatibility. Smaller files.
 /// - **Sixteen**: Scientific imaging, gradients, banding-sensitive work.
+/// PNG-specific bit depth for write options.
+///
+/// NOTE: This is NOT a duplicate of `vfx_core::BitDepth`.
+/// This enum is specific to PNG writer configuration:
+/// - Only 8 or 16 bit (PNG format limitation)
+/// - Wraps `png` crate's BitDepth
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BitDepth {
     /// 8 bits per channel (0-255). Standard for most use cases.

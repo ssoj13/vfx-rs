@@ -66,6 +66,13 @@ use tiff::tags::Tag;
 /// - **Eight**: Web, general use, smaller files.
 /// - **Sixteen**: Print, scanning, gradients. Good balance.
 /// - **ThirtyTwoFloat**: HDR, linear workflow, compositing.
+/// TIFF-specific bit depth for write options.
+///
+/// NOTE: This is NOT a duplicate of `vfx_core::BitDepth`.
+/// This enum is specific to TIFF writer configuration:
+/// - Different default (16-bit for print/scan quality)
+/// - ThirtyTwoFloat variant for HDR workflows
+/// - Wraps `tiff` crate's sample format
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BitDepth {
     /// 8 bits per channel (0-255).

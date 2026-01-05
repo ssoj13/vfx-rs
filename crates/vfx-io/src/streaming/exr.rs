@@ -300,8 +300,6 @@ impl super::traits::StreamingOutput for ExrStreamingOutput {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_format_detection() {
         use exr::prelude::SampleType;
