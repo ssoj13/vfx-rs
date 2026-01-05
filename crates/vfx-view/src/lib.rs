@@ -54,7 +54,42 @@ mod state;
 pub use app::{ViewerApp, ViewerConfig};
 pub use state::{ChannelMode, ViewerPersistence, ViewerState};
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Run the image viewer with optional initial file.
+///
+/// If no path provided, tries to load last opened file from persistence.
+///
+/// # Arguments
+/// * `path` - Optional path to image file
+/// * `config` - Viewer configuration
+///
+/// # Returns
+/// Exit code: 0 for success, 1 for error
+pub fn run_opt(path: Option<PathBuf>, config: ViewerConfig) -> i32 {
+    // Resolve path: argument > last file from persistence
+    let resolved_path = path.or_else(|| {
+        load_persistence().and_then(|p| p.last_file).filter(|f| f.exists())
+    });
+
+    if let Some(ref p) = resolved_path {
+        if config.verbose > 0 {
+            eprintln!("[viewer] Starting: {}", p.display());
+        }
+    } else if config.verbose > 0 {
+        eprintln!("[viewer] Starting empty viewer");
+    }
+
+    // Window title
+    let title = resolved_path
+        .as_ref()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .map(|n| format!("vfx view - {}", n))
+        .unwrap_or_else(|| "vfx view".into());
+
+    run_internal(resolved_path, title, config)
+}
 
 /// Run the image viewer.
 ///
@@ -67,22 +102,6 @@ use std::path::Path;
 ///
 /// # Returns
 /// Exit code: 0 for success, 1 for error
-///
-/// # Example
-///
-/// ```ignore
-/// use vfx_view::{run, ViewerConfig};
-/// use std::path::PathBuf;
-///
-/// let config = ViewerConfig {
-///     ocio: Some(PathBuf::from("/path/to/config.ocio")),
-///     display: Some("sRGB".into()),
-///     view: Some("ACES 1.0 - SDR Video".into()),
-///     ..Default::default()
-/// };
-///
-/// std::process::exit(run(PathBuf::from("render.exr"), config));
-/// ```
 pub fn run<P: AsRef<Path>>(path: P, config: ViewerConfig) -> i32 {
     let path = path.as_ref();
 
@@ -104,6 +123,12 @@ pub fn run<P: AsRef<Path>>(path: P, config: ViewerConfig) -> i32 {
             .unwrap_or("Image Viewer")
     );
 
+    run_internal(Some(path.to_path_buf()), title, config)
+}
+
+/// Internal run implementation.
+fn run_internal(path: Option<PathBuf>, title: String, config: ViewerConfig) -> i32 {
+
     // Configure eframe
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -114,7 +139,6 @@ pub fn run<P: AsRef<Path>>(path: P, config: ViewerConfig) -> i32 {
         ..Default::default()
     };
 
-    let path_owned = path.to_path_buf();
     if config.verbose > 0 {
         eprintln!("[viewer] Creating window...");
     }
@@ -127,7 +151,7 @@ pub fn run<P: AsRef<Path>>(path: P, config: ViewerConfig) -> i32 {
             if verbose > 0 {
                 eprintln!("[viewer] Window created, initializing app...");
             }
-            Ok(Box::new(ViewerApp::new(cc, path_owned, config)))
+            Ok(Box::new(ViewerApp::new(cc, path, config)))
         }),
     );
 
@@ -146,8 +170,16 @@ pub fn run<P: AsRef<Path>>(path: P, config: ViewerConfig) -> i32 {
 }
 
 /// Get platform-specific persistence path.
-fn persistence_path() -> Option<std::path::PathBuf> {
+fn persistence_path() -> Option<PathBuf> {
     dirs::config_dir().map(|p| p.join("vfx-rs").join("viewer"))
+}
+
+/// Load persistence from disk.
+fn load_persistence() -> Option<ViewerPersistence> {
+    let path = persistence_path()?.join("app.ron");
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| ron::from_str(&s).ok())
 }
 
 #[cfg(test)]

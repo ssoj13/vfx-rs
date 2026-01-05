@@ -636,8 +636,8 @@ struct AcesArgs {
 #[cfg(feature = "viewer")]
 #[derive(Args)]
 struct ViewArgs {
-    /// Input image file
-    input: PathBuf,
+    /// Input image file (optional, uses last file if omitted)
+    input: Option<PathBuf>,
 
     /// OCIO config file path (overrides $OCIO)
     #[arg(long)]

@@ -14,7 +14,7 @@ pub fn run(args: ViewArgs, verbose: bool) -> Result<()> {
         verbose: if verbose { 1 } else { 0 },
     };
 
-    let exit_code = vfx_view::run(&args.input, config);
+    let exit_code = vfx_view::run_opt(args.input, config);
     
     if exit_code != 0 {
         std::process::exit(exit_code);

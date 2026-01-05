@@ -58,7 +58,7 @@ impl ViewerApp {
     /// Creates a new viewer application.
     pub fn new(
         cc: &eframe::CreationContext<'_>,
-        image_path: PathBuf,
+        image_path: Option<PathBuf>,
         config: ViewerConfig,
     ) -> Self {
         // Create bidirectional channels
@@ -111,10 +111,23 @@ impl ViewerApp {
             app.send(ViewerMsg::SetInputColorspace(cs.clone()));
         }
 
-        // Load the image
-        app.send(ViewerMsg::LoadImage(image_path));
+        // Load the image if provided
+        if let Some(path) = image_path {
+            app.send(ViewerMsg::LoadImage(path));
+        }
 
         app
+    }
+
+    /// Open file dialog and load selected image.
+    fn open_file_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("Images", &["exr", "hdr", "png", "jpg", "jpeg", "tif", "tiff", "dpx"])
+            .add_filter("All files", &["*"])
+            .pick_file()
+        {
+            self.send(ViewerMsg::LoadImage(path));
+        }
     }
 
     fn send(&self, msg: ViewerMsg) {
@@ -404,7 +417,7 @@ impl ViewerApp {
                 let top_left = center - scaled_size / 2.0 + pan_offset;
 
                 // Allocate space and handle drag
-                let (rect, response) = ui.allocate_exact_size(available, egui::Sense::drag());
+                let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
 
                 if response.dragged() {
                     let delta = response.drag_delta();
@@ -427,6 +440,27 @@ impl ViewerApp {
                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                     Color32::WHITE,
                 );
+            } else {
+                // No image - show hint and handle double-click to open
+                ui.centered_and_justified(|ui| {
+                    ui.label("Double-click or drag file to open");
+                });
+
+                let (_, response) = ui.allocate_exact_size(available, egui::Sense::click());
+                if response.double_clicked() {
+                    self.open_file_dialog();
+                }
+            }
+        });
+    }
+
+    /// Check for dropped files.
+    fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+        ctx.input(|i| {
+            if !i.raw.dropped_files.is_empty() {
+                if let Some(path) = i.raw.dropped_files.first().and_then(|f| f.path.clone()) {
+                    self.send(ViewerMsg::LoadImage(path));
+                }
             }
         });
     }
@@ -436,6 +470,9 @@ impl eframe::App for ViewerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Process worker events
         self.process_events(ctx);
+
+        // Handle dropped files
+        self.handle_dropped_files(ctx);
 
         // Handle input
         if self.handle_input(ctx) {

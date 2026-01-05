@@ -64,6 +64,8 @@ impl ChannelMode {
 /// Persistent viewer settings (saved between sessions).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViewerPersistence {
+    /// Last opened file path.
+    pub last_file: Option<PathBuf>,
     /// Last used OCIO config path.
     pub ocio_path: Option<PathBuf>,
     /// Last used display name.
@@ -79,6 +81,7 @@ pub struct ViewerPersistence {
 impl Default for ViewerPersistence {
     fn default() -> Self {
         Self {
+            last_file: None,
             ocio_path: None,
             display: None,
             view: None,
@@ -186,6 +189,7 @@ impl ViewerState {
     /// Converts to persistence for saving.
     pub fn to_persistence(&self) -> ViewerPersistence {
         ViewerPersistence {
+            last_file: self.image_path.clone(),
             ocio_path: self.ocio_path.clone(),
             display: Some(self.display.clone()),
             view: Some(self.view.clone()),
