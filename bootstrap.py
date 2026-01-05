@@ -286,6 +286,41 @@ def run_check(args: argparse.Namespace) -> int:
 
 
 # ============================================================
+# BOOK COMMAND
+# ============================================================
+
+def run_book(args: argparse.Namespace) -> int:
+    """Build mdbook documentation."""
+    print_header("DOCUMENTATION")
+    
+    docs_dir = ROOT_DIR / "docs"
+    if not docs_dir.exists():
+        print_error("docs directory not found")
+        return 1
+    
+    # Check mdbook
+    if not which("mdbook"):
+        print_error("mdbook not found")
+        print_warning("Install: cargo install mdbook")
+        return 1
+    
+    print_step("Building documentation...")
+    print()
+    
+    exit_code, _, elapsed = run_cmd(["mdbook", "build"], cwd=docs_dir)
+    
+    print()
+    if exit_code == 0:
+        print_success(f"Documentation built ({fmt_time(elapsed)})")
+        print_step(f"Open: {docs_dir / 'book' / 'index.html'}")
+    else:
+        print_error("Build failed")
+    print()
+    
+    return exit_code
+
+
+# ============================================================
 # CLEAN COMMAND
 # ============================================================
 
@@ -455,6 +490,7 @@ HELP_TEXT = """
    python        Build Python wheel via maturin
    python-reqs   Install Python dev dependencies
    python-test   Run Python tests
+   book          Build mdbook documentation
  
  BUILD OPTIONS
    --release     Build in release mode
@@ -496,7 +532,7 @@ def main() -> int:
         "command",
         nargs="?",
         choices=["build", "test", "bench", "check", "clean", 
-                 "python", "python-reqs", "python-test", "help"],
+                 "python", "python-reqs", "python-test", "book", "help"],
         default="help",
         help="Command to run",
     )
@@ -561,6 +597,8 @@ def main() -> int:
         return run_python_reqs(args)
     elif args.command == "python-test":
         return run_python_test(args)
+    elif args.command == "book":
+        return run_book(args)
     
     return 0
 
