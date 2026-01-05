@@ -52,9 +52,7 @@ pub use wgpu_backend::{WgpuBackend, WgpuPrimitives, WgpuImage};
 #[cfg(feature = "cuda")]
 pub use cuda_backend::{CudaBackend, CudaPrimitives, CudaImage};
 
-use crate::ComputeResult;
-#[cfg(not(feature = "wgpu"))]
-use crate::ComputeError;
+use crate::{ComputeResult, ComputeError};
 
 /// Available compute backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
