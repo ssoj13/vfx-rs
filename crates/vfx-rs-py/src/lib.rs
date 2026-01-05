@@ -11,6 +11,7 @@ mod io;
 mod processor;
 mod lut;
 mod format;
+mod layered;
 
 pub use image::Image;
 pub use processor::Processor;
@@ -29,6 +30,24 @@ fn read(path: PathBuf) -> PyResult<Image> {
     let data = vfx_io::read(&path)
         .map_err(|e| PyIOError::new_err(format!("Failed to read {}: {}", path.display(), e)))?;
     Ok(Image::from_image_data(data))
+}
+
+/// Read a multi-layer EXR file.
+///
+/// Returns a LayeredImage with all layers and channels preserved.
+///
+/// # Example
+/// ```python
+/// layered = vfx_rs.read_layered("render.exr")
+/// beauty = layered["beauty"]
+/// depth = layered["depth"]
+/// ```
+#[pyfunction]
+#[pyo3(signature = (path))]
+fn read_layered(path: PathBuf) -> PyResult<layered::LayeredImage> {
+    let data = vfx_io::exr::read_layers(&path)
+        .map_err(|e| PyIOError::new_err(format!("Failed to read {}: {}", path.display(), e)))?;
+    Ok(layered::LayeredImage { inner: data })
 }
 
 /// Write an image to file.
@@ -56,8 +75,12 @@ fn vfx_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Processor>()?;
     m.add_class::<format::BitDepth>()?;
     
+    // Layered image types
+    layered::register(m)?;
+    
     // Top-level I/O
     m.add_function(wrap_pyfunction!(read, m)?)?;
+    m.add_function(wrap_pyfunction!(read_layered, m)?)?;
     m.add_function(wrap_pyfunction!(write, m)?)?;
     
     // Submodules
