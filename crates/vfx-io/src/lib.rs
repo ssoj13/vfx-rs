@@ -145,6 +145,7 @@ pub mod cache;
 pub mod texture;
 pub mod udim;
 pub mod streaming;
+pub mod imagebuf;
 
 // Re-exports
 pub use error::{IoError, IoResult};

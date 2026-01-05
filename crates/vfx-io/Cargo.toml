@@ -16,6 +16,9 @@ tiff = ["dep:tiff"]
 dpx = []
 hdr = []
 
+# Parallel processing
+rayon = ["dep:rayon"]
+
 # Modern formats (via image crate)
 webp = ["dep:image"]
 avif = ["dep:image"]
@@ -44,6 +47,7 @@ heif = ["dep:libheif-rs"]
 vfx-core.workspace = true
 thiserror.workspace = true
 tracing = "0.1"
+half = "2.4"
 
 # EXR support
 exr = { version = "1.74", optional = true }
@@ -80,6 +84,9 @@ image = { version = "0.25", optional = true, default-features = false, features 
 
 # JPEG2000 support (requires OpenJPEG)
 jpeg2k = { version = "0.8", optional = true }
+
+# Parallel iteration
+rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
 approx.workspace = true
