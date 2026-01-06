@@ -44,6 +44,7 @@ pub mod deep;
 pub mod filters;
 pub mod fft;
 pub mod drawing;
+pub mod warp;
 
 // Re-export commonly used functions
 pub use patterns::{zero, fill, checker, noise};
@@ -123,4 +124,13 @@ pub use fft::{
 pub use drawing::{
     render_point, render_line, render_box,
     render_circle, render_ellipse, render_polygon,
+};
+
+// Warp operations
+pub use warp::{
+    warp, warp_into,
+    st_warp, st_warp_into,
+    WarpWrap,
+    matrix_identity, matrix_translate, matrix_scale, matrix_rotate, matrix_shear,
+    matrix_multiply, matrix_invert,
 };

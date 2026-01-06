@@ -19,6 +19,7 @@ mod ocio;
 mod deep;
 mod fft;
 mod drawing;
+mod warp;
 #[cfg(feature = "viewer")]
 mod viewer;
 
@@ -135,6 +136,11 @@ fn vfx_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let drawing_module = PyModule::new(m.py(), "drawing")?;
     drawing::register(&drawing_module)?;
     m.add_submodule(&drawing_module)?;
+
+    // Warp submodule
+    let warp_module = PyModule::new(m.py(), "warp")?;
+    warp::register(&warp_module)?;
+    m.add_submodule(&warp_module)?;
 
     // Also register core types at top level for convenience
     m.add_class::<core::TypeDesc>()?;
