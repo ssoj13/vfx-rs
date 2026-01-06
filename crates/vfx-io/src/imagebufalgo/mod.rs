@@ -13,6 +13,7 @@
 //! - [`composite`] - Compositing operations (Porter-Duff, blend modes)
 //! - [`stats`] - Statistics and analysis (histogram, compare, min/max)
 //! - [`ocio`] - OCIO color conversion (colorconvert, ociodisplay, ociolook)
+//! - [`fft`] - Fast Fourier Transform operations
 //!
 //! # Example
 //!
@@ -41,6 +42,7 @@ pub mod stats;
 pub mod ocio;
 pub mod deep;
 pub mod filters;
+pub mod fft;
 
 // Re-export commonly used functions
 pub use patterns::{zero, fill, checker, noise};
@@ -106,4 +108,12 @@ pub use filters::{
     laplacian, sharpen, sobel,
     convolve, convolve_into,
     box_blur, box_blur_into,
+};
+
+// FFT operations
+pub use fft::{
+    fft, fft_into,
+    ifft, ifft_into,
+    complex_to_polar, complex_to_polar_into,
+    polar_to_complex, polar_to_complex_into,
 };

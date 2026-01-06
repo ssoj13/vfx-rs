@@ -89,6 +89,10 @@ jpeg2k = { version = "0.8", optional = true }
 # Parallel iteration
 rayon = { version = "1.10", optional = true }
 
+# FFT support
+rustfft = "6.2"
+num-complex = "0.4"
+
 [dev-dependencies]
 approx.workspace = true
 tempfile = "3.24"

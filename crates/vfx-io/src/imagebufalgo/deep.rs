@@ -527,7 +527,7 @@ mod tests {
         let names = vec!["R", "G", "B", "A", "Z"];
         let deep = DeepData::new(100, &types, &names);
 
-        let flat = flatten(&deep, 10, 10);
+        let flat = flatten_deep(&deep, 10, 10);
         assert_eq!(flat.width(), 10);
         assert_eq!(flat.height(), 10);
     }
@@ -547,7 +547,7 @@ mod tests {
         deep.set_deep_value_f32(0, 3, 0, 1.0); // A
         deep.set_deep_value_f32(0, 4, 0, 1.0); // Z
 
-        let flat = flatten(&deep, 2, 2);
+        let flat = flatten_deep(&deep, 2, 2);
         let mut pixel = [0.0f32; 4];
         flat.getpixel(0, 0, 0, &mut pixel, crate::imagebuf::WrapMode::Black);
 

@@ -17,6 +17,7 @@ mod ops;
 mod stats;
 mod ocio;
 mod deep;
+mod fft;
 #[cfg(feature = "viewer")]
 mod viewer;
 
@@ -123,6 +124,11 @@ fn vfx_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let deep_module = PyModule::new(m.py(), "deep")?;
     deep::register(&deep_module)?;
     m.add_submodule(&deep_module)?;
+
+    // FFT (Fourier transform) submodule
+    let fft_module = PyModule::new(m.py(), "fft")?;
+    fft::register(&fft_module)?;
+    m.add_submodule(&fft_module)?;
 
     // Also register core types at top level for convenience
     m.add_class::<core::TypeDesc>()?;
