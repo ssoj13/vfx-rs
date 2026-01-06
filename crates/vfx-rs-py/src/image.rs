@@ -507,32 +507,6 @@ impl Image {
         Self::from_imagebuf(&result)
     }
 
-    // ========================================================================
-    // FFT Operations
-    // ========================================================================
-
-    /// Forward FFT (Fast Fourier Transform).
-    ///
-    /// Returns:
-    ///     Complex result as 2-channel image (real, imaginary)
-    #[pyo3(signature = (roi=None))]
-    fn fft(&self, roi: Option<&Roi3D>) -> PyResult<Self> {
-        let buf = self.to_imagebuf();
-        let result = imagebufalgo::fft(&buf, Self::convert_roi(roi))
-            .map_err(|e| PyIOError::new_err(format!("FFT failed: {}", e)))?;
-        Self::from_imagebuf(&result)
-    }
-
-    /// Inverse FFT.
-    ///
-    /// Input should be 2-channel complex image (real, imaginary).
-    #[pyo3(signature = (roi=None))]
-    fn ifft(&self, roi: Option<&Roi3D>) -> PyResult<Self> {
-        let buf = self.to_imagebuf();
-        let result = imagebufalgo::ifft(&buf, Self::convert_roi(roi))
-            .map_err(|e| PyIOError::new_err(format!("IFFT failed: {}", e)))?;
-        Self::from_imagebuf(&result)
-    }
 }
 
 impl Image {

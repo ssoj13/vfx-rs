@@ -16,6 +16,7 @@ mod core;
 mod ops;
 mod stats;
 mod ocio;
+mod deep;
 #[cfg(feature = "viewer")]
 mod viewer;
 
@@ -117,6 +118,11 @@ fn vfx_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let ocio_module = PyModule::new(m.py(), "ocio")?;
     ocio::register(&ocio_module)?;
     m.add_submodule(&ocio_module)?;
+
+    // Deep compositing submodule
+    let deep_module = PyModule::new(m.py(), "deep")?;
+    deep::register(&deep_module)?;
+    m.add_submodule(&deep_module)?;
 
     // Also register core types at top level for convenience
     m.add_class::<core::TypeDesc>()?;

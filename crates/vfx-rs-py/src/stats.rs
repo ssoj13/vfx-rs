@@ -37,19 +37,6 @@ fn convert_roi(roi: Option<&Roi3D>) -> Option<RustRoi3D> {
     roi.map(py_roi_to_rust)
 }
 
-fn rust_roi_to_py(roi: &RustRoi3D) -> Roi3D {
-    Roi3D {
-        xbegin: roi.xbegin,
-        xend: roi.xend,
-        ybegin: roi.ybegin,
-        yend: roi.yend,
-        zbegin: roi.zbegin,
-        zend: roi.zend,
-        chbegin: roi.chbegin,
-        chend: roi.chend,
-    }
-}
-
 // ============================================================================
 // PixelStats Class
 // ============================================================================
@@ -678,98 +665,6 @@ pub fn color_range_check(
     result.into()
 }
 
-/// Find the minimal bounding box containing all non-zero pixels.
-///
-/// Args:
-///     image: Input image
-///     roi: Optional region to search within
-///
-/// Returns:
-///     Roi3D representing the bounding box of non-zero pixels
-#[pyfunction]
-#[pyo3(signature = (image, roi=None))]
-pub fn nonzero_region(image: &Image, roi: Option<&Roi3D>) -> Roi3D {
-    let buf = image_to_imagebuf(image);
-    let result = rust_stats::nonzero_region(&buf, convert_roi(roi));
-    rust_roi_to_py(&result)
-}
-
-/// Count pixels matching specific colors.
-///
-/// Args:
-///     image: Input image
-///     colors: List of colors (each a list of channel values)
-///     eps: Epsilon tolerance per channel (default [0.001])
-///     roi: Optional region of interest
-///
-/// Returns:
-///     List of counts, one for each input color
-#[pyfunction]
-#[pyo3(signature = (image, colors, eps=None, roi=None))]
-pub fn color_count(
-    image: &Image,
-    colors: Vec<Vec<f32>>,
-    eps: Option<Vec<f32>>,
-    roi: Option<&Roi3D>,
-) -> Vec<u64> {
-    let buf = image_to_imagebuf(image);
-    let eps = eps.unwrap_or_else(|| vec![0.001]);
-
-    // Convert Vec<Vec<f32>> to Vec<&[f32]>
-    let color_refs: Vec<&[f32]> = colors.iter().map(|c| c.as_slice()).collect();
-
-    rust_stats::color_count(&buf, &color_refs, &eps, convert_roi(roi))
-}
-
-// ============================================================================
-// Hash Functions
-// ============================================================================
-
-/// Compute SHA-1 hash of pixel data.
-///
-/// Useful for comparing images or detecting changes.
-///
-/// Args:
-///     image: Input image
-///     extra_info: Optional string to include in hash
-///     roi: Optional region of interest
-///
-/// Returns:
-///     Hexadecimal SHA-1 hash string
-#[pyfunction]
-#[pyo3(signature = (image, extra_info=None, roi=None))]
-pub fn compute_pixel_hash(
-    image: &Image,
-    extra_info: Option<&str>,
-    roi: Option<&Roi3D>,
-) -> String {
-    let buf = image_to_imagebuf(image);
-    rust_stats::compute_pixel_hash_sha1(&buf, extra_info, convert_roi(roi))
-}
-
-/// Compute SHA-1 hash with block-based processing.
-///
-/// For large images, processes in blocks for better performance.
-///
-/// Args:
-///     image: Input image
-///     block_size: Rows per block (default 64)
-///     extra_info: Optional string to include in hash
-///     roi: Optional region of interest
-///
-/// Returns:
-///     Hexadecimal SHA-1 hash string
-#[pyfunction]
-#[pyo3(signature = (image, block_size=64, extra_info=None, roi=None))]
-pub fn compute_pixel_hash_blocked(
-    image: &Image,
-    block_size: i32,
-    extra_info: Option<&str>,
-    roi: Option<&Roi3D>,
-) -> String {
-    let buf = image_to_imagebuf(image);
-    rust_stats::compute_pixel_hash_sha1_blocked(&buf, extra_info, convert_roi(roi), block_size)
-}
 
 // ============================================================================
 // Module Registration
@@ -804,12 +699,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Range and color analysis
     m.add_function(wrap_pyfunction!(color_range_check, m)?)?;
-    m.add_function(wrap_pyfunction!(nonzero_region, m)?)?;
-    m.add_function(wrap_pyfunction!(color_count, m)?)?;
-
-    // Hash functions
-    m.add_function(wrap_pyfunction!(compute_pixel_hash, m)?)?;
-    m.add_function(wrap_pyfunction!(compute_pixel_hash_blocked, m)?)?;
 
     Ok(())
 }

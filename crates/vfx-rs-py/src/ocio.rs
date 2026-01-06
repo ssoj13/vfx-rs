@@ -313,19 +313,6 @@ impl ColorConfig {
         self.inner.has_look(name)
     }
 
-    // ========================================================================
-    // Reset
-    // ========================================================================
-
-    /// Reset to default ACES 1.3 configuration.
-    pub fn reset(&mut self) {
-        self.inner.reset();
-    }
-
-    /// Reset to a specific configuration file.
-    pub fn reset_to_file(&mut self, path: PathBuf) {
-        self.inner.reset_to_file(path);
-    }
 }
 
 impl ColorConfig {

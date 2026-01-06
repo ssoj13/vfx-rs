@@ -44,9 +44,9 @@ pub mod filters;
 
 // Re-export commonly used functions
 pub use patterns::{zero, fill, checker, noise};
-pub use channels::{channels, channel_append, channel_sum};
+pub use channels::{channels, channel_append, channel_sum, extract_channel, flatten, get_alpha};
 pub use geometry::{crop, cut, flip, flop, transpose, rotate90, rotate180, rotate270, resize};
-pub use arithmetic::{add, sub, mul, div, abs, absdiff, pow, clamp, invert, over};
+pub use arithmetic::{add, sub, mul, div, abs, absdiff, pow, clamp, invert, over, max, min, mad};
 
 // Color operations
 pub use color::{
@@ -88,7 +88,7 @@ pub use ocio::{
 
 // Deep image operations
 pub use deep::{
-    flatten, flatten_into,
+    flatten_deep, flatten_deep_into,
     deepen, deepen_with_z,
     deep_merge, deep_merge_into,
     deep_holdout, deep_holdout_matte,

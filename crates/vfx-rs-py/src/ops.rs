@@ -418,6 +418,46 @@ pub fn mad(a: &Image, b: &Bound<'_, PyAny>, c: &Bound<'_, PyAny>, roi: Option<&R
     imagebuf_to_image(&result)
 }
 
+/// Compute pixel-wise maximum: max(a, b)
+#[pyfunction]
+#[pyo3(signature = (a, b, roi=None))]
+pub fn max(a: &Image, b: &Bound<'_, PyAny>, roi: Option<&Roi3D>) -> PyResult<Image> {
+    let buf_a = image_to_imagebuf(a);
+
+    let result = if let Ok(img_b) = b.extract::<Image>() {
+        let buf_b = image_to_imagebuf(&img_b);
+        imagebufalgo::max(&buf_a, &buf_b, convert_roi(roi))
+    } else if let Ok(val) = b.extract::<f32>() {
+        imagebufalgo::max(&buf_a, val, convert_roi(roi))
+    } else if let Ok(vals) = b.extract::<Vec<f32>>() {
+        imagebufalgo::max(&buf_a, vals, convert_roi(roi))
+    } else {
+        return Err(PyValueError::new_err("b must be Image, float, or list of floats"));
+    };
+
+    imagebuf_to_image(&result)
+}
+
+/// Compute pixel-wise minimum: min(a, b)
+#[pyfunction]
+#[pyo3(signature = (a, b, roi=None))]
+pub fn min(a: &Image, b: &Bound<'_, PyAny>, roi: Option<&Roi3D>) -> PyResult<Image> {
+    let buf_a = image_to_imagebuf(a);
+
+    let result = if let Ok(img_b) = b.extract::<Image>() {
+        let buf_b = image_to_imagebuf(&img_b);
+        imagebufalgo::min(&buf_a, &buf_b, convert_roi(roi))
+    } else if let Ok(val) = b.extract::<f32>() {
+        imagebufalgo::min(&buf_a, val, convert_roi(roi))
+    } else if let Ok(vals) = b.extract::<Vec<f32>>() {
+        imagebufalgo::min(&buf_a, vals, convert_roi(roi))
+    } else {
+        return Err(PyValueError::new_err("b must be Image, float, or list of floats"));
+    };
+
+    imagebuf_to_image(&result)
+}
+
 /// Compute absolute value of each pixel.
 #[pyfunction]
 #[pyo3(signature = (image, roi=None))]
@@ -509,46 +549,6 @@ pub fn over(a: &Image, b: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
     let buf_a = image_to_imagebuf(a);
     let buf_b = image_to_imagebuf(b);
     let result = imagebufalgo::over(&buf_a, &buf_b, convert_roi(roi));
-    imagebuf_to_image(&result)
-}
-
-/// Pixel-wise maximum.
-#[pyfunction]
-#[pyo3(signature = (a, b, roi=None))]
-pub fn max(a: &Image, b: &Bound<'_, PyAny>, roi: Option<&Roi3D>) -> PyResult<Image> {
-    let buf_a = image_to_imagebuf(a);
-
-    let result = if let Ok(img_b) = b.extract::<Image>() {
-        let buf_b = image_to_imagebuf(&img_b);
-        imagebufalgo::max(&buf_a, &buf_b, convert_roi(roi))
-    } else if let Ok(val) = b.extract::<f32>() {
-        imagebufalgo::max(&buf_a, val, convert_roi(roi))
-    } else if let Ok(vals) = b.extract::<Vec<f32>>() {
-        imagebufalgo::max(&buf_a, vals, convert_roi(roi))
-    } else {
-        return Err(PyValueError::new_err("b must be Image, float, or list of floats"));
-    };
-
-    imagebuf_to_image(&result)
-}
-
-/// Pixel-wise minimum.
-#[pyfunction]
-#[pyo3(signature = (a, b, roi=None))]
-pub fn min(a: &Image, b: &Bound<'_, PyAny>, roi: Option<&Roi3D>) -> PyResult<Image> {
-    let buf_a = image_to_imagebuf(a);
-
-    let result = if let Ok(img_b) = b.extract::<Image>() {
-        let buf_b = image_to_imagebuf(&img_b);
-        imagebufalgo::min(&buf_a, &buf_b, convert_roi(roi))
-    } else if let Ok(val) = b.extract::<f32>() {
-        imagebufalgo::min(&buf_a, val, convert_roi(roi))
-    } else if let Ok(vals) = b.extract::<Vec<f32>>() {
-        imagebufalgo::min(&buf_a, vals, convert_roi(roi))
-    } else {
-        return Err(PyValueError::new_err("b must be Image, float, or list of floats"));
-    };
-
     imagebuf_to_image(&result)
 }
 
@@ -1275,80 +1275,12 @@ pub fn channel_sum(image: &Image, weights: Option<Vec<f32>>, roi: Option<&Roi3D>
     imagebuf_to_image(&result)
 }
 
-/// Flatten a multi-layer/multi-channel image to RGB(A).
+/// Flatten a multi-channel image to single channel by averaging.
 #[pyfunction]
 #[pyo3(signature = (image, roi=None))]
 pub fn flatten(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
     let buf = image_to_imagebuf(image);
-    let result = imagebufalgo::channel_flatten(&buf, convert_roi(roi));
-    imagebuf_to_image(&result)
-}
-
-// ============================================================================
-// FFT Operations
-// ============================================================================
-
-/// Forward FFT (Fast Fourier Transform).
-///
-/// Returns complex result as 2-channel image (real, imaginary).
-#[pyfunction]
-#[pyo3(signature = (image, roi=None))]
-pub fn fft(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
-    let buf = image_to_imagebuf(image);
-    let result = imagebufalgo::fft(&buf, convert_roi(roi))
-        .map_err(|e| PyIOError::new_err(format!("FFT failed: {}", e)))?;
-    imagebuf_to_image(&result)
-}
-
-/// Inverse FFT.
-///
-/// Input should be 2-channel complex image (real, imaginary).
-#[pyfunction]
-#[pyo3(signature = (image, roi=None))]
-pub fn ifft(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
-    let buf = image_to_imagebuf(image);
-    let result = imagebufalgo::ifft(&buf, convert_roi(roi))
-        .map_err(|e| PyIOError::new_err(format!("IFFT failed: {}", e)))?;
-    imagebuf_to_image(&result)
-}
-
-/// Shift FFT result so DC is centered.
-#[pyfunction]
-#[pyo3(signature = (image, roi=None))]
-pub fn fft_shift(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
-    let buf = image_to_imagebuf(image);
-    let result = imagebufalgo::fft_shift(&buf, convert_roi(roi))
-        .map_err(|e| PyIOError::new_err(format!("FFT shift failed: {}", e)))?;
-    imagebuf_to_image(&result)
-}
-
-/// Inverse FFT shift (undo fft_shift).
-#[pyfunction]
-#[pyo3(signature = (image, roi=None))]
-pub fn ifft_shift(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
-    let buf = image_to_imagebuf(image);
-    let result = imagebufalgo::ifft_shift(&buf, convert_roi(roi))
-        .map_err(|e| PyIOError::new_err(format!("FFT shift failed: {}", e)))?;
-    imagebuf_to_image(&result)
-}
-
-/// Convert polar (magnitude, phase) to complex (real, imag).
-#[pyfunction]
-#[pyo3(signature = (image, roi=None))]
-pub fn polar_to_complex(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
-    let buf = image_to_imagebuf(image);
-    let result = imagebufalgo::polar_to_complex(&buf, convert_roi(roi))
-        .map_err(|e| PyIOError::new_err(format!("Polar to complex failed: {}", e)))?;
-    imagebuf_to_image(&result)
-}
-
-/// Convert complex (real, imag) to polar (magnitude, phase).
-#[pyfunction]
-#[pyo3(signature = (image, roi=None))]
-pub fn complex_to_polar(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
-    let buf = image_to_imagebuf(image);
-    let result = imagebufalgo::complex_to_polar(&buf, convert_roi(roi))
-        .map_err(|e| PyIOError::new_err(format!("Complex to polar failed: {}", e)))?;
+    let result = imagebufalgo::flatten(&buf, convert_roi(roi));
     imagebuf_to_image(&result)
 }
 
@@ -1444,14 +1376,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(channel_append, m)?)?;
     m.add_function(wrap_pyfunction!(channel_sum, m)?)?;
     m.add_function(wrap_pyfunction!(flatten, m)?)?;
-
-    // FFT
-    m.add_function(wrap_pyfunction!(fft, m)?)?;
-    m.add_function(wrap_pyfunction!(ifft, m)?)?;
-    m.add_function(wrap_pyfunction!(fft_shift, m)?)?;
-    m.add_function(wrap_pyfunction!(ifft_shift, m)?)?;
-    m.add_function(wrap_pyfunction!(polar_to_complex, m)?)?;
-    m.add_function(wrap_pyfunction!(complex_to_polar, m)?)?;
 
     Ok(())
 }

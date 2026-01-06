@@ -48,20 +48,20 @@ use vfx_core::{ImageSpec, TypeDesc};
 /// # Example
 ///
 /// ```ignore
-/// use vfx_io::imagebufalgo::deep::flatten;
+/// use vfx_io::imagebufalgo::deep::flatten_deep;
 ///
-/// let flat_image = flatten(&deep_data, 1920, 1080);
+/// let flat_image = flatten_deep(&deep_data, 1920, 1080);
 /// ```
-pub fn flatten(deep: &DeepData, width: u32, height: u32) -> ImageBuf {
+pub fn flatten_deep(deep: &DeepData, width: u32, height: u32) -> ImageBuf {
     let spec = ImageSpec::rgba(width, height);
     let mut dst = ImageBuf::new(spec, InitializePixels::Yes);
 
-    flatten_into(&mut dst, deep);
+    flatten_deep_into(&mut dst, deep);
     dst
 }
 
 /// Flattens a deep image into an existing ImageBuf.
-pub fn flatten_into(dst: &mut ImageBuf, deep: &DeepData) {
+pub fn flatten_deep_into(dst: &mut ImageBuf, deep: &DeepData) {
     let width = dst.width() as i64;
     let height = dst.height() as i64;
     let npixels = width * height;

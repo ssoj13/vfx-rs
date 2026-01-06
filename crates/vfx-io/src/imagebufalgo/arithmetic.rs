@@ -634,6 +634,54 @@ pub fn min<'a, A: Into<ImageOrConst<'a>>, B: Into<ImageOrConst<'a>>>(
     dst
 }
 
+/// Multiply-add: dst = A * B + C
+///
+/// Computes the fused multiply-add operation pixel-wise.
+pub fn mad<'a, A: Into<ImageOrConst<'a>>, B: Into<ImageOrConst<'a>>, C: Into<ImageOrConst<'a>>>(
+    a: A,
+    b: B,
+    c: C,
+    roi: Option<Roi3D>,
+) -> ImageBuf {
+    let a = a.into();
+    let b = b.into();
+    let c = c.into();
+
+    let roi = roi
+        .or_else(|| get_roi(&a))
+        .or_else(|| get_roi(&b))
+        .or_else(|| get_roi(&c))
+        .unwrap_or_else(|| Roi3D::new_2d_with_channels(0, 1, 0, 1, 0, 1));
+
+    let nch = get_nch(&a, 1).max(get_nch(&b, 1)).max(get_nch(&c, 1));
+    let spec = ImageSpec::from_roi_nchannels(&roi, nch as u32);
+
+    let mut dst = ImageBuf::new(spec, InitializePixels::No);
+
+    let mut pa = vec![0.0f32; nch];
+    let mut pb = vec![0.0f32; nch];
+    let mut pc = vec![0.0f32; nch];
+    let mut result = vec![0.0f32; nch];
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                get_value(&a, x, y, z, nch, &mut pa);
+                get_value(&b, x, y, z, nch, &mut pb);
+                get_value(&c, x, y, z, nch, &mut pc);
+
+                for ch in 0..nch {
+                    result[ch] = pa[ch].mul_add(pb[ch], pc[ch]);
+                }
+
+                dst.setpixel(x, y, z, &result);
+            }
+        }
+    }
+
+    dst
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
