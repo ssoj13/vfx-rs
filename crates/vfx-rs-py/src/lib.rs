@@ -18,6 +18,7 @@ mod stats;
 mod ocio;
 mod deep;
 mod fft;
+mod drawing;
 #[cfg(feature = "viewer")]
 mod viewer;
 
@@ -129,6 +130,11 @@ fn vfx_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let fft_module = PyModule::new(m.py(), "fft")?;
     fft::register(&fft_module)?;
     m.add_submodule(&fft_module)?;
+
+    // Drawing submodule
+    let drawing_module = PyModule::new(m.py(), "drawing")?;
+    drawing::register(&drawing_module)?;
+    m.add_submodule(&drawing_module)?;
 
     // Also register core types at top level for convenience
     m.add_class::<core::TypeDesc>()?;

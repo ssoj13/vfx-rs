@@ -43,6 +43,7 @@ pub mod ocio;
 pub mod deep;
 pub mod filters;
 pub mod fft;
+pub mod drawing;
 
 // Re-export commonly used functions
 pub use patterns::{zero, fill, checker, noise};
@@ -116,4 +117,10 @@ pub use fft::{
     ifft, ifft_into,
     complex_to_polar, complex_to_polar_into,
     polar_to_complex, polar_to_complex_into,
+};
+
+// Drawing operations
+pub use drawing::{
+    render_point, render_line, render_box,
+    render_circle, render_ellipse, render_polygon,
 };
