@@ -321,6 +321,167 @@ impl AnyExecutor {
             Self::Cuda(e) => e.execute_resize(img, width, height, filter),
         }
     }
+
+    /// Execute composite over.
+    pub fn execute_composite_over(&self, fg: &crate::ComputeImage, bg: &mut crate::ComputeImage) -> ComputeResult<()> {
+        match self {
+            Self::Cpu(e) => {
+                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
+                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
+                e.gpu().exec_composite_over(&fg_handle, &mut bg_handle)?;
+                bg.data = e.gpu().download(&bg_handle)?;
+                Ok(())
+            }
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu(e) => {
+                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
+                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
+                e.gpu().exec_composite_over(&fg_handle, &mut bg_handle)?;
+                bg.data = e.gpu().download(&bg_handle)?;
+                Ok(())
+            }
+            #[cfg(feature = "cuda")]
+            Self::Cuda(e) => {
+                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
+                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
+                e.gpu().exec_composite_over(&fg_handle, &mut bg_handle)?;
+                bg.data = e.gpu().download(&bg_handle)?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Execute blend.
+    pub fn execute_blend(&self, fg: &crate::ComputeImage, bg: &mut crate::ComputeImage, mode: u32, opacity: f32) -> ComputeResult<()> {
+        match self {
+            Self::Cpu(e) => {
+                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
+                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
+                e.gpu().exec_blend(&fg_handle, &mut bg_handle, mode, opacity)?;
+                bg.data = e.gpu().download(&bg_handle)?;
+                Ok(())
+            }
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu(e) => {
+                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
+                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
+                e.gpu().exec_blend(&fg_handle, &mut bg_handle, mode, opacity)?;
+                bg.data = e.gpu().download(&bg_handle)?;
+                Ok(())
+            }
+            #[cfg(feature = "cuda")]
+            Self::Cuda(e) => {
+                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
+                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
+                e.gpu().exec_blend(&fg_handle, &mut bg_handle, mode, opacity)?;
+                bg.data = e.gpu().download(&bg_handle)?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Execute flip horizontal.
+    pub fn execute_flip_h(&self, img: &mut crate::ComputeImage) -> ComputeResult<()> {
+        match self {
+            Self::Cpu(e) => {
+                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                e.gpu().exec_flip_h(&mut handle)?;
+                img.data = e.gpu().download(&handle)?;
+                Ok(())
+            }
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu(e) => {
+                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                e.gpu().exec_flip_h(&mut handle)?;
+                img.data = e.gpu().download(&handle)?;
+                Ok(())
+            }
+            #[cfg(feature = "cuda")]
+            Self::Cuda(e) => {
+                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                e.gpu().exec_flip_h(&mut handle)?;
+                img.data = e.gpu().download(&handle)?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Execute flip vertical.
+    pub fn execute_flip_v(&self, img: &mut crate::ComputeImage) -> ComputeResult<()> {
+        match self {
+            Self::Cpu(e) => {
+                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                e.gpu().exec_flip_v(&mut handle)?;
+                img.data = e.gpu().download(&handle)?;
+                Ok(())
+            }
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu(e) => {
+                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                e.gpu().exec_flip_v(&mut handle)?;
+                img.data = e.gpu().download(&handle)?;
+                Ok(())
+            }
+            #[cfg(feature = "cuda")]
+            Self::Cuda(e) => {
+                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                e.gpu().exec_flip_v(&mut handle)?;
+                img.data = e.gpu().download(&handle)?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Execute rotate 90 degrees clockwise.
+    pub fn execute_rotate_90(&self, img: &crate::ComputeImage, n: u32) -> ComputeResult<crate::ComputeImage> {
+        match self {
+            Self::Cpu(e) => {
+                let handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let rotated = e.gpu().exec_rotate_90(&handle, n)?;
+                let (w, h, c) = rotated.dimensions();
+                let data = e.gpu().download(&rotated)?;
+                crate::ComputeImage::from_f32(data, w, h, c)
+            }
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu(e) => {
+                let handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let rotated = e.gpu().exec_rotate_90(&handle, n)?;
+                let (w, h, c) = rotated.dimensions();
+                let data = e.gpu().download(&rotated)?;
+                crate::ComputeImage::from_f32(data, w, h, c)
+            }
+            #[cfg(feature = "cuda")]
+            Self::Cuda(e) => {
+                let handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let rotated = e.gpu().exec_rotate_90(&handle, n)?;
+                let (w, h, c) = rotated.dimensions();
+                let data = e.gpu().download(&rotated)?;
+                crate::ComputeImage::from_f32(data, w, h, c)
+            }
+        }
+    }
+
+    /// Crop region (CPU-only, since GpuPrimitives doesn't have exec_crop).
+    pub fn execute_crop(&self, img: &crate::ComputeImage, x: u32, y: u32, w: u32, h: u32) -> ComputeResult<crate::ComputeImage> {
+        let src_w = img.width as usize;
+        let src_h = img.height as usize;
+        let c = img.channels as usize;
+        
+        if x as usize + w as usize > src_w || y as usize + h as usize > src_h {
+            return Err(ComputeError::InvalidDimensions(w, h));
+        }
+        
+        let mut data = vec![0.0f32; (w as usize) * (h as usize) * c];
+        
+        for row in 0..h as usize {
+            let src_row = (y as usize + row) * src_w * c + (x as usize) * c;
+            let dst_row = row * (w as usize) * c;
+            data[dst_row..dst_row + (w as usize) * c]
+                .copy_from_slice(&img.data[src_row..src_row + (w as usize) * c]);
+        }
+        
+        crate::ComputeImage::from_f32(data, w, h, img.channels)
+    }
 }
 
 /// Create a TiledExecutor for the specified backend.

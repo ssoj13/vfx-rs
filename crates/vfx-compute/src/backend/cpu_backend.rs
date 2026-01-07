@@ -319,6 +319,122 @@ impl GpuPrimitives for CpuPrimitives {
         Ok(())
     }
 
+    fn exec_flip_h(&self, handle: &mut Self::Handle) -> ComputeResult<()> {
+        let (w, _h, c) = handle.dimensions();
+        let row_size = (w * c) as usize;
+
+        handle.data.par_chunks_mut(row_size).for_each(|row| {
+            for x in 0..(w / 2) as usize {
+                for ch in 0..c as usize {
+                    let left = x * c as usize + ch;
+                    let right = (w as usize - 1 - x) * c as usize + ch;
+                    row.swap(left, right);
+                }
+            }
+        });
+        Ok(())
+    }
+
+    fn exec_flip_v(&self, handle: &mut Self::Handle) -> ComputeResult<()> {
+        let (w, h, c) = handle.dimensions();
+        let row_size = (w * c) as usize;
+
+        for y in 0..(h / 2) as usize {
+            let top_start = y * row_size;
+            let bot_start = (h as usize - 1 - y) * row_size;
+            for i in 0..row_size {
+                handle.data.swap(top_start + i, bot_start + i);
+            }
+        }
+        Ok(())
+    }
+
+    fn exec_rotate_90(&self, src: &Self::Handle, n: u32) -> ComputeResult<Self::Handle> {
+        let (w, h, c) = src.dimensions();
+        let n = n % 4;
+
+        if n == 0 {
+            return Ok(CpuImage::new(src.data.clone(), w, h, c));
+        }
+
+        let (nw, nh) = if n % 2 == 1 { (h, w) } else { (w, h) };
+        let mut dst = vec![0.0f32; (nw * nh * c) as usize];
+
+        for sy in 0..h {
+            for sx in 0..w {
+                let (dx, dy) = match n {
+                    1 => (h - 1 - sy, sx),         // 90° CW
+                    2 => (w - 1 - sx, h - 1 - sy), // 180°
+                    3 => (sy, w - 1 - sx),         // 270° CW
+                    _ => unreachable!(),
+                };
+                let src_idx = ((sy * w + sx) * c) as usize;
+                let dst_idx = ((dy * nw + dx) * c) as usize;
+                for ch in 0..c as usize {
+                    dst[dst_idx + ch] = src.data[src_idx + ch];
+                }
+            }
+        }
+        Ok(CpuImage::new(dst, nw, nh, c))
+    }
+
+    fn exec_composite_over(&self, fg: &Self::Handle, bg: &mut Self::Handle) -> ComputeResult<()> {
+        let (fw, fh, fc) = fg.dimensions();
+        let (bw, bh, bc) = bg.dimensions();
+        if fw != bw || fh != bh {
+            return Err(ComputeError::OperationFailed("Dimension mismatch".into()));
+        }
+
+        // Porter-Duff Over: Fg + Bg * (1 - Fg.a)
+        bg.data.par_chunks_mut(bc as usize)
+            .zip(fg.data.par_chunks(fc as usize))
+            .for_each(|(bg_px, fg_px)| {
+                let fg_a = fg_px.get(3).copied().unwrap_or(1.0);
+                let bg_a = bg_px.get(3).copied().unwrap_or(1.0);
+                let inv_fg_a = 1.0 - fg_a;
+
+                bg_px[0] = fg_px[0] * fg_a + bg_px[0] * bg_a * inv_fg_a;
+                bg_px[1] = fg_px[1] * fg_a + bg_px[1] * bg_a * inv_fg_a;
+                bg_px[2] = fg_px[2] * fg_a + bg_px[2] * bg_a * inv_fg_a;
+                if bc >= 4 {
+                    bg_px[3] = fg_a + bg_a * inv_fg_a;
+                }
+            });
+        Ok(())
+    }
+
+    fn exec_blend(&self, fg: &Self::Handle, bg: &mut Self::Handle, mode: u32, opacity: f32) -> ComputeResult<()> {
+        let (fw, fh, fc) = fg.dimensions();
+        let (bw, bh, bc) = bg.dimensions();
+        if fw != bw || fh != bh {
+            return Err(ComputeError::OperationFailed("Dimension mismatch".into()));
+        }
+
+        bg.data.par_chunks_mut(bc as usize)
+            .zip(fg.data.par_chunks(fc as usize))
+            .for_each(|(bg_px, fg_px)| {
+                for ch in 0..3.min(bc as usize) {
+                    let a = fg_px[ch];
+                    let b = bg_px[ch];
+                    let blended = match mode {
+                        0 => a, // Normal
+                        1 => a * b, // Multiply
+                        2 => 1.0 - (1.0 - a) * (1.0 - b), // Screen
+                        3 => (a + b).min(1.0), // Add
+                        4 => (b - a).max(0.0), // Subtract
+                        5 => if b < 0.5 { 2.0 * a * b } else { 1.0 - 2.0 * (1.0 - a) * (1.0 - b) }, // Overlay
+                        6 => if a < 0.5 { b - (1.0 - 2.0 * a) * b * (1.0 - b) } // SoftLight
+                             else { b + (2.0 * a - 1.0) * (((b - 0.5).abs() * 16.0 + 12.0) * b - 3.0) * b },
+                        7 => if a < 0.5 { 2.0 * a * b } else { 1.0 - 2.0 * (1.0 - a) * (1.0 - b) }, // HardLight
+                        8 => (a - b).abs(), // Difference
+                        _ => a, // Default to Normal
+                    };
+                    bg_px[ch] = b + opacity * (blended - b);
+                }
+            });
+        Ok(())
+    }
+
     fn limits(&self) -> &GpuLimits {
         &self.limits
     }

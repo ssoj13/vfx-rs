@@ -41,7 +41,7 @@ pub use backend::{
 };
 pub use image::ComputeImage;
 pub use color::{ColorProcessor, Cdl};
-pub use ops::{ImageProcessor, ResizeFilter};
+pub use ops::{ImageProcessor, ResizeFilter, BlendMode};
 pub use processor::{
     Processor, ProcessorBuilder, ProcessorConfig,
     ColorOpBatch, BatchOp,

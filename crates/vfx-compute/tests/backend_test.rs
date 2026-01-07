@@ -1,6 +1,6 @@
 //! Backend tests for vfx-compute.
 
-use vfx_compute::{Backend, ColorProcessor, ImageProcessor, ComputeImage, describe_backends};
+use vfx_compute::{Backend, ColorProcessor, ImageProcessor, ComputeImage, BlendMode, describe_backends};
 
 #[test]
 fn test_cpu_backend_available() {
@@ -167,7 +167,6 @@ fn test_composite_over() {
 
 #[test]
 fn test_blend_multiply() {
-    use vfx_compute::backend::BlendMode;
     let processor = ImageProcessor::new(Backend::Cpu).unwrap();
     
     // 50% gray
@@ -186,7 +185,6 @@ fn test_blend_multiply() {
 
 #[test]
 fn test_blend_screen() {
-    use vfx_compute::backend::BlendMode;
     let processor = ImageProcessor::new(Backend::Cpu).unwrap();
     
     let fg = ComputeImage::from_f32(vec![0.5, 0.5, 0.5], 1, 1, 3).unwrap();

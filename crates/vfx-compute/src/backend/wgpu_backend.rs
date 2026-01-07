@@ -562,6 +562,168 @@ impl GpuPrimitives for WgpuPrimitives {
         Ok(())
     }
 
+    fn exec_flip_h(&self, handle: &mut Self::Handle) -> ComputeResult<()> {
+        let (w, h, c) = handle.dimensions();
+        let mut dst = self.allocate(w, h, c)?;
+        
+        let dims_uniform = DimsUniform { dims: [w, h, c, 0] };
+        let dims_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("flip_h_dims"),
+            contents: bytemuck::bytes_of(&dims_uniform),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        
+        let layout = self.pipelines.flip_h.get_bind_group_layout(0);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("flip_h_bind_group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: handle.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: dst.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: dims_buf.as_entire_binding() },
+            ],
+        });
+        
+        self.dispatch_and_wait(&self.pipelines.flip_h, &bind_group, (w.div_ceil(16), h.div_ceil(16), 1));
+        std::mem::swap(&mut handle.buffer, &mut dst.buffer);
+        Ok(())
+    }
+
+    fn exec_flip_v(&self, handle: &mut Self::Handle) -> ComputeResult<()> {
+        let (w, h, c) = handle.dimensions();
+        let mut dst = self.allocate(w, h, c)?;
+        
+        let dims_uniform = DimsUniform { dims: [w, h, c, 0] };
+        let dims_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("flip_v_dims"),
+            contents: bytemuck::bytes_of(&dims_uniform),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        
+        let layout = self.pipelines.flip_v.get_bind_group_layout(0);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("flip_v_bind_group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: handle.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: dst.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: dims_buf.as_entire_binding() },
+            ],
+        });
+        
+        self.dispatch_and_wait(&self.pipelines.flip_v, &bind_group, (w.div_ceil(16), h.div_ceil(16), 1));
+        std::mem::swap(&mut handle.buffer, &mut dst.buffer);
+        Ok(())
+    }
+
+    fn exec_rotate_90(&self, src: &Self::Handle, n: u32) -> ComputeResult<Self::Handle> {
+        let n = n % 4;
+        if n == 0 {
+            // No rotation - return copy
+            let (w, h, c) = src.dimensions();
+            let data = self.download(src)?;
+            return self.upload(&data, w, h, c);
+        }
+        
+        let (sw, sh, c) = src.dimensions();
+        let (dw, dh) = if n % 2 == 1 { (sh, sw) } else { (sw, sh) };
+        let dst = self.allocate(dw, dh, c)?;
+        
+        let rotate_uniform = RotateUniform {
+            src_w: sw,
+            src_h: sh,
+            dst_w: dw,
+            dst_h: dh,
+            c,
+            n,
+            _pad0: 0,
+            _pad1: 0,
+        };
+        let rotate_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("rotate_uniform"),
+            contents: bytemuck::bytes_of(&rotate_uniform),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        
+        let layout = self.pipelines.rotate_90.get_bind_group_layout(0);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rotate_bind_group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: src.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: dst.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: rotate_buf.as_entire_binding() },
+            ],
+        });
+        
+        self.dispatch_and_wait(&self.pipelines.rotate_90, &bind_group, (dw.div_ceil(16), dh.div_ceil(16), 1));
+        Ok(dst)
+    }
+
+    fn exec_composite_over(&self, fg: &Self::Handle, bg: &mut Self::Handle) -> ComputeResult<()> {
+        let (w, h, c) = fg.dimensions();
+        let dims_uniform = DimsUniform { dims: [w, h, c, 0] };
+        let dims_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("composite_dims"),
+            contents: bytemuck::bytes_of(&dims_uniform),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        
+        let layout = self.pipelines.composite_over.get_bind_group_layout(0);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("composite_over_bind_group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: fg.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: bg.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: dims_buf.as_entire_binding() },
+            ],
+        });
+        
+        let total = w * h;
+        self.dispatch_and_wait(&self.pipelines.composite_over, &bind_group, (total.div_ceil(256), 1, 1));
+        Ok(())
+    }
+
+    fn exec_blend(&self, fg: &Self::Handle, bg: &mut Self::Handle, mode: u32, opacity: f32) -> ComputeResult<()> {
+        let (w, h, c) = fg.dimensions();
+        
+        let dims_uniform = DimsUniform { dims: [w, h, c, 0] };
+        let dims_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("blend_dims"),
+            contents: bytemuck::bytes_of(&dims_uniform),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        
+        let blend_uniform = BlendUniform {
+            mode,
+            opacity,
+            _pad0: 0,
+            _pad1: 0,
+        };
+        let blend_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("blend_uniform"),
+            contents: bytemuck::bytes_of(&blend_uniform),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        
+        let layout = self.pipelines.blend.get_bind_group_layout(0);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("blend_bind_group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: fg.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: bg.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: dims_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: blend_buf.as_entire_binding() },
+            ],
+        });
+        
+        let total = w * h;
+        self.dispatch_and_wait(&self.pipelines.blend, &bind_group, (total.div_ceil(256), 1, 1));
+        Ok(())
+    }
+
     fn limits(&self) -> &GpuLimits { &self.limits }
     fn name(&self) -> &'static str { "wgpu" }
 }

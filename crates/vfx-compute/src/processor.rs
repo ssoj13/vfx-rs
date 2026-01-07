@@ -22,9 +22,9 @@
 //! - **Streaming**: Image too large for RAM, use disk streaming
 
 use crate::image::ComputeImage;
-use crate::backend::{Backend, ProcessingBackend, BlendMode, create_backend, GpuLimits, ProcessingStrategy};
+use crate::backend::{Backend, AnyExecutor, create_executor, ColorOp, GpuLimits, ProcessingStrategy};
 use crate::color::Cdl;
-use crate::ops::ResizeFilter;
+use crate::ops::{ResizeFilter, BlendMode};
 use crate::ComputeResult;
 
 // ============================================================================
@@ -132,6 +132,27 @@ impl ColorOpBatch {
     /// Number of operations.
     pub fn len(&self) -> usize {
         self.ops.len()
+    }
+
+    /// Convert to ColorOp vector for executor.
+    fn to_color_ops(&self) -> Vec<ColorOp> {
+        self.ops.iter().map(|op| match op {
+            BatchOp::Matrix(m) => ColorOp::Matrix(*m),
+            BatchOp::Cdl(cdl) => ColorOp::Cdl {
+                slope: cdl.slope,
+                offset: cdl.offset,
+                power: cdl.power,
+                saturation: cdl.saturation,
+            },
+            BatchOp::Lut1d { lut, channels } => ColorOp::Lut1d {
+                lut: lut.clone(),
+                channels: *channels,
+            },
+            BatchOp::Lut3d { lut, size } => ColorOp::Lut3d {
+                lut: lut.clone(),
+                size: *size,
+            },
+        }).collect()
     }
 }
 
@@ -347,9 +368,9 @@ impl ProcessorBuilder {
 
     /// Build the Processor.
     pub fn build(self) -> ComputeResult<Processor> {
-        let backend = create_backend(self.backend)?;
+        let executor = create_executor(self.backend)?;
         Ok(Processor {
-            backend,
+            executor,
             config: self.config,
         })
     }
@@ -391,7 +412,7 @@ impl ProcessorBuilder {
 ///     .build()?;
 /// ```
 pub struct Processor {
-    backend: Box<dyn ProcessingBackend>,
+    executor: AnyExecutor,
     config: ProcessorConfig,
 }
 
@@ -399,7 +420,7 @@ impl Processor {
     /// Create with specified backend and default config.
     pub fn new(backend: Backend) -> ComputeResult<Self> {
         Ok(Self {
-            backend: create_backend(backend)?,
+            executor: create_executor(backend)?,
             config: ProcessorConfig::default(),
         })
     }
@@ -407,7 +428,7 @@ impl Processor {
     /// Create with backend and custom config.
     pub fn with_config(backend: Backend, config: ProcessorConfig) -> ComputeResult<Self> {
         Ok(Self {
-            backend: create_backend(backend)?,
+            executor: create_executor(backend)?,
             config,
         })
     }
@@ -439,17 +460,17 @@ impl Processor {
 
     /// Backend name ("cpu" or "wgpu").
     pub fn backend_name(&self) -> &'static str {
-        self.backend.name()
+        self.executor.name()
     }
 
     /// Available memory in bytes.
     pub fn available_memory(&self) -> u64 {
-        self.backend.available_memory()
+        self.executor.limits().available_memory
     }
 
     /// Check if using GPU backend.
     pub fn is_gpu(&self) -> bool {
-        self.backend.name() == "wgpu"
+        self.executor.name() == "wgpu"
     }
 
     /// Get current configuration.
@@ -459,7 +480,7 @@ impl Processor {
 
     /// Get GPU limits.
     pub fn limits(&self) -> &GpuLimits {
-        self.backend.limits()
+        self.executor.limits()
     }
 
     // =========================================================================
@@ -485,7 +506,7 @@ impl Processor {
     /// ```
     pub fn recommend_strategy(&self, img: &ComputeImage) -> ProcessingStrategy {
         if self.config.force_streaming {
-            let tile_size = self.config.effective_tile_size(self.backend.limits());
+            let tile_size = self.config.effective_tile_size(self.executor.limits());
             return ProcessingStrategy::Streaming { tile_size };
         }
         
@@ -493,7 +514,7 @@ impl Processor {
             img.width,
             img.height,
             img.channels,
-            self.backend.limits(),
+            self.executor.limits(),
             self.config.effective_ram_limit(),
         )
     }
@@ -519,7 +540,7 @@ impl Processor {
 
     /// Get effective tile size for processing.
     pub fn effective_tile_size(&self) -> u32 {
-        self.config.effective_tile_size(self.backend.limits())
+        self.config.effective_tile_size(self.executor.limits())
     }
 
     /// Log strategy info if verbose mode enabled.
@@ -537,34 +558,37 @@ impl Processor {
 
     /// Apply 4x4 color matrix transform.
     pub fn apply_matrix(&self, img: &mut ComputeImage, matrix: &[f32; 16]) -> ComputeResult<()> {
-        let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
-        self.backend.apply_matrix(handle.as_mut(), matrix)?;
-        img.data = self.backend.download(handle.as_ref())?;
-        Ok(())
+        let op = ColorOp::Matrix(*matrix);
+        self.executor.execute_color(img, &op)
     }
 
     /// Apply CDL (Color Decision List) transform.
     pub fn apply_cdl(&self, img: &mut ComputeImage, cdl: &Cdl) -> ComputeResult<()> {
-        let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
-        self.backend.apply_cdl(handle.as_mut(), cdl.slope, cdl.offset, cdl.power, cdl.saturation)?;
-        img.data = self.backend.download(handle.as_ref())?;
-        Ok(())
+        let op = ColorOp::Cdl {
+            slope: cdl.slope,
+            offset: cdl.offset,
+            power: cdl.power,
+            saturation: cdl.saturation,
+        };
+        self.executor.execute_color(img, &op)
     }
 
     /// Apply 1D LUT.
     pub fn apply_lut1d(&self, img: &mut ComputeImage, lut: &[f32], channels: u32) -> ComputeResult<()> {
-        let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
-        self.backend.apply_lut1d(handle.as_mut(), lut, channels)?;
-        img.data = self.backend.download(handle.as_ref())?;
-        Ok(())
+        let op = ColorOp::Lut1d {
+            lut: lut.to_vec(),
+            channels,
+        };
+        self.executor.execute_color(img, &op)
     }
 
     /// Apply 3D LUT with trilinear interpolation.
     pub fn apply_lut3d(&self, img: &mut ComputeImage, lut: &[f32], size: u32) -> ComputeResult<()> {
-        let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
-        self.backend.apply_lut3d(handle.as_mut(), lut, size)?;
-        img.data = self.backend.download(handle.as_ref())?;
-        Ok(())
+        let op = ColorOp::Lut3d {
+            lut: lut.to_vec(),
+            size,
+        };
+        self.executor.execute_color(img, &op)
     }
 
     /// Apply multiple color operations without GPU round-trips.
@@ -587,28 +611,8 @@ impl Processor {
             return Ok(());
         }
 
-        // Upload once
-        let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
-
-        // Apply all ops (backend methods modify handle in-place with buffer swap)
-        for op in &batch.ops {
-            match op {
-                BatchOp::Matrix(m) => self.backend.apply_matrix(handle.as_mut(), m)?,
-                BatchOp::Cdl(cdl) => self.backend.apply_cdl(
-                    handle.as_mut(), cdl.slope, cdl.offset, cdl.power, cdl.saturation
-                )?,
-                BatchOp::Lut1d { lut, channels } => {
-                    self.backend.apply_lut1d(handle.as_mut(), lut, *channels)?;
-                }
-                BatchOp::Lut3d { lut, size } => {
-                    self.backend.apply_lut3d(handle.as_mut(), lut, *size)?;
-                }
-            }
-        }
-
-        // Download once
-        img.data = self.backend.download(handle.as_ref())?;
-        Ok(())
+        let ops = batch.to_color_ops();
+        self.executor.execute_color_chain(img, &ops)
     }
 
     /// Apply exposure adjustment (in stops).
@@ -656,10 +660,7 @@ impl Processor {
 
     /// Resize image with specified filter.
     pub fn resize(&self, img: &ComputeImage, width: u32, height: u32, filter: ResizeFilter) -> ComputeResult<ComputeImage> {
-        let handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
-        let resized = self.backend.resize(handle.as_ref(), width, height, filter as u32)?;
-        let data = self.backend.download(resized.as_ref())?;
-        ComputeImage::from_f32(data, width, height, img.channels)
+        self.executor.execute_resize(img, width, height, filter as u32)
     }
 
     /// Resize to half dimensions (useful for mipmap generation).
@@ -669,10 +670,7 @@ impl Processor {
 
     /// Apply Gaussian blur.
     pub fn blur(&self, img: &mut ComputeImage, radius: f32) -> ComputeResult<()> {
-        let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
-        self.backend.blur(handle.as_mut(), radius)?;
-        img.data = self.backend.download(handle.as_ref())?;
-        Ok(())
+        self.executor.execute_blur(img, radius)
     }
 
     /// Apply sharpening (unsharp mask).
@@ -682,14 +680,14 @@ impl Processor {
         let original = img.data.clone();
         
         // Small blur
-        let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
-        self.backend.blur(handle.as_mut(), 1.0)?;
-        let blurred = self.backend.download(handle.as_ref())?;
+        self.executor.execute_blur(img, 1.0)?;
+        let blurred = std::mem::take(&mut img.data);
         
         // Unsharp mask: sharp = original + amount * (original - blur)
-        for i in 0..img.data.len() {
-            img.data[i] = original[i] + amount * (original[i] - blurred[i]);
-        }
+        img.data = original.iter()
+            .zip(blurred.iter())
+            .map(|(o, b)| o + amount * (o - b))
+            .collect();
         
         Ok(())
     }
@@ -700,20 +698,12 @@ impl Processor {
 
     /// Porter-Duff Over: foreground over background.
     pub fn composite_over(&self, fg: &ComputeImage, bg: &mut ComputeImage) -> ComputeResult<()> {
-        let fg_handle = self.backend.upload(&fg.data, fg.width, fg.height, fg.channels)?;
-        let mut bg_handle = self.backend.upload(&bg.data, bg.width, bg.height, bg.channels)?;
-        self.backend.composite_over(fg_handle.as_ref(), bg_handle.as_mut())?;
-        bg.data = self.backend.download(bg_handle.as_ref())?;
-        Ok(())
+        self.executor.execute_composite_over(fg, bg)
     }
 
     /// Blend with mode and opacity.
     pub fn blend(&self, fg: &ComputeImage, bg: &mut ComputeImage, mode: BlendMode, opacity: f32) -> ComputeResult<()> {
-        let fg_handle = self.backend.upload(&fg.data, fg.width, fg.height, fg.channels)?;
-        let mut bg_handle = self.backend.upload(&bg.data, bg.width, bg.height, bg.channels)?;
-        self.backend.blend(fg_handle.as_ref(), bg_handle.as_mut(), mode, opacity)?;
-        bg.data = self.backend.download(bg_handle.as_ref())?;
-        Ok(())
+        self.executor.execute_blend(fg, bg, mode as u32, opacity)
     }
 
     // =========================================================================
@@ -722,35 +712,22 @@ impl Processor {
 
     /// Crop region from image.
     pub fn crop(&self, img: &ComputeImage, x: u32, y: u32, w: u32, h: u32) -> ComputeResult<ComputeImage> {
-        let handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
-        let cropped = self.backend.crop(handle.as_ref(), x, y, w, h)?;
-        let data = self.backend.download(cropped.as_ref())?;
-        ComputeImage::from_f32(data, w, h, img.channels)
+        self.executor.execute_crop(img, x, y, w, h)
     }
 
     /// Flip horizontal.
     pub fn flip_h(&self, img: &mut ComputeImage) -> ComputeResult<()> {
-        let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
-        self.backend.flip_h(handle.as_mut())?;
-        img.data = self.backend.download(handle.as_ref())?;
-        Ok(())
+        self.executor.execute_flip_h(img)
     }
 
     /// Flip vertical.
     pub fn flip_v(&self, img: &mut ComputeImage) -> ComputeResult<()> {
-        let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
-        self.backend.flip_v(handle.as_mut())?;
-        img.data = self.backend.download(handle.as_ref())?;
-        Ok(())
+        self.executor.execute_flip_v(img)
     }
 
     /// Rotate 90 degrees clockwise (n times).
     pub fn rotate_90(&self, img: &ComputeImage, n: u32) -> ComputeResult<ComputeImage> {
-        let handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
-        let rotated = self.backend.rotate_90(handle.as_ref(), n)?;
-        let (w, h, c) = rotated.dimensions();
-        let data = self.backend.download(rotated.as_ref())?;
-        ComputeImage::from_f32(data, w, h, c)
+        self.executor.execute_rotate_90(img, n)
     }
 }
 

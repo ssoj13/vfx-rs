@@ -83,6 +83,33 @@ pub trait GpuPrimitives: Send + Sync {
     /// Execute blur kernel.
     fn exec_blur(&self, src: &Self::Handle, dst: &mut Self::Handle, radius: f32) -> ComputeResult<()>;
 
+    // =========================================================================
+    // Transform Operations
+    // =========================================================================
+
+    /// Execute flip horizontal.
+    fn exec_flip_h(&self, handle: &mut Self::Handle) -> ComputeResult<()>;
+
+    /// Execute flip vertical.
+    fn exec_flip_v(&self, handle: &mut Self::Handle) -> ComputeResult<()>;
+
+    /// Execute rotate 90° clockwise (n times).
+    fn exec_rotate_90(&self, src: &Self::Handle, n: u32) -> ComputeResult<Self::Handle>;
+
+    // =========================================================================
+    // Composite Operations
+    // =========================================================================
+
+    /// Execute Porter-Duff Over composite.
+    fn exec_composite_over(&self, fg: &Self::Handle, bg: &mut Self::Handle) -> ComputeResult<()>;
+
+    /// Execute blend with mode and opacity.
+    fn exec_blend(&self, fg: &Self::Handle, bg: &mut Self::Handle, mode: u32, opacity: f32) -> ComputeResult<()>;
+
+    // =========================================================================
+    // Info
+    // =========================================================================
+
     /// Get GPU limits.
     fn limits(&self) -> &GpuLimits;
 

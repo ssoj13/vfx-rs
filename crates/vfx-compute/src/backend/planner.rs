@@ -79,6 +79,7 @@ impl ExecutionPlan {
 }
 
 /// Execution planner.
+#[derive(Clone)]
 pub struct Planner {
     constraints: Constraints,
 }
@@ -94,6 +95,11 @@ impl Planner {
     
     pub fn with_kernel_radius(limits: &GpuLimits, kernel_radius: u32) -> Self {
         Self::new(Constraints::from_limits(limits, kernel_radius))
+    }
+    
+    /// Get mutable reference to constraints.
+    pub fn constraints_mut(&mut self) -> &mut Constraints {
+        &mut self.constraints
     }
     
     /// Plan execution for image processing.

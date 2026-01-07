@@ -1,7 +1,7 @@
 //! GPU-accelerated color processing.
 
 use crate::image::ComputeImage;
-use crate::backend::{Backend, ProcessingBackend, create_backend};
+use crate::backend::{Backend, AnyExecutor, create_executor, ColorOp};
 use crate::ComputeResult;
 
 /// CDL (Color Decision List) parameters.
@@ -29,68 +29,60 @@ impl Default for Cdl {
 /// Provides color grading operations using GPU acceleration when available,
 /// with automatic fallback to CPU.
 pub struct ColorProcessor {
-    backend: Box<dyn ProcessingBackend>,
+    executor: AnyExecutor,
 }
 
 impl ColorProcessor {
     /// Create with specified backend.
     pub fn new(backend: Backend) -> ComputeResult<Self> {
         Ok(Self {
-            backend: create_backend(backend)?,
+            executor: create_executor(backend)?,
         })
     }
 
     /// Backend name.
     pub fn backend_name(&self) -> &'static str {
-        self.backend.name()
+        self.executor.name()
     }
 
     /// Available memory in bytes.
     pub fn available_memory(&self) -> u64 {
-        self.backend.available_memory()
-    }
-
-    /// Upload image to GPU memory.
-    pub fn upload(&self, img: &ComputeImage) -> ComputeResult<Box<dyn crate::backend::ImageHandle>> {
-        self.backend.upload(&img.data, img.width, img.height, img.channels)
-    }
-
-    /// Download image from GPU memory.
-    pub fn download(&self, handle: &dyn crate::backend::ImageHandle, width: u32, height: u32, channels: u32) -> ComputeResult<ComputeImage> {
-        let data = self.backend.download(handle)?;
-        ComputeImage::from_f32(data, width, height, channels)
+        self.executor.limits().available_memory
     }
 
     /// Apply 4x4 color matrix.
     pub fn apply_matrix(&self, img: &mut ComputeImage, matrix: &[f32; 16]) -> ComputeResult<()> {
-        let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
-        self.backend.apply_matrix(handle.as_mut(), matrix)?;
-        img.data = self.backend.download(handle.as_ref())?;
-        Ok(())
+        let op = ColorOp::Matrix(*matrix);
+        self.executor.execute_color(img, &op)
     }
 
     /// Apply CDL transform.
     pub fn apply_cdl(&self, img: &mut ComputeImage, cdl: &Cdl) -> ComputeResult<()> {
-        let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
-        self.backend.apply_cdl(handle.as_mut(), cdl.slope, cdl.offset, cdl.power, cdl.saturation)?;
-        img.data = self.backend.download(handle.as_ref())?;
-        Ok(())
+        let op = ColorOp::Cdl {
+            slope: cdl.slope,
+            offset: cdl.offset,
+            power: cdl.power,
+            saturation: cdl.saturation,
+        };
+        self.executor.execute_color(img, &op)
     }
 
     /// Apply 1D LUT.
     pub fn apply_lut1d(&self, img: &mut ComputeImage, lut: &[f32], channels: u32) -> ComputeResult<()> {
-        let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
-        self.backend.apply_lut1d(handle.as_mut(), lut, channels)?;
-        img.data = self.backend.download(handle.as_ref())?;
-        Ok(())
+        let op = ColorOp::Lut1d {
+            lut: lut.to_vec(),
+            channels,
+        };
+        self.executor.execute_color(img, &op)
     }
 
     /// Apply 3D LUT.
     pub fn apply_lut3d(&self, img: &mut ComputeImage, lut: &[f32], size: u32) -> ComputeResult<()> {
-        let mut handle = self.backend.upload(&img.data, img.width, img.height, img.channels)?;
-        self.backend.apply_lut3d(handle.as_mut(), lut, size)?;
-        img.data = self.backend.download(handle.as_ref())?;
-        Ok(())
+        let op = ColorOp::Lut3d {
+            lut: lut.to_vec(),
+            size,
+        };
+        self.executor.execute_color(img, &op)
     }
 
     /// Apply exposure adjustment (in stops).
