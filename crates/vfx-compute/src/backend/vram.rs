@@ -192,6 +192,7 @@ fn detect_metal() -> Option<VramInfo> {
 }
 
 #[cfg(not(target_os = "macos"))]
+#[allow(dead_code)]  // Needed for cross-platform compilation
 fn detect_metal() -> Option<VramInfo> {
     None
 }
@@ -218,6 +219,7 @@ fn detect_nvml() -> Option<VramInfo> {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]  // Needed for cross-platform compilation
 fn detect_nvml() -> Option<VramInfo> {
     None
 }
@@ -297,6 +299,7 @@ fn detect_sysfs() -> Option<VramInfo> {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]  // Needed for cross-platform compilation
 fn detect_sysfs() -> Option<VramInfo> {
     None
 }
@@ -342,6 +345,7 @@ fn detect_wgpu() -> Option<VramInfo> {
 }
 
 #[cfg(not(feature = "wgpu"))]
+#[allow(dead_code)]  // Needed when wgpu feature disabled
 fn detect_wgpu() -> Option<VramInfo> {
     None
 }

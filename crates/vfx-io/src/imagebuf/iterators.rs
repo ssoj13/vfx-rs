@@ -106,6 +106,7 @@ impl<'a> Iterator for PixelValueIterator<'a> {
 
 /// Iterator for scanning lines (rows) of an image.
 pub struct ScanlineIterator {
+    #[allow(dead_code)]  // Stored for potential future use
     width: i32,
     xbegin: i32,
     xend: i32,

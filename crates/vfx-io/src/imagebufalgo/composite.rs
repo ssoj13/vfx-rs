@@ -19,7 +19,7 @@
 //! - [`colorburn`] - Color burn blend mode
 
 use crate::imagebuf::{ImageBuf, InitializePixels, WrapMode};
-use vfx_core::{ImageSpec, Roi3D};
+use vfx_core::Roi3D;
 
 // ============================================================================
 // Porter-Duff Compositing Operations

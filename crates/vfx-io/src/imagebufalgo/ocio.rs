@@ -507,7 +507,7 @@ pub fn ocionamedtransform(
     src: &ImageBuf,
     name: &str,
     inverse: bool,
-    unpremult: bool,
+    _unpremult: bool,  // TODO: implement unpremult support
     config: Option<&ColorConfig>,
     roi: Option<Roi3D>,
 ) -> ImageBuf {

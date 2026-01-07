@@ -1,29 +1,72 @@
-//! Unified compute backend for VFX workflows.
+//! Unified GPU/CPU compute backend for VFX image processing.
 //!
-//! Provides CPU (rayon) and GPU (wgpu) backends for color transforms
-//! and image operations with automatic backend selection.
+//! `vfx-compute` provides hardware-accelerated color transforms and image operations
+//! with automatic backend selection between CPU (rayon), wgpu (Vulkan/Metal/DX12),
+//! and CUDA.
 //!
 //! # Architecture
 //!
 //! ```text
-//! Processor (unified API)
-//!     └── Backend (CPU or wgpu)
-//!             └── GpuPrimitives trait
-//!                     ├── CpuPrimitives (rayon)
-//!                     └── WgpuPrimitives (compute shaders)
+//! ┌─────────────────────────────────────────────────────────────────┐
+//! │            User-facing API (ColorProcessor, ImageProcessor)     │
+//! ├─────────────────────────────────────────────────────────────────┤
+//! │                     AnyExecutor (enum dispatch)                 │
+//! │         Cpu(TiledExecutor) | Wgpu(TiledExecutor) | Cuda(...)   │
+//! ├─────────────────────────────────────────────────────────────────┤
+//! │              TiledExecutor<G: GpuPrimitives>                    │
+//! │           Automatic tiling for large images                     │
+//! ├─────────────────────────────────────────────────────────────────┤
+//! │                   GpuPrimitives trait                           │
+//! │   upload/download + exec_* operations with associated types     │
+//! ├──────────────────┬─────────────────────┬────────────────────────┤
+//! │   CpuPrimitives  │   WgpuPrimitives    │    CudaPrimitives      │
+//! │     (rayon)      │  (compute shaders)  │     (cudarc)           │
+//! └──────────────────┴─────────────────────┴────────────────────────┘
 //! ```
 //!
-//! # Example
+//! # Quick Start
 //!
 //! ```ignore
-//! use vfx_compute::{Processor, ComputeImage};
+//! use vfx_compute::{ColorProcessor, ImageProcessor, ComputeImage, Backend};
 //!
-//! let proc = Processor::auto()?;
-//! let mut img = ComputeImage::from_f32(data, 1920, 1080, 3)?;
+//! // Auto-select best backend (CUDA > wgpu > CPU)
+//! let color = ColorProcessor::new(Backend::Auto)?;
+//! let image = ImageProcessor::new(Backend::Auto)?;
 //!
-//! proc.apply_exposure(&mut img, 1.5)?;
-//! proc.apply_saturation(&mut img, 1.2)?;
+//! // Create image from f32 data
+//! let mut img = ComputeImage::from_f32(pixels, 1920, 1080, 3)?;
+//!
+//! // Color operations
+//! color.apply_exposure(&mut img, 1.0)?;  // +1 stop
+//! color.apply_cdl(&mut img, &cdl)?;       // CDL grade
+//!
+//! // Image operations
+//! image.blur(&mut img, 2.0)?;             // Gaussian blur
+//! let half = image.resize_half(&img)?;    // Downsample
 //! ```
+//!
+//! # Backend Selection
+//!
+//! ```ignore
+//! use vfx_compute::{Backend, describe_backends};
+//!
+//! // Show available backends
+//! println!("{}", describe_backends());
+//!
+//! // Force specific backend
+//! let proc = ColorProcessor::new(Backend::Cpu)?;   // CPU only
+//! let proc = ColorProcessor::new(Backend::Wgpu)?;  // GPU via wgpu
+//! let proc = ColorProcessor::new(Backend::Cuda)?;  // NVIDIA CUDA
+//!
+//! // Or use VFX_BACKEND environment variable:
+//! // VFX_BACKEND=cpu ./my_app
+//! ```
+//!
+//! # Feature Flags
+//!
+//! - `wgpu` - Enable GPU acceleration via wgpu (Vulkan/Metal/DX12)
+//! - `cuda` - Enable NVIDIA CUDA backend
+//! - `io` - Integration with vfx-io image loading
 
 pub mod backend;
 pub mod image;

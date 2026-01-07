@@ -7,8 +7,7 @@ use vfx_io::{ImageData, PixelFormat};
 use vfx_io::imagebuf::ImageBuf;
 use vfx_io::imagebufalgo;
 use vfx_io::imagebufalgo::geometry::ResizeFilter as RustResizeFilter;
-use vfx_io::ColorConfig;
-use vfx_core::{Roi3D as RustRoi3D, ImageSpec, DataFormat as RustDataFormat};
+use vfx_core::Roi3D as RustRoi3D;
 
 use crate::core::Roi3D;
 use crate::ops::ResizeFilter;

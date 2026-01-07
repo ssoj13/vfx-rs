@@ -33,7 +33,7 @@
 use crate::{OpsError, OpsResult};
 #[allow(unused_imports)]
 use tracing::{debug, trace};
-use vfx_compute::{Processor, ComputeImage, backend::BlendMode as ComputeBlendMode};
+use vfx_compute::{Processor, ComputeImage, BlendMode as ComputeBlendMode};
 
 /// Blend mode for compositing operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

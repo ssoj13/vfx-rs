@@ -3,7 +3,7 @@
 //! Provides foundational types for VFX image processing compatible with OpenImageIO.
 
 use pyo3::prelude::*;
-use pyo3::exceptions::{PyValueError, PyIndexError};
+use pyo3::exceptions::PyValueError;
 use std::collections::HashMap;
 
 // =============================================================================
@@ -922,6 +922,8 @@ enum PyAttrValue {
     FloatArray(Vec<f64>),
 }
 
+// TODO: Migrate to IntoPyObject when pyo3 0.24 stabilizes
+#[allow(deprecated)]
 impl IntoPy<PyObject> for PyAttrValue {
     fn into_py(self, py: Python<'_>) -> PyObject {
         match self {
@@ -1235,6 +1237,7 @@ impl ImageSpec {
     }
 
     /// Get an attribute value.
+    #[allow(deprecated)]  // TODO: Migrate to IntoPyObject
     fn get_attr(&self, py: Python<'_>, key: &str) -> Option<PyObject> {
         self.attributes.get(key).map(|v| v.clone().into_py(py))
     }

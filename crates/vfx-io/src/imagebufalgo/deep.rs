@@ -69,7 +69,7 @@ pub fn flatten_deep_into(dst: &mut ImageBuf, deep: &DeepData) {
     // Find color and alpha channels in deep data
     let nch = deep.channels();
     let a_ch = deep.a_channel();
-    let z_ch = deep.z_channel();
+    let _z_ch = deep.z_channel();  // Reserved for depth-based operations
 
     // Build channel mapping (R, G, B, A indices in deep data)
     let mut r_ch = -1i32;
@@ -171,7 +171,7 @@ pub fn deepen(src: &ImageBuf, z_value: f32) -> DeepData {
     let src_nch = src.nchannels() as usize;
 
     // Build channel types and names for deep data (add Z channel)
-    let mut channeltypes = vec![TypeDesc::FLOAT; src_nch + 1];
+    let channeltypes = vec![TypeDesc::FLOAT; src_nch + 1];
     let mut channelnames: Vec<String> = src.spec()
         .channel_names
         .iter()

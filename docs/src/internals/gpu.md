@@ -1,237 +1,278 @@
-# GPU Compute
+# GPU Compute Internals
 
-wgpu compute shader architecture for GPU-accelerated processing.
+Low-level GPU architecture and compute shader implementation details.
 
-## Overview
-
-vfx-compute uses wgpu for cross-platform GPU compute:
-
-- **Vulkan** (Linux, Windows)
-- **Metal** (macOS, iOS)
-- **DX12** (Windows)
-- **WebGPU** (Browser, future)
-
-## Architecture
+## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Processor (public API)                   │
-├─────────────────────────────────────────────────────────────┤
-│                        Backend                               │
-│    ┌──────────────────┐     ┌──────────────────────┐        │
-│    │   CpuBackend     │     │     WgpuBackend      │        │
-│    │   (rayon)        │     │  (compute shaders)   │        │
-│    └──────────────────┘     └──────────────────────┘        │
-├─────────────────────────────────────────────────────────────┤
-│                      GpuPrimitives trait                     │
-│    apply_exposure, apply_matrix, apply_lut, ...             │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                  User-facing API (ops.rs)                       │
+│           ColorProcessor / ImageProcessor                       │
+├─────────────────────────────────────────────────────────────────┤
+│                     AnyExecutor (enum)                          │
+│         Cpu(TiledExecutor) | Wgpu(TiledExecutor) | Cuda(...)   │
+├─────────────────────────────────────────────────────────────────┤
+│              TiledExecutor<G: GpuPrimitives>                    │
+│           Automatic tiling for large images                     │
+├─────────────────────────────────────────────────────────────────┤
+│                   GpuPrimitives trait                           │
+│   upload/download + exec_* operations with associated types     │
+├──────────────────┬─────────────────────┬────────────────────────┤
+│   CpuPrimitives  │   WgpuPrimitives    │    CudaPrimitives      │
+│     (rayon)      │  (compute shaders)  │     (cudarc)           │
+└──────────────────┴─────────────────────┴────────────────────────┘
 ```
 
-## Device Initialization
+## GpuPrimitives Trait
+
+Core abstraction with **associated types** for zero-cost abstraction:
 
 ```rust
-pub async fn create_device() -> ComputeResult<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
-        ..Default::default()
-    });
+pub trait GpuPrimitives {
+    /// Handle to image data on this backend
+    type Handle: ImageHandle;
     
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        })
-        .await
-        .ok_or(ComputeError::NoAdapter)?;
+    /// Backend name
+    fn name(&self) -> &'static str;
     
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                ..Default::default()
-            },
-            None,
-        )
-        .await?;
+    /// Memory/compute limits
+    fn limits(&self) -> GpuLimits;
     
-    Ok((device, queue))
+    // === Memory Management ===
+    fn upload(&self, data: &[f32], w: u32, h: u32, c: u32) -> Result<Self::Handle>;
+    fn download(&self, handle: &Self::Handle) -> Result<Vec<f32>>;
+    fn allocate(&self, w: u32, h: u32, c: u32) -> Result<Self::Handle>;
+    
+    // === Color Operations ===
+    fn exec_exposure(&self, h: &mut Self::Handle, stops: f32) -> Result<()>;
+    fn exec_matrix(&self, h: &mut Self::Handle, m: &[f32; 16]) -> Result<()>;
+    fn exec_cdl(&self, h: &mut Self::Handle, cdl: &Cdl) -> Result<()>;
+    fn exec_lut1d(&self, h: &mut Self::Handle, lut: &[f32], c: u32) -> Result<()>;
+    fn exec_lut3d(&self, h: &mut Self::Handle, lut: &[f32], size: u32) -> Result<()>;
+    
+    // === Image Operations ===
+    fn exec_resize(&self, src: &Self::Handle, dst: &mut Self::Handle, filter: u32) -> Result<()>;
+    fn exec_blur(&self, src: &Self::Handle, dst: &mut Self::Handle, radius: f32) -> Result<()>;
+    
+    // === Compositing ===
+    fn exec_composite_over(&self, fg: &Self::Handle, bg: &mut Self::Handle) -> Result<()>;
+    fn exec_blend(&self, fg: &Self::Handle, bg: &mut Self::Handle, mode: u32, opacity: f32) -> Result<()>;
+    
+    // === Transforms ===
+    fn exec_flip_h(&self, h: &mut Self::Handle) -> Result<()>;
+    fn exec_flip_v(&self, h: &mut Self::Handle) -> Result<()>;
+    fn exec_rotate_90(&self, h: &Self::Handle, n: u32) -> Result<Self::Handle>;
 }
 ```
 
-## Buffer Management
+## ImageHandle Trait
 
-### Image Upload
+Metadata for GPU image buffers:
 
 ```rust
-pub fn upload_image(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    data: &[f32],
-) -> wgpu::Buffer {
-    let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Image Buffer"),
+pub trait ImageHandle {
+    fn dimensions(&self) -> (u32, u32, u32);  // width, height, channels
+    fn byte_size(&self) -> usize;
+}
+```
+
+### Backend Implementations
+
+```rust
+// CPU - just Vec<f32> in memory
+pub struct CpuHandle {
+    pub data: Vec<f32>,
+    pub width: u32,
+    pub height: u32,
+    pub channels: u32,
+}
+
+// wgpu - GPU buffer with staging
+pub struct WgpuHandle {
+    pub buffer: wgpu::Buffer,
+    pub staging: wgpu::Buffer,  // for readback
+    pub width: u32,
+    pub height: u32,
+    pub channels: u32,
+}
+
+// CUDA - device memory pointer
+pub struct CudaHandle {
+    pub buffer: CudaSlice<f32>,
+    pub width: u32,
+    pub height: u32,
+    pub channels: u32,
+}
+```
+
+## TiledExecutor
+
+Automatic tiling for large images:
+
+```rust
+pub struct TiledExecutor<G: GpuPrimitives> {
+    gpu: G,
+    tile_size: u32,
+}
+
+impl<G: GpuPrimitives> TiledExecutor<G> {
+    pub fn new(gpu: G) -> Self {
+        // Calculate optimal tile size from GPU memory limits
+        let limits = gpu.limits();
+        let tile_size = calculate_tile_size(limits.available_memory);
+        Self { gpu, tile_size }
+    }
+    
+    /// Access underlying GPU primitives
+    pub fn gpu(&self) -> &G { &self.gpu }
+    
+    /// Execute operation with automatic tiling
+    pub fn execute_tiled<F>(&self, image: &mut ComputeImage, op: F) -> Result<()>
+    where
+        F: Fn(&G, &mut G::Handle) -> Result<()>
+    {
+        if self.needs_tiling(image) {
+            self.process_in_tiles(image, op)
+        } else {
+            self.process_whole(image, op)
+        }
+    }
+}
+```
+
+### Tile Processing Flow
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Original Image (8K x 8K)                  │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────┬─────────┬─────────┬─────────┐
+│ Tile 0  │ Tile 1  │ Tile 2  │ Tile 3  │  ← Split into tiles
+├─────────┼─────────┼─────────┼─────────┤    that fit in VRAM
+│ Tile 4  │ Tile 5  │ Tile 6  │ Tile 7  │
+├─────────┼─────────┼─────────┼─────────┤
+│ Tile 8  │ Tile 9  │ Tile 10 │ Tile 11 │
+├─────────┼─────────┼─────────┼─────────┤
+│ Tile 12 │ Tile 13 │ Tile 14 │ Tile 15 │
+└─────────┴─────────┴─────────┴─────────┘
+                              │
+              For each tile:  │
+              ┌───────────────┴───────────────┐
+              │ 1. Extract from source        │
+              │ 2. Upload to GPU              │
+              │ 3. Execute operation          │
+              │ 4. Download from GPU          │
+              │ 5. Insert back to destination │
+              └───────────────────────────────┘
+```
+
+## wgpu Backend Implementation
+
+### Device Initialization
+
+```rust
+impl WgpuPrimitives {
+    pub fn new() -> ComputeResult<Self> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+        
+        let adapter = pollster::block_on(instance.request_adapter(
+            &wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                force_fallback_adapter: false,
+                compatible_surface: None,
+            },
+        ))?;
+        
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor::default(),
+            None,
+        ))?;
+        
+        // Create all compute pipelines
+        let pipelines = Pipelines::new(&device);
+        
+        Ok(Self { device, queue, pipelines })
+    }
+}
+```
+
+### Buffer Upload/Download
+
+```rust
+fn upload(&self, data: &[f32], w: u32, h: u32, c: u32) -> Result<WgpuHandle> {
+    let size = (w * h * c) as usize * 4;
+    
+    // GPU storage buffer
+    let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Image"),
         contents: bytemuck::cast_slice(data),
         usage: wgpu::BufferUsages::STORAGE 
              | wgpu::BufferUsages::COPY_SRC 
              | wgpu::BufferUsages::COPY_DST,
     });
     
-    buffer
-}
-```
-
-### Image Download
-
-```rust
-pub async fn download_image(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    buffer: &wgpu::Buffer,
-    size: usize,
-) -> Vec<f32> {
-    // Create staging buffer for readback
-    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+    // CPU-readable staging buffer
+    let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Staging"),
-        size: (size * 4) as u64,
+        size: size as u64,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     
+    Ok(WgpuHandle { buffer, staging, width: w, height: h, channels: c })
+}
+
+fn download(&self, handle: &WgpuHandle) -> Result<Vec<f32>> {
+    let size = handle.byte_size();
+    
     // Copy GPU buffer → staging
-    let mut encoder = device.create_command_encoder(&Default::default());
-    encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, (size * 4) as u64);
-    queue.submit([encoder.finish()]);
+    let mut encoder = self.device.create_command_encoder(&Default::default());
+    encoder.copy_buffer_to_buffer(&handle.buffer, 0, &handle.staging, 0, size as u64);
+    self.queue.submit([encoder.finish()]);
     
     // Map and read
-    let slice = staging.slice(..);
+    let slice = handle.staging.slice(..);
     slice.map_async(wgpu::MapMode::Read, |_| {});
-    device.poll(wgpu::Maintain::Wait);
+    self.device.poll(wgpu::Maintain::Wait);
     
     let data = slice.get_mapped_range();
     let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
     
     drop(data);
-    staging.unmap();
+    handle.staging.unmap();
     
-    result
+    Ok(result)
 }
 ```
 
-## Compute Shaders
-
-### Shader Structure
-
-```wgsl
-// exposure.wgsl
-@group(0) @binding(0)
-var<storage, read_write> pixels: array<f32>;
-
-struct Params {
-    factor: f32,
-    width: u32,
-    height: u32,
-    channels: u32,
-}
-
-@group(0) @binding(1)
-var<uniform> params: Params;
-
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let idx = global_id.x;
-    let total = params.width * params.height * params.channels;
-    
-    if (idx >= total) {
-        return;
-    }
-    
-    pixels[idx] = pixels[idx] * params.factor;
-}
-```
-
-### Pipeline Creation
+### Compute Shader Dispatch
 
 ```rust
-fn create_exposure_pipeline(device: &wgpu::Device) -> wgpu::ComputePipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("Exposure Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/exposure.wgsl").into()),
-    });
+fn exec_exposure(&self, handle: &mut WgpuHandle, stops: f32) -> Result<()> {
+    let factor = 2.0f32.powf(stops);
+    let pixel_count = handle.width * handle.height * handle.channels;
     
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Exposure Layout"),
-        entries: &[
-            // Pixel buffer
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            // Params uniform
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ],
-    });
-    
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("Exposure Pipeline Layout"),
-        bind_group_layouts: &[&bind_group_layout],
-        push_constant_ranges: &[],
-    });
-    
-    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("Exposure Pipeline"),
-        layout: Some(&pipeline_layout),
-        module: &shader,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    })
-}
-```
-
-### Dispatch
-
-```rust
-fn dispatch_exposure(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    pipeline: &wgpu::ComputePipeline,
-    image_buffer: &wgpu::Buffer,
-    params: &ExposureParams,
-    pixel_count: u32,
-) {
-    // Create params uniform
-    let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    // Create uniform buffer with parameters
+    let params = ExposureParams { factor, pixel_count, _pad: [0; 2] };
+    let params_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Params"),
-        contents: bytemuck::bytes_of(params),
+        contents: bytemuck::bytes_of(&params),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     
     // Create bind group
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Exposure Bind Group"),
-        layout: &pipeline.get_bind_group_layout(0),
+    let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Exposure"),
+        layout: &self.pipelines.exposure.get_bind_group_layout(0),
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: image_buffer.as_entire_binding(),
+                resource: handle.buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
@@ -240,140 +281,282 @@ fn dispatch_exposure(
         ],
     });
     
-    // Dispatch
-    let mut encoder = device.create_command_encoder(&Default::default());
+    // Dispatch compute shader
+    let mut encoder = self.device.create_command_encoder(&Default::default());
     {
         let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.set_pipeline(pipeline);
+        pass.set_pipeline(&self.pipelines.exposure);
         pass.set_bind_group(0, &bind_group, &[]);
         
         let workgroups = (pixel_count + 255) / 256;
         pass.dispatch_workgroups(workgroups, 1, 1);
     }
     
-    queue.submit([encoder.finish()]);
-}
-```
-
-## 3D LUT Application
-
-### Texture-Based LUT
-
-```rust
-fn upload_lut_3d(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    lut: &Lut3D,
-) -> wgpu::Texture {
-    let size = lut.size as u32;
-    
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("3D LUT"),
-        size: wgpu::Extent3d {
-            width: size,
-            height: size,
-            depth_or_array_layers: size,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D3,
-        format: wgpu::TextureFormat::Rgba32Float,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        bytemuck::cast_slice(&lut.data),
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(size * 16),  // 4 floats * 4 bytes
-            rows_per_image: Some(size),
-        },
-        wgpu::Extent3d {
-            width: size,
-            height: size,
-            depth_or_array_layers: size,
-        },
-    );
-    
-    texture
-}
-```
-
-### LUT Shader
-
-```wgsl
-@group(0) @binding(0) var<storage, read_write> pixels: array<vec4<f32>>;
-@group(0) @binding(1) var lut_texture: texture_3d<f32>;
-@group(0) @binding(2) var lut_sampler: sampler;
-
-@compute @workgroup_size(256)
-fn apply_lut(@builtin(global_invocation_id) id: vec3<u32>) {
-    let idx = id.x;
-    var color = pixels[idx];
-    
-    // Sample 3D texture with trilinear interpolation
-    let coords = clamp(color.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    let result = textureSampleLevel(lut_texture, lut_sampler, coords, 0.0);
-    
-    pixels[idx] = vec4<f32>(result.rgb, color.a);
-}
-```
-
-## Tile Processing
-
-For images larger than GPU memory:
-
-```rust
-pub fn process_tiled<F>(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    image: &mut [f32],
-    width: usize,
-    height: usize,
-    channels: usize,
-    tile_size: usize,
-    process: F,
-) -> ComputeResult<()>
-where
-    F: Fn(&wgpu::Device, &wgpu::Queue, &wgpu::Buffer, u32, u32) -> ComputeResult<()>,
-{
-    for ty in (0..height).step_by(tile_size) {
-        for tx in (0..width).step_by(tile_size) {
-            let tw = tile_size.min(width - tx);
-            let th = tile_size.min(height - ty);
-            
-            // Extract tile
-            let tile_data = extract_tile(image, width, height, channels, tx, ty, tw, th);
-            
-            // Upload to GPU
-            let buffer = upload_image(device, queue, &tile_data);
-            
-            // Process
-            process(device, queue, &buffer, tw as u32, th as u32)?;
-            
-            // Download and insert
-            let result = download_image(device, queue, &buffer, tw * th * channels).await;
-            insert_tile(image, width, height, channels, tx, ty, tw, th, &result);
-        }
-    }
-    
+    self.queue.submit([encoder.finish()]);
     Ok(())
 }
 ```
 
-## Performance Considerations
+## WGSL Shaders
+
+### Exposure Shader
+
+```wgsl
+@group(0) @binding(0) var<storage, read_write> pixels: array<f32>;
+
+struct Params {
+    factor: f32,
+    count: u32,
+    _pad: vec2<u32>,
+}
+
+@group(0) @binding(1) var<uniform> params: Params;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let idx = id.x;
+    if idx >= params.count { return; }
+    pixels[idx] = pixels[idx] * params.factor;
+}
+```
+
+### Color Matrix Shader
+
+```wgsl
+@group(0) @binding(0) var<storage, read_write> pixels: array<f32>;
+
+struct Params {
+    matrix: mat4x4<f32>,
+    width: u32,
+    height: u32,
+    channels: u32,
+    _pad: u32,
+}
+
+@group(0) @binding(1) var<uniform> params: Params;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let pixel_idx = id.x;
+    let total_pixels = params.width * params.height;
+    if pixel_idx >= total_pixels { return; }
+    
+    let base = pixel_idx * params.channels;
+    
+    // Load RGB (or RGBA)
+    var color = vec4<f32>(
+        pixels[base],
+        pixels[base + 1],
+        pixels[base + 2],
+        select(1.0, pixels[base + 3], params.channels > 3)
+    );
+    
+    // Apply 4x4 matrix
+    let result = params.matrix * color;
+    
+    // Store back
+    pixels[base] = result.x;
+    pixels[base + 1] = result.y;
+    pixels[base + 2] = result.z;
+    if params.channels > 3 {
+        pixels[base + 3] = result.w;
+    }
+}
+```
+
+### 3D LUT Shader
+
+```wgsl
+@group(0) @binding(0) var<storage, read_write> pixels: array<f32>;
+@group(0) @binding(1) var lut: texture_3d<f32>;
+@group(0) @binding(2) var lut_sampler: sampler;
+
+struct Params {
+    width: u32,
+    height: u32,
+    channels: u32,
+    lut_size: u32,
+}
+
+@group(0) @binding(3) var<uniform> params: Params;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let pixel_idx = id.x;
+    if pixel_idx >= params.width * params.height { return; }
+    
+    let base = pixel_idx * params.channels;
+    
+    // Get input RGB
+    let r = clamp(pixels[base], 0.0, 1.0);
+    let g = clamp(pixels[base + 1], 0.0, 1.0);
+    let b = clamp(pixels[base + 2], 0.0, 1.0);
+    
+    // Sample 3D LUT with trilinear interpolation
+    let coords = vec3<f32>(r, g, b);
+    let result = textureSampleLevel(lut, lut_sampler, coords, 0.0);
+    
+    // Store result
+    pixels[base] = result.r;
+    pixels[base + 1] = result.g;
+    pixels[base + 2] = result.b;
+}
+```
+
+### Blend Mode Shader
+
+```wgsl
+@group(0) @binding(0) var<storage, read> fg: array<f32>;
+@group(0) @binding(1) var<storage, read_write> bg: array<f32>;
+
+struct Params {
+    count: u32,
+    channels: u32,
+    mode: u32,     // 0=Normal, 1=Multiply, 2=Screen, etc.
+    opacity: f32,
+}
+
+@group(0) @binding(2) var<uniform> params: Params;
+
+fn blend_multiply(a: vec3<f32>, b: vec3<f32>) -> vec3<f32> {
+    return a * b;
+}
+
+fn blend_screen(a: vec3<f32>, b: vec3<f32>) -> vec3<f32> {
+    return 1.0 - (1.0 - a) * (1.0 - b);
+}
+
+fn blend_overlay(a: vec3<f32>, b: vec3<f32>) -> vec3<f32> {
+    return select(
+        1.0 - 2.0 * (1.0 - a) * (1.0 - b),
+        2.0 * a * b,
+        b < vec3<f32>(0.5)
+    );
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let idx = id.x;
+    if idx >= params.count { return; }
+    
+    let base = idx * params.channels;
+    
+    let fg_rgb = vec3<f32>(fg[base], fg[base + 1], fg[base + 2]);
+    let bg_rgb = vec3<f32>(bg[base], bg[base + 1], bg[base + 2]);
+    
+    var result: vec3<f32>;
+    switch params.mode {
+        case 0u: { result = fg_rgb; }                      // Normal
+        case 1u: { result = blend_multiply(fg_rgb, bg_rgb); }
+        case 2u: { result = blend_screen(fg_rgb, bg_rgb); }
+        case 5u: { result = blend_overlay(fg_rgb, bg_rgb); }
+        default: { result = fg_rgb; }
+    }
+    
+    // Apply opacity
+    result = mix(bg_rgb, result, params.opacity);
+    
+    bg[base] = result.x;
+    bg[base + 1] = result.y;
+    bg[base + 2] = result.z;
+}
+```
+
+## CPU Backend Implementation
+
+Uses rayon for parallel processing:
+
+```rust
+impl GpuPrimitives for CpuPrimitives {
+    type Handle = CpuHandle;
+    
+    fn exec_exposure(&self, handle: &mut CpuHandle, stops: f32) -> Result<()> {
+        let factor = 2.0f32.powf(stops);
+        handle.data.par_iter_mut().for_each(|v| *v *= factor);
+        Ok(())
+    }
+    
+    fn exec_matrix(&self, handle: &mut CpuHandle, matrix: &[f32; 16]) -> Result<()> {
+        let c = handle.channels as usize;
+        handle.data.par_chunks_mut(c).for_each(|pixel| {
+            let r = pixel[0];
+            let g = pixel[1];
+            let b = pixel[2];
+            let a = if c > 3 { pixel[3] } else { 1.0 };
+            
+            // mat4 × vec4
+            pixel[0] = matrix[0]*r + matrix[4]*g + matrix[8]*b  + matrix[12]*a;
+            pixel[1] = matrix[1]*r + matrix[5]*g + matrix[9]*b  + matrix[13]*a;
+            pixel[2] = matrix[2]*r + matrix[6]*g + matrix[10]*b + matrix[14]*a;
+            if c > 3 {
+                pixel[3] = matrix[3]*r + matrix[7]*g + matrix[11]*b + matrix[15]*a;
+            }
+        });
+        Ok(())
+    }
+}
+```
+
+## VRAM Detection
+
+Cross-platform GPU memory detection:
+
+| Platform | Method | API |
+|----------|--------|-----|
+| Windows | DXGI | `IDXGIAdapter3::QueryVideoMemoryInfo` |
+| macOS | Metal | `MTLDevice::recommendedMaxWorkingSetSize` |
+| Linux NVIDIA | NVML | `nvmlDeviceGetMemoryInfo` |
+| Linux AMD/Intel | sysfs | `/sys/class/drm/card*/device/mem_info_vram_*` |
+| Fallback | wgpu | `Adapter::limits().max_buffer_size` |
+
+```rust
+pub fn detect_vram() -> VramInfo {
+    #[cfg(windows)]     { detect_dxgi() }
+    #[cfg(target_os = "macos")] { detect_metal() }
+    #[cfg(target_os = "linux")] { detect_nvml().or_else(detect_sysfs) }
+    .unwrap_or_else(|| detect_wgpu().unwrap_or_default())
+}
+```
+
+## Backend Selection
+
+Priority-based auto-selection:
+
+| Backend | Priority | Condition |
+|---------|----------|-----------|
+| CUDA | 150 | NVIDIA GPU + CUDA toolkit |
+| wgpu (discrete) | 100 | Discrete GPU detected |
+| wgpu (integrated) | 50 | Integrated GPU only |
+| CPU | 10 | Always available |
+
+```rust
+pub fn select_best_backend() -> Backend {
+    // Check VFX_BACKEND env override first
+    if let Some(name) = std::env::var("VFX_BACKEND").ok() {
+        match name.to_lowercase().as_str() {
+            "cpu" => return Backend::Cpu,
+            "wgpu" | "gpu" => return Backend::Wgpu,
+            "cuda" => return Backend::Cuda,
+            _ => {}
+        }
+    }
+    
+    // Auto-select by priority
+    detect_backends()
+        .into_iter()
+        .filter(|b| b.available)
+        .max_by_key(|b| b.priority)
+        .map(|b| b.backend)
+        .unwrap_or(Backend::Cpu)
+}
+```
+
+## Performance Tips
 
 ### Workgroup Size
 
 ```wgsl
-// Good: Power of 2, typically 64-256
+// Good: Power of 2, 64-256 typical
 @compute @workgroup_size(256)
 
 // Bad: Non-power-of-2
@@ -383,28 +566,41 @@ where
 ### Memory Coalescing
 
 ```wgsl
-// Good: Sequential access
+// Good: Sequential access (coalesced)
 let idx = global_id.x;
 pixels[idx] = process(pixels[idx]);
 
-// Bad: Strided access
-let idx = global_id.x * stride;  // Cache misses
+// Bad: Strided access (cache misses)
+let idx = global_id.x * stride;
 ```
 
 ### Minimize Transfers
 
 ```rust
-// Bad: Upload, process, download for each operation
+// Bad: Transfer for each operation
 for op in operations {
-    upload();
-    dispatch(op);
-    download();
+    let handle = gpu.upload(&data, w, h, c)?;
+    gpu.exec_op(&mut handle, op)?;
+    data = gpu.download(&handle)?;
 }
 
-// Good: Batch operations on GPU
-upload();
+// Good: Batch on GPU
+let mut handle = gpu.upload(&data, w, h, c)?;
 for op in operations {
-    dispatch(op);
+    gpu.exec_op(&mut handle, op)?;
 }
-download();
+data = gpu.download(&handle)?;
+```
+
+### Use ColorOpBatch
+
+```rust
+// Optimal: Fused operations
+let batch = ColorOpBatch::new()
+    .exposure(1.0)
+    .matrix(&srgb_to_linear)
+    .cdl(&grade)
+    .lut3d(&lut);
+
+processor.apply_batch(&mut img, &batch)?;  // Single upload/download
 ```

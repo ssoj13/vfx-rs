@@ -903,31 +903,18 @@ pub fn sobel(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
     imagebuf_to_image(&result)
 }
 
-/// Fill holes in alpha channel using push-pull algorithm.
-///
-/// Fills transparent (alpha = 0) regions with colors interpolated from
-/// neighboring pixels using a multi-resolution pyramid approach.
-///
-/// The result preserves fully opaque regions while smoothly interpolating
-/// colors into transparent areas.
-///
-/// Args:
-///     image: Source image with alpha channel
-///     roi: Optional region of interest
-///
-/// Returns:
-///     Image with holes filled
-///
-/// Example:
-///     >>> cutout = vfx_rs.read("cutout.exr")  # Has transparent areas
-///     >>> filled = fillholes_pushpull(cutout)
-#[pyfunction]
-#[pyo3(signature = (image, roi=None))]
-pub fn fillholes_pushpull(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
-    let buf = image_to_imagebuf(image);
-    let result = imagebufalgo::fillholes_pushpull(&buf, convert_roi(roi));
-    imagebuf_to_image(&result)
-}
+// TODO: fillholes_pushpull not yet implemented in vfx-io
+// /// Fill holes in alpha channel using push-pull algorithm.
+// ///
+// /// Fills transparent (alpha = 0) regions with colors interpolated from
+// /// neighboring pixels using a multi-resolution pyramid approach.
+// #[pyfunction]
+// #[pyo3(signature = (image, roi=None))]
+// pub fn fillholes_pushpull(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
+//     let buf = image_to_imagebuf(image);
+//     let result = imagebufalgo::fillholes_pushpull(&buf, convert_roi(roi));
+//     imagebuf_to_image(&result)
+// }
 
 /// Create a filter kernel by name.
 ///
@@ -945,19 +932,21 @@ pub fn fillholes_pushpull(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image>
 ///     name: Kernel name (case insensitive)
 ///     width: Kernel width
 ///     height: Kernel height
-///     normalize: Whether to normalize kernel to sum to 1.0 (default True)
+///     param: Kernel parameter (e.g., sigma for Gaussian, default 1.0)
 ///
 /// Returns:
-///     Single-channel kernel image
+///     Kernel data as flat list of floats
 ///
 /// Example:
-///     >>> gaussian = make_kernel("gaussian", 5.0, 5.0)
-///     >>> laplacian = make_kernel("laplacian", 3.0, 3.0, normalize=False)
+///     >>> gaussian = make_kernel("gaussian", 5, 5)
+///     >>> laplacian = make_kernel("laplacian", 3, 3)
 #[pyfunction]
-#[pyo3(signature = (name, width, height, normalize=true))]
-pub fn make_kernel(name: &str, width: f32, height: f32, normalize: bool) -> PyResult<Image> {
-    let result = imagebufalgo::make_kernel(name, width, height, normalize);
-    imagebuf_to_image(&result)
+#[pyo3(signature = (name, width, height, param=1.0))]
+pub fn make_kernel(name: &str, width: u32, height: u32, param: f32) -> PyResult<Vec<f32>> {
+    imagebufalgo::make_kernel_from_name(name, width, height, param)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(
+            format!("Unknown kernel type: '{}'", name)
+        ))
 }
 
 // ============================================================================
@@ -1706,7 +1695,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(morph_close, m)?)?;
     m.add_function(wrap_pyfunction!(laplacian, m)?)?;
     m.add_function(wrap_pyfunction!(sobel, m)?)?;
-    m.add_function(wrap_pyfunction!(fillholes_pushpull, m)?)?;
+    // m.add_function(wrap_pyfunction!(fillholes_pushpull, m)?)?;  // TODO: not yet in vfx-io
     m.add_function(wrap_pyfunction!(make_kernel, m)?)?;
 
     // Color

@@ -52,8 +52,8 @@ fn wrap_from_str(wrap: &str) -> rust_warp::WarpWrap {
 // ============================================================================
 
 /// Wrap mode for warping operations.
-#[pyclass]
-#[derive(Debug, Clone)]
+#[pyclass(eq, eq_int)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WarpWrap {
     /// Return black for out-of-bounds coordinates
     Black,

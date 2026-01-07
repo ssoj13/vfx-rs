@@ -3,7 +3,7 @@
 //! Provides deep compositing operations for images with multiple samples per pixel.
 
 use pyo3::prelude::*;
-use pyo3::exceptions::{PyValueError, PyIOError, PyIndexError};
+use pyo3::exceptions::PyIOError;
 
 use vfx_io::deepdata::DeepData as RustDeepData;
 use vfx_io::imagebuf::ImageBuf;
@@ -11,7 +11,6 @@ use vfx_io::imagebufalgo::deep as rust_deep;
 use vfx_core::TypeDesc as RustTypeDesc;
 
 use crate::Image;
-use crate::core::TypeDesc;
 
 // ============================================================================
 // Helper Functions

@@ -571,18 +571,21 @@ impl ImageBuf {
         self.inner.read().unwrap().spec.width
     }
 
+    /// Returns the image height in pixels.
     #[inline]
     pub fn height(&self) -> u32 {
         self.ensure_spec_read();
         self.inner.read().unwrap().spec.height
     }
 
+    /// Returns the image depth (for 3D/volume images, usually 1).
     #[inline]
     pub fn depth(&self) -> u32 {
         self.ensure_spec_read();
         self.inner.read().unwrap().spec.depth
     }
 
+    /// Returns the number of channels per pixel.
     #[inline]
     pub fn nchannels(&self) -> u8 {
         self.ensure_spec_read();
@@ -873,7 +876,7 @@ impl ImageBuf {
         self.ensure_pixels_read_ref();
 
         let inner = self.inner.read().unwrap();
-        let nchannels = inner.spec.nchannels as usize;
+        let _nchannels = inner.spec.nchannels as usize;
 
         // Clear output
         for p in pixel.iter_mut() {
@@ -1430,7 +1433,7 @@ impl ImageBuf {
             data.format,
         );
 
-        let mut buf = Self::new(spec, InitializePixels::No);
+        let buf = Self::new(spec, InitializePixels::No);
         let f32_data = data.to_f32();
 
         {

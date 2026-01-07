@@ -12,6 +12,7 @@ use vfx_core::{DataFormat, ImageSpec};
 /// - Wrapped buffer (external memory)
 /// - Empty (for lazy loading)
 #[derive(Debug)]
+#[allow(missing_docs)]  // Enum variant fields are self-documenting
 pub enum PixelStorage {
     /// No pixel data.
     Empty,

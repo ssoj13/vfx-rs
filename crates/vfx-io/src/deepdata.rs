@@ -114,14 +114,14 @@ impl DeepData {
 
     /// Creates DeepData from an ImageSpec.
     pub fn from_spec(spec: &ImageSpec) -> Self {
-        let mut dd = Self::new_empty();
+        let dd = Self::new_empty();
         dd.init_from_spec(spec);
         dd
     }
 
     /// Creates DeepData with the specified configuration.
     pub fn new(npix: i64, channeltypes: &[TypeDesc], channelnames: &[&str]) -> Self {
-        let mut dd = Self::new_empty();
+        let dd = Self::new_empty();
         let names: Vec<String> = channelnames.iter().map(|s| s.to_string()).collect();
         dd.init(npix, channeltypes, &names);
         dd

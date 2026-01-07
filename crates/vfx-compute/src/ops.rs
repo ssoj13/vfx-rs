@@ -1,6 +1,31 @@
 //! GPU-accelerated image operations.
 //!
-//! Provides a unified API for image operations using TiledExecutor.
+//! This module provides image processing operations:
+//!
+//! - **Resize** - Scale images with various filter modes (nearest, bilinear, bicubic, Lanczos)
+//! - **Blur** - Gaussian blur with configurable radius
+//! - **Sharpen** - Unsharp mask sharpening
+//! - **Composite** - Porter-Duff alpha compositing
+//! - **Blend** - Photoshop-style blend modes (multiply, screen, overlay, etc.)
+//! - **Transform** - Flip, rotate, crop operations
+//!
+//! # Example
+//!
+//! ```ignore
+//! use vfx_compute::{ImageProcessor, ComputeImage, Backend, BlendMode};
+//!
+//! let proc = ImageProcessor::new(Backend::Auto)?;
+//! let mut img = ComputeImage::from_f32(data, 1920, 1080, 3)?;
+//!
+//! // Apply Gaussian blur
+//! proc.blur(&mut img, 2.0)?;
+//!
+//! // Resize to half
+//! let half = proc.resize_half(&img)?;
+//!
+//! // Blend two images
+//! proc.blend(&overlay, &mut img, BlendMode::Screen, 0.5)?;
+//! ```
 
 use crate::image::ComputeImage;
 use crate::backend::{
@@ -14,33 +39,55 @@ use crate::backend::CudaPrimitives;
 
 use crate::ComputeResult;
 
-/// Resize filter modes.
+/// Interpolation filter for image resizing.
+///
+/// Quality/speed trade-off (from fastest to highest quality):
+/// `Nearest` < `Bilinear` < `Bicubic` < `Lanczos`
 #[derive(Debug, Clone, Copy, Default)]
 pub enum ResizeFilter {
-    /// Nearest-neighbor (fast, blocky).
+    /// Nearest-neighbor: Fastest, produces blocky/pixelated results.
+    /// Best for pixel art or when speed is critical.
     Nearest = 0,
-    /// Bilinear interpolation.
+    
+    /// Bilinear interpolation: Good balance of speed and quality.
+    /// Default choice for most use cases.
     #[default]
     Bilinear = 1,
-    /// Bicubic interpolation.
+    
+    /// Bicubic interpolation: Higher quality, smoother gradients.
+    /// Good for photographic content.
     Bicubic = 2,
-    /// Lanczos3 (slow, sharp).
+    
+    /// Lanczos-3 windowed sinc: Highest quality, sharpest edges.
+    /// Best for final output, but slowest.
     Lanczos = 3,
 }
 
-/// Blend modes for compositing.
+/// Photoshop-style blend modes for image compositing.
+///
+/// These define how foreground and background pixels combine.
+/// All modes support an opacity parameter for partial blending.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(u32)]
 pub enum BlendMode {
+    /// Normal: Foreground replaces background (respects opacity).
     #[default]
     Normal = 0,
+    /// Multiply: `fg × bg` - Darkens, blacks stay black.
     Multiply = 1,
+    /// Screen: `1 - (1-fg)(1-bg)` - Lightens, whites stay white.
     Screen = 2,
+    /// Add: `fg + bg` - Linear dodge, can clip to white.
     Add = 3,
+    /// Subtract: `bg - fg` - Can clip to black.
     Subtract = 4,
+    /// Overlay: Multiply darks, screen lights.
     Overlay = 5,
+    /// Soft Light: Gentle contrast adjustment.
     SoftLight = 6,
+    /// Hard Light: Strong contrast, similar to overlay but harsher.
     HardLight = 7,
+    /// Difference: `|fg - bg|` - Useful for comparing images.
     Difference = 8,
 }
 
@@ -108,33 +155,72 @@ impl AnyExecutor {
     }
 }
 
-/// GPU image processor.
+/// GPU-accelerated image processor.
 ///
-/// Provides image operations using GPU acceleration when available,
-/// with automatic fallback to CPU.
+/// Provides image operations (resize, blur, composite, blend, transform)
+/// using GPU compute shaders when available, with automatic fallback to CPU.
+///
+/// # Backend Selection
+///
+/// - `Backend::Auto` - Automatically selects best available (CUDA > wgpu > CPU)
+/// - `Backend::Cpu` - Force CPU processing with rayon parallelization
+/// - `Backend::Wgpu` - Force wgpu (Vulkan/Metal/DX12)
+/// - `Backend::Cuda` - Force NVIDIA CUDA
+///
+/// # Example
+///
+/// ```ignore
+/// use vfx_compute::{ImageProcessor, ComputeImage, Backend, ResizeFilter};
+///
+/// let proc = ImageProcessor::new(Backend::Auto)?;
+///
+/// // Resize with Lanczos filter
+/// let resized = proc.resize(&img, 1920, 1080, ResizeFilter::Lanczos)?;
+///
+/// // Blur and sharpen
+/// proc.blur(&mut img, 3.0)?;
+/// proc.sharpen(&mut img, 0.5)?;
+/// ```
 pub struct ImageProcessor {
     executor: AnyExecutor,
 }
 
 impl ImageProcessor {
-    /// Create with specified backend.
+    /// Create a new image processor with the specified backend.
+    ///
+    /// # Arguments
+    /// * `backend` - Compute backend to use
+    ///
+    /// # Errors
+    /// Returns error if the requested backend is not available.
     pub fn new(backend: Backend) -> ComputeResult<Self> {
         Ok(Self {
             executor: AnyExecutor::new(backend)?,
         })
     }
 
-    /// Backend name.
+    /// Get the name of the active backend ("cpu", "wgpu", or "cuda").
+    #[inline]
     pub fn backend_name(&self) -> &'static str {
         self.executor.name()
     }
 
-    /// Available memory in bytes.
+    /// Get available GPU/CPU memory in bytes for processing.
+    #[inline]
     pub fn available_memory(&self) -> u64 {
         self.executor.available_memory()
     }
 
-    /// Resize image.
+    /// Resize image to new dimensions.
+    ///
+    /// # Arguments
+    /// * `img` - Source image
+    /// * `width` - Target width in pixels
+    /// * `height` - Target height in pixels
+    /// * `filter` - Interpolation filter (see [`ResizeFilter`])
+    ///
+    /// # Returns
+    /// A new [`ComputeImage`] with the resized result.
     pub fn resize(&self, img: &ComputeImage, width: u32, height: u32, filter: ResizeFilter) -> ComputeResult<ComputeImage> {
         match &self.executor {
             AnyExecutor::Cpu(e) => {
@@ -164,6 +250,10 @@ impl ImageProcessor {
     }
 
     /// Apply Gaussian blur.
+    ///
+    /// # Arguments
+    /// * `img` - Image to blur (modified in place)
+    /// * `radius` - Blur radius in pixels. Larger = more blur.
     pub fn blur(&self, img: &mut ComputeImage, radius: f32) -> ComputeResult<()> {
         match &self.executor {
             AnyExecutor::Cpu(e) => {
@@ -190,7 +280,13 @@ impl ImageProcessor {
         Ok(())
     }
 
-    /// Apply sharpening (unsharp mask).
+    /// Apply sharpening using unsharp mask technique.
+    ///
+    /// Formula: `sharp = original + amount × (original - blur)`
+    ///
+    /// # Arguments
+    /// * `img` - Image to sharpen (modified in place)
+    /// * `amount` - Sharpening strength. 0.0 = no change, 1.0 = strong
     pub fn sharpen(&self, img: &mut ComputeImage, amount: f32) -> ComputeResult<()> {
         // Unsharp mask: sharp = original + amount * (original - blur)
         let original = img.data.clone();
@@ -208,14 +304,22 @@ impl ImageProcessor {
         Ok(())
     }
 
-    /// Resize to half size (useful for mipmap generation).
+    /// Resize to half size using bilinear filtering.
+    ///
+    /// Convenient shorthand for `resize(img, w/2, h/2, Bilinear)`.
+    /// Useful for mipmap generation or quick thumbnails.
     pub fn resize_half(&self, img: &ComputeImage) -> ComputeResult<ComputeImage> {
         self.resize(img, img.width / 2, img.height / 2, ResizeFilter::Bilinear)
     }
 
     // === Composite operations ===
 
-    /// Porter-Duff Over: foreground over background.
+    /// Porter-Duff "Over" compositing: foreground over background.
+    ///
+    /// Standard alpha compositing where foreground is placed over background.
+    /// Both images must be RGBA (4 channels) and same dimensions.
+    ///
+    /// Formula: `result = fg + bg × (1 - fg.alpha)`
     pub fn composite_over(&self, fg: &ComputeImage, bg: &mut ComputeImage) -> ComputeResult<()> {
         match &self.executor {
             AnyExecutor::Cpu(e) => {
@@ -242,7 +346,13 @@ impl ImageProcessor {
         Ok(())
     }
 
-    /// Blend with mode and opacity.
+    /// Blend foreground onto background with specified mode and opacity.
+    ///
+    /// # Arguments
+    /// * `fg` - Foreground image
+    /// * `bg` - Background image (modified in place with result)
+    /// * `mode` - Blend mode (see [`BlendMode`])
+    /// * `opacity` - Blend opacity 0.0-1.0 (0 = no effect, 1 = full effect)
     pub fn blend(&self, fg: &ComputeImage, bg: &mut ComputeImage, mode: BlendMode, opacity: f32) -> ComputeResult<()> {
         match &self.executor {
             AnyExecutor::Cpu(e) => {
@@ -271,9 +381,17 @@ impl ImageProcessor {
 
     // === Transform operations ===
 
-    /// Crop region from image.
-    /// 
-    /// Note: This is implemented on CPU as GpuPrimitives doesn't have exec_crop.
+    /// Crop a rectangular region from the image.
+    ///
+    /// # Arguments
+    /// * `img` - Source image
+    /// * `x`, `y` - Top-left corner of crop region
+    /// * `w`, `h` - Width and height of crop region
+    ///
+    /// # Errors
+    /// Returns error if crop region extends beyond image bounds.
+    ///
+    /// Note: Implemented on CPU (not GPU-accelerated).
     pub fn crop(&self, img: &ComputeImage, x: u32, y: u32, w: u32, h: u32) -> ComputeResult<ComputeImage> {
         let src_w = img.width as usize;
         let src_h = img.height as usize;
@@ -296,7 +414,7 @@ impl ImageProcessor {
         ComputeImage::from_f32(data, w, h, img.channels)
     }
 
-    /// Flip horizontal.
+    /// Flip image horizontally (mirror left-right).
     pub fn flip_h(&self, img: &mut ComputeImage) -> ComputeResult<()> {
         match &self.executor {
             AnyExecutor::Cpu(e) => {
@@ -320,7 +438,7 @@ impl ImageProcessor {
         Ok(())
     }
 
-    /// Flip vertical.
+    /// Flip image vertically (mirror top-bottom).
     pub fn flip_v(&self, img: &mut ComputeImage) -> ComputeResult<()> {
         match &self.executor {
             AnyExecutor::Cpu(e) => {
@@ -344,7 +462,14 @@ impl ImageProcessor {
         Ok(())
     }
 
-    /// Rotate 90 degrees clockwise (n times).
+    /// Rotate image 90 degrees clockwise, repeated n times.
+    ///
+    /// # Arguments
+    /// * `img` - Source image
+    /// * `n` - Number of 90° rotations (1 = 90° CW, 2 = 180°, 3 = 270° CW)
+    ///
+    /// # Returns
+    /// New image with rotated dimensions (width/height swapped for odd n).
     pub fn rotate_90(&self, img: &ComputeImage, n: u32) -> ComputeResult<ComputeImage> {
         match &self.executor {
             AnyExecutor::Cpu(e) => {

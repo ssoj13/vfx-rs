@@ -455,6 +455,7 @@ impl std::fmt::Debug for ColorConfig {
 
 /// Error type for ColorConfig operations.
 #[derive(Debug, Clone)]
+#[allow(missing_docs)]  // Enum variant fields are self-documenting
 pub enum ColorConfigError {
     /// Configuration file not found.
     ConfigNotFound { path: PathBuf },

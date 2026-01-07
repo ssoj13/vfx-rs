@@ -32,14 +32,13 @@
 //! - **Streaming**: Stream from/to disk for huge images
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::marker::PhantomData;
 
 use super::gpu_primitives::{GpuPrimitives, ImageHandle};
 use super::tiling::{GpuLimits, ProcessingStrategy, Tile, generate_tiles};
 use super::streaming::{StreamingSource, StreamingOutput};
 use super::planner::{Planner, ExecutionPlan, Constraints};
-use super::cluster::{TileCluster, cluster_tiles, TileTriple, SourceRegion, analyze_source_region, ClusterConfig};
-use super::cache::{RegionCache, RegionKey};
+use super::cluster::TileCluster;
+use super::cache::RegionCache;
 use super::memory;
 use crate::{ComputeResult, ComputeImage};
 
@@ -184,6 +183,7 @@ impl ExecutorConfig {
 // =============================================================================
 
 /// Wrapper for GPU handle with region info for caching.
+#[allow(dead_code)]  // TODO: Integrate cache lookup in execute methods
 struct CachedHandle<H> {
     handle: H,
     width: u32,

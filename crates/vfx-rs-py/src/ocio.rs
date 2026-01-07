@@ -3,7 +3,7 @@
 //! Provides OpenColorIO-compatible color management operations.
 
 use pyo3::prelude::*;
-use pyo3::exceptions::{PyValueError, PyIOError};
+use pyo3::exceptions::PyIOError;
 
 use std::path::PathBuf;
 

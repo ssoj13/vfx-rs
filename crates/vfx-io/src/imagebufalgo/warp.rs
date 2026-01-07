@@ -112,13 +112,9 @@ pub fn warp_into(
     roi: Option<Roi3D>,
 ) {
     let dst_roi = roi.unwrap_or_else(|| dst.roi());
-    let src_roi = src.roi();
 
     let nch = src.nchannels() as usize;
     let mut pixel = vec![0.0f32; nch];
-
-    let src_width = src_roi.width() as f32;
-    let src_height = src_roi.height() as f32;
 
     for y in dst_roi.ybegin..dst_roi.yend {
         for x in dst_roi.xbegin..dst_roi.xend {

@@ -1,17 +1,33 @@
-//! Compute backends for GPU image processing.
+//! Compute backends for GPU/CPU image processing.
 //!
-//! Provides CPU (rayon), wgpu, and CUDA backends with automatic selection.
+//! This module provides the core backend infrastructure:
+//!
+//! - [`GpuPrimitives`] - Core trait for backend implementations
+//! - [`TiledExecutor`] - Automatic tiling for large images
+//! - [`Backend`] - Backend selection enum
+//! - Detection utilities for VRAM and backend availability
 //!
 //! # Architecture
 //!
 //! ```text
-//! TiledExecutor<G: GpuPrimitives>
-//!     +-- CpuPrimitives  (rayon parallelization)
-//!     +-- WgpuPrimitives (Vulkan/Metal/DX12)
-//!     +-- CudaPrimitives (NVIDIA CUDA)
+//! ┌───────────────────────────────────────────────────┐
+//! │        TiledExecutor<G: GpuPrimitives>           │
+//! │  (automatic tiling, caching, cluster opt)       │
+//! ├────────────────┬────────────────┬────────────────┤
+//! │  CpuPrimitives  │  WgpuPrimitives │ CudaPrimitives │
+//! │    (rayon)      │  (compute shdr) │   (cudarc)     │
+//! └────────────────┴────────────────┴────────────────┘
 //! ```
 //!
-//! All backends use the same `TiledExecutor` for automatic tiling and streaming.
+//! # Backend Selection
+//!
+//! Backends are selected by priority:
+//! 1. **CUDA** (priority 150) - If NVIDIA GPU with CUDA toolkit
+//! 2. **wgpu discrete** (priority 100) - Discrete GPU via Vulkan/Metal/DX12
+//! 3. **wgpu integrated** (priority 50) - Integrated GPU
+//! 4. **CPU** (priority 10) - Always available fallback
+//!
+//! Override with `VFX_BACKEND=cpu|wgpu|cuda` environment variable.
 
 mod gpu_primitives;
 mod tiling;
@@ -84,17 +100,38 @@ pub use cuda_backend::{CudaBackend, CudaPrimitives, CudaImage};
 
 use crate::{ComputeResult, ComputeError};
 
-/// Available compute backends.
+/// Available compute backends for image processing.
+///
+/// Use [`Backend::Auto`] for automatic best-available selection,
+/// or specify a particular backend explicitly.
+///
+/// # Environment Override
+///
+/// Set `VFX_BACKEND` environment variable to override:
+/// - `VFX_BACKEND=cpu` - Force CPU
+/// - `VFX_BACKEND=wgpu` - Force wgpu
+/// - `VFX_BACKEND=cuda` - Force CUDA
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Backend {
-    /// Auto-select best available (CUDA > wgpu > CPU).
+    /// Auto-select best available backend by priority.
+    ///
+    /// Selection order: CUDA > wgpu (discrete) > wgpu (integrated) > CPU
     #[default]
     Auto,
-    /// CPU backend using rayon for parallelization.
+    
+    /// CPU backend using rayon for parallel processing.
+    ///
+    /// Always available. Uses all CPU cores via work-stealing.
     Cpu,
-    /// wgpu backend (Vulkan/Metal/DX12).
+    
+    /// GPU via wgpu (Vulkan, Metal, or DX12).
+    ///
+    /// Requires compatible GPU. Falls back to CPU if unavailable.
     Wgpu,
+    
     /// NVIDIA CUDA backend.
+    ///
+    /// Requires NVIDIA GPU and CUDA toolkit. Highest performance for NVIDIA hardware.
     Cuda,
 }
 
@@ -140,108 +177,6 @@ pub enum BlendMode {
     SoftLight = 6,
     HardLight = 7,
     Difference = 8,
-}
-
-/// Trait for color/image processing backends.
-///
-/// NOTE: This trait is being phased out in favor of `TiledExecutor<G: GpuPrimitives>`.
-/// New code should use the executor pattern for automatic tiling support.
-pub trait ProcessingBackend: Send + Sync {
-    /// Backend name.
-    fn name(&self) -> &'static str;
-
-    /// Available memory in bytes.
-    fn available_memory(&self) -> u64;
-
-    /// GPU limits for tiling decisions.
-    fn limits(&self) -> &GpuLimits;
-
-    /// Upload image to GPU memory.
-    fn upload(&self, data: &[f32], width: u32, height: u32, channels: u32) -> ComputeResult<Box<dyn ImageHandle>>;
-
-    /// Download image from GPU.
-    fn download(&self, handle: &dyn ImageHandle) -> ComputeResult<Vec<f32>>;
-
-    // === Color operations ===
-
-    /// Apply 4x4 color matrix transform.
-    fn apply_matrix(&self, handle: &mut dyn ImageHandle, matrix: &[f32; 16]) -> ComputeResult<()>;
-
-    /// Apply CDL (slope, offset, power, saturation).
-    fn apply_cdl(&self, handle: &mut dyn ImageHandle, slope: [f32; 3], offset: [f32; 3], power: [f32; 3], sat: f32) -> ComputeResult<()>;
-
-    /// Apply 1D LUT.
-    fn apply_lut1d(&self, handle: &mut dyn ImageHandle, lut: &[f32], channels: u32) -> ComputeResult<()>;
-
-    /// Apply 3D LUT.
-    fn apply_lut3d(&self, handle: &mut dyn ImageHandle, lut: &[f32], size: u32) -> ComputeResult<()>;
-
-    // === Image operations ===
-
-    /// Resize image.
-    fn resize(&self, handle: &dyn ImageHandle, width: u32, height: u32, filter: u32) -> ComputeResult<Box<dyn ImageHandle>>;
-
-    /// Apply Gaussian blur.
-    fn blur(&self, handle: &mut dyn ImageHandle, radius: f32) -> ComputeResult<()>;
-
-    // === Composite operations ===
-
-    /// Porter-Duff Over: fg over bg.
-    fn composite_over(&self, fg: &dyn ImageHandle, bg: &mut dyn ImageHandle) -> ComputeResult<()>;
-
-    /// Blend with mode.
-    fn blend(&self, fg: &dyn ImageHandle, bg: &mut dyn ImageHandle, mode: BlendMode, opacity: f32) -> ComputeResult<()>;
-
-    // === Transform operations ===
-
-    /// Crop region.
-    fn crop(&self, handle: &dyn ImageHandle, x: u32, y: u32, w: u32, h: u32) -> ComputeResult<Box<dyn ImageHandle>>;
-
-    /// Flip horizontal.
-    fn flip_h(&self, handle: &mut dyn ImageHandle) -> ComputeResult<()>;
-
-    /// Flip vertical.
-    fn flip_v(&self, handle: &mut dyn ImageHandle) -> ComputeResult<()>;
-
-    /// Rotate 90 degrees clockwise (n times).
-    fn rotate_90(&self, handle: &dyn ImageHandle, n: u32) -> ComputeResult<Box<dyn ImageHandle>>;
-}
-
-/// Create a ProcessingBackend instance (legacy API).
-///
-/// For new code, prefer using `create_executor()` which provides automatic tiling.
-pub fn create_backend(backend: Backend) -> ComputeResult<Box<dyn ProcessingBackend>> {
-    match backend {
-        Backend::Auto => {
-            let best = select_best_backend();
-            create_backend(best)
-        }
-        Backend::Cpu => Ok(Box::new(CpuBackend::new())),
-        Backend::Wgpu => {
-            #[cfg(feature = "wgpu")]
-            {
-                Ok(Box::new(WgpuBackend::new()?))
-            }
-            #[cfg(not(feature = "wgpu"))]
-            {
-                Err(ComputeError::BackendNotAvailable(
-                    "wgpu feature not enabled".to_string()
-                ))
-            }
-        }
-        Backend::Cuda => {
-            #[cfg(feature = "cuda")]
-            {
-                Ok(Box::new(CudaBackend::new()?))
-            }
-            #[cfg(not(feature = "cuda"))]
-            {
-                Err(ComputeError::BackendNotAvailable(
-                    "cuda feature not enabled".to_string()
-                ))
-            }
-        }
-    }
 }
 
 /// Executor type enum for dynamic dispatch.

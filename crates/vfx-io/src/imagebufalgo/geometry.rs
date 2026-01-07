@@ -7,7 +7,7 @@
 //! - [`resize`] - Scale images
 
 use crate::imagebuf::{ImageBuf, InitializePixels, WrapMode};
-use vfx_core::{ImageSpec, Roi3D};
+use vfx_core::Roi3D;
 
 /// Crops an image to the specified ROI, keeping data outside ROI as black.
 ///
@@ -198,7 +198,6 @@ pub fn rotate90_into(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi3D>) {
     let roi = roi.unwrap_or_else(|| src.roi());
     let nch = src.nchannels() as usize;
     let mut pixel = vec![0.0f32; nch];
-    let w = roi.width();
 
     for z in roi.zbegin..roi.zend {
         for y in roi.ybegin..roi.yend {

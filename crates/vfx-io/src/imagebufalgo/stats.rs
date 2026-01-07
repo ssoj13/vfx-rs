@@ -525,7 +525,6 @@ pub fn maxchan(src: &ImageBuf, roi: Option<Roi3D>) -> ImageBuf {
     use vfx_core::ImageSpec;
 
     let roi = roi.unwrap_or_else(|| src.roi());
-    let nch = src.nchannels() as usize;
 
     let spec = ImageSpec::new(
         roi.width() as u32,
