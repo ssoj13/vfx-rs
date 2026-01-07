@@ -22,9 +22,9 @@
 
 ## Требуют внешних зависимостей
 
-- [ ] **render_text** - Рендеринг текста (требует FreeType/fontconfig)
-- [ ] **demosaic** - Bayer demosaicing (специализированный алгоритм)
-- [ ] **make_texture** - Создание mipmapped текстур (специфично для рендеринга)
+- [x] **render_text** - Рендеринг текста (cosmic-text, feature "text")
+- [x] **demosaic** - Bayer demosaicing (RGGB/BGGR/GRBG/GBRG, bilinear/VNG)
+- [x] **make_texture** - Создание mipmapped текстур (Box/Bilinear/Lanczos/Kaiser)
 
 ---
 
@@ -39,7 +39,10 @@
 | reorient | ✅ | ✅ | ⬜ |
 | resample | ✅ | ✅ | ⬜ |
 | zover | ✅ | ✅ | ⬜ |
-| fillholes_pushpull | ✅ | ✅ | ⬜ |
+| fillholes_pushpull | ✅ | ✅ | ✅ |
 | make_kernel | ✅ | ✅ | ⬜ |
 | ocionamedtransform | ✅ | ✅ | ⬜ |
 | color_count | ✅ | ✅ | ⬜ |
+| render_text | ✅ | ✅ | ✅ |
+| demosaic | ✅ | ✅ | ✅ |
+| make_texture | ✅ | ✅ | ✅ |

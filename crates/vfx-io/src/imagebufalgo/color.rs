@@ -937,6 +937,7 @@ fn copy_pixels(dst: &mut ImageBuf, src: &ImageBuf, roi: &Roi3D) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vfx_core::ImageSpec;
 
     #[test]
     fn test_premult_unpremult() {

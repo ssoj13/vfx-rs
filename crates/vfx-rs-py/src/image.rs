@@ -7,10 +7,13 @@ use vfx_io::{ImageData, PixelFormat};
 use vfx_io::imagebuf::ImageBuf;
 use vfx_io::imagebufalgo;
 use vfx_io::imagebufalgo::geometry::ResizeFilter as RustResizeFilter;
+use vfx_io::imagebufalgo::demosaic::{BayerPattern as RustBayerPattern, DemosaicAlgorithm as RustDemosaicAlgorithm};
+use vfx_io::imagebufalgo::texture::MipmapOptions as RustMipmapOptions;
+use vfx_io::imagebufalgo::fillholes::FillHolesOptions as RustFillHolesOptions;
 use vfx_core::Roi3D as RustRoi3D;
 
 use crate::core::Roi3D;
-use crate::ops::ResizeFilter;
+use crate::ops::{ResizeFilter, BayerPattern, DemosaicAlgorithm, MipmapOptions, FillHolesOptions};
 
 /// An image buffer with width, height, and channels.
 ///
@@ -504,6 +507,103 @@ impl Image {
         let buf_b = other.to_imagebuf();
         let result = imagebufalgo::channel_append(&buf_a, &buf_b, Self::convert_roi(roi));
         Self::from_imagebuf(&result)
+    }
+
+    // ========================================================================
+    // Demosaic Operations
+    // ========================================================================
+
+    /// Demosaic (debayer) a raw Bayer pattern image to RGB.
+    ///
+    /// Args:
+    ///     pattern: Bayer pattern (RGGB, BGGR, GRBG, GBRG)
+    ///     algorithm: Demosaic algorithm (Bilinear, VNG)
+    ///
+    /// Returns:
+    ///     RGB image
+    #[pyo3(signature = (pattern=None, algorithm=None))]
+    fn demosaic(&self, pattern: Option<BayerPattern>, algorithm: Option<DemosaicAlgorithm>) -> PyResult<Self> {
+        let buf = self.to_imagebuf();
+        let p: RustBayerPattern = pattern.map(|p| p.into()).unwrap_or(RustBayerPattern::RGGB);
+        let a: RustDemosaicAlgorithm = algorithm.map(|a| a.into()).unwrap_or(RustDemosaicAlgorithm::Bilinear);
+        let result = imagebufalgo::demosaic(&buf, p, a);
+        Self::from_imagebuf(&result)
+    }
+
+    // ========================================================================
+    // Mipmap/Texture Operations
+    // ========================================================================
+
+    /// Generate all mipmap levels.
+    ///
+    /// Args:
+    ///     options: Mipmap generation options
+    ///
+    /// Returns:
+    ///     List of images, one per mip level (including original)
+    #[pyo3(signature = (options=None))]
+    fn make_texture(&self, options: Option<&MipmapOptions>) -> PyResult<Vec<Self>> {
+        let buf = self.to_imagebuf();
+        let opts: RustMipmapOptions = options.map(|o| o.into()).unwrap_or_default();
+        let mips = imagebufalgo::make_texture(&buf, &opts);
+        mips.iter().map(Self::from_imagebuf).collect()
+    }
+
+    /// Generate a specific mip level.
+    ///
+    /// Args:
+    ///     level: Mip level (0 = original, 1 = half, etc.)
+    ///     options: Mipmap generation options
+    ///
+    /// Returns:
+    ///     Image at specified mip level
+    #[pyo3(signature = (level, options=None))]
+    fn make_mip_level(&self, level: u32, options: Option<&MipmapOptions>) -> PyResult<Self> {
+        let buf = self.to_imagebuf();
+        let opts: RustMipmapOptions = options.map(|o| o.into()).unwrap_or_default();
+        let result = imagebufalgo::make_mip_level(&buf, level, &opts);
+        Self::from_imagebuf(&result)
+    }
+
+    // ========================================================================
+    // Hole Filling Operations
+    // ========================================================================
+
+    /// Fill holes (zero-alpha pixels) using push-pull algorithm.
+    ///
+    /// Args:
+    ///     options: Hole filling options
+    ///
+    /// Returns:
+    ///     Image with holes filled
+    #[pyo3(signature = (options=None))]
+    fn fillholes(&self, options: Option<&FillHolesOptions>) -> PyResult<Self> {
+        let buf = self.to_imagebuf();
+        let opts: RustFillHolesOptions = options.map(|o| o.into()).unwrap_or_default();
+        let result = imagebufalgo::fillholes_pushpull(&buf, &opts);
+        Self::from_imagebuf(&result)
+    }
+
+    /// Check if image has any holes (zero-alpha pixels).
+    ///
+    /// Returns:
+    ///     True if image has holes
+    #[pyo3(signature = (options=None))]
+    fn has_holes(&self, options: Option<&FillHolesOptions>) -> bool {
+        let buf = self.to_imagebuf();
+        let opts: RustFillHolesOptions = options.map(|o| o.into()).unwrap_or_default();
+        imagebufalgo::has_holes(&buf, &opts)
+    }
+
+    /// Count holes (zero-alpha pixels) in image.
+    ///
+    /// Returns:
+    ///     Number of hole pixels
+    #[pyo3(signature = (options=None))]
+    fn count_holes(&self, options: Option<&FillHolesOptions>) -> usize {
+        let buf = self.to_imagebuf();
+        let opts: RustFillHolesOptions = options.map(|o| o.into()).unwrap_or_default();
+        imagebufalgo::count_holes(&buf, &opts)
     }
 
 }

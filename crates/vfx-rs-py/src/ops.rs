@@ -9,6 +9,9 @@ use pyo3::exceptions::{PyValueError, PyIOError};
 use vfx_io::imagebuf::{ImageBuf, InitializePixels, WrapMode as RustWrapMode};
 use vfx_io::imagebufalgo;
 use vfx_io::imagebufalgo::geometry::ResizeFilter as RustResizeFilter;
+use vfx_io::imagebufalgo::demosaic::{BayerPattern as RustBayerPattern, DemosaicAlgorithm as RustDemosaicAlgorithm};
+use vfx_io::imagebufalgo::texture::{MipmapFilter as RustMipmapFilter, MipmapOptions as RustMipmapOptions};
+use vfx_io::imagebufalgo::fillholes::FillHolesOptions as RustFillHolesOptions;
 use vfx_core::{ImageSpec, Roi3D as RustRoi3D, DataFormat as RustDataFormat};
 
 use crate::Image;
@@ -96,6 +99,173 @@ pub enum FilterType {
     Mitchell = 3,
     /// Lanczos 3-lobe filter
     Lanczos3 = 4,
+}
+
+// ============================================================================
+// Bayer Pattern enum
+// ============================================================================
+
+/// Bayer pattern arrangement for demosaicing.
+#[pyclass(eq, eq_int)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BayerPattern {
+    /// Red-Green / Green-Blue (most common)
+    RGGB = 0,
+    /// Blue-Green / Green-Red
+    BGGR = 1,
+    /// Green-Red / Blue-Green
+    GRBG = 2,
+    /// Green-Blue / Red-Green
+    GBRG = 3,
+}
+
+impl From<BayerPattern> for RustBayerPattern {
+    fn from(p: BayerPattern) -> Self {
+        match p {
+            BayerPattern::RGGB => RustBayerPattern::RGGB,
+            BayerPattern::BGGR => RustBayerPattern::BGGR,
+            BayerPattern::GRBG => RustBayerPattern::GRBG,
+            BayerPattern::GBRG => RustBayerPattern::GBRG,
+        }
+    }
+}
+
+/// Demosaicing algorithm.
+#[pyclass(eq, eq_int)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DemosaicAlgorithm {
+    /// Simple bilinear interpolation. Fast but lower quality.
+    Bilinear = 0,
+    /// Variable Number of Gradients. Good balance of speed and quality.
+    VNG = 1,
+    /// Adaptive Homogeneity-Directed. Highest quality, slower.
+    AHD = 2,
+}
+
+impl From<DemosaicAlgorithm> for RustDemosaicAlgorithm {
+    fn from(a: DemosaicAlgorithm) -> Self {
+        match a {
+            DemosaicAlgorithm::Bilinear => RustDemosaicAlgorithm::Bilinear,
+            DemosaicAlgorithm::VNG => RustDemosaicAlgorithm::VNG,
+            DemosaicAlgorithm::AHD => RustDemosaicAlgorithm::AHD,
+        }
+    }
+}
+
+// ============================================================================
+// Mipmap types
+// ============================================================================
+
+/// Mipmap filter for texture generation.
+#[pyclass(eq, eq_int)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MipmapFilter {
+    /// Box filter (simple averaging) - fastest.
+    Box = 0,
+    /// Bilinear filter - good balance.
+    Bilinear = 1,
+    /// Lanczos filter - highest quality.
+    Lanczos = 2,
+    /// Kaiser filter - sharp results.
+    Kaiser = 3,
+}
+
+impl From<MipmapFilter> for RustMipmapFilter {
+    fn from(f: MipmapFilter) -> Self {
+        match f {
+            MipmapFilter::Box => RustMipmapFilter::Box,
+            MipmapFilter::Bilinear => RustMipmapFilter::Bilinear,
+            MipmapFilter::Lanczos => RustMipmapFilter::Lanczos,
+            MipmapFilter::Kaiser => RustMipmapFilter::Kaiser,
+        }
+    }
+}
+
+/// Options for mipmap generation.
+#[pyclass]
+#[derive(Debug, Clone)]
+pub struct MipmapOptions {
+    #[pyo3(get, set)]
+    pub filter: MipmapFilter,
+    #[pyo3(get, set)]
+    pub srgb: bool,
+    #[pyo3(get, set)]
+    pub premultiply_alpha: bool,
+    #[pyo3(get, set)]
+    pub wrap: WrapMode,
+}
+
+#[pymethods]
+impl MipmapOptions {
+    #[new]
+    #[pyo3(signature = (filter=None, srgb=false, premultiply_alpha=true, wrap=None))]
+    fn new(
+        filter: Option<MipmapFilter>,
+        srgb: bool,
+        premultiply_alpha: bool,
+        wrap: Option<WrapMode>,
+    ) -> Self {
+        Self {
+            filter: filter.unwrap_or(MipmapFilter::Bilinear),
+            srgb,
+            premultiply_alpha,
+            wrap: wrap.unwrap_or(WrapMode::Clamp),
+        }
+    }
+}
+
+impl From<&MipmapOptions> for RustMipmapOptions {
+    fn from(o: &MipmapOptions) -> Self {
+        RustMipmapOptions {
+            filter: o.filter.into(),
+            srgb: o.srgb,
+            premultiply_alpha: o.premultiply_alpha,
+            wrap: o.wrap.into(),
+        }
+    }
+}
+
+// ============================================================================
+// Hole filling types
+// ============================================================================
+
+/// Options for push-pull hole filling.
+#[pyclass]
+#[derive(Debug, Clone)]
+pub struct FillHolesOptions {
+    #[pyo3(get, set)]
+    pub alpha_channel: i32,
+    #[pyo3(get, set)]
+    pub alpha_threshold: f32,
+    #[pyo3(get, set)]
+    pub dilate: bool,
+    #[pyo3(get, set)]
+    pub max_levels: u32,
+}
+
+#[pymethods]
+impl FillHolesOptions {
+    #[new]
+    #[pyo3(signature = (alpha_channel=-1, alpha_threshold=0.001, dilate=true, max_levels=0))]
+    fn new(alpha_channel: i32, alpha_threshold: f32, dilate: bool, max_levels: u32) -> Self {
+        Self {
+            alpha_channel,
+            alpha_threshold,
+            dilate,
+            max_levels,
+        }
+    }
+}
+
+impl From<&FillHolesOptions> for RustFillHolesOptions {
+    fn from(o: &FillHolesOptions) -> Self {
+        RustFillHolesOptions {
+            alpha_channel: o.alpha_channel,
+            alpha_threshold: o.alpha_threshold,
+            dilate: o.dilate,
+            max_levels: o.max_levels,
+        }
+    }
 }
 
 // ============================================================================
@@ -903,18 +1073,167 @@ pub fn sobel(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
     imagebuf_to_image(&result)
 }
 
-// TODO: fillholes_pushpull not yet implemented in vfx-io
-// /// Fill holes in alpha channel using push-pull algorithm.
-// ///
-// /// Fills transparent (alpha = 0) regions with colors interpolated from
-// /// neighboring pixels using a multi-resolution pyramid approach.
-// #[pyfunction]
-// #[pyo3(signature = (image, roi=None))]
-// pub fn fillholes_pushpull(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
-//     let buf = image_to_imagebuf(image);
-//     let result = imagebufalgo::fillholes_pushpull(&buf, convert_roi(roi));
-//     imagebuf_to_image(&result)
-// }
+// ============================================================================
+// Demosaic Operations
+// ============================================================================
+
+/// Demosaic a Bayer pattern image to RGB.
+///
+/// Converts raw single-channel Bayer sensor data to a full RGB image.
+///
+/// Args:
+///     image: Single-channel Bayer pattern image
+///     pattern: Bayer pattern arrangement (RGGB, BGGR, GRBG, GBRG)
+///     algorithm: Demosaicing algorithm (Bilinear, VNG, AHD)
+///
+/// Returns:
+///     3-channel RGB image
+///
+/// Example:
+///     >>> raw = vfx_rs.read("raw_bayer.exr")
+///     >>> rgb = demosaic(raw, BayerPattern.RGGB, DemosaicAlgorithm.VNG)
+#[pyfunction]
+#[pyo3(signature = (image, pattern=None, algorithm=None))]
+pub fn demosaic(
+    image: &Image,
+    pattern: Option<BayerPattern>,
+    algorithm: Option<DemosaicAlgorithm>,
+) -> PyResult<Image> {
+    let buf = image_to_imagebuf(image);
+    let p = pattern.unwrap_or(BayerPattern::RGGB).into();
+    let a = algorithm.unwrap_or(DemosaicAlgorithm::VNG).into();
+    let result = imagebufalgo::demosaic(&buf, p, a);
+    imagebuf_to_image(&result)
+}
+
+// ============================================================================
+// Texture / Mipmap Operations
+// ============================================================================
+
+/// Generate a complete mipmap chain from the source image.
+///
+/// Returns a list of images, starting with level 0 (copy of source)
+/// down to the smallest level (typically 1x1).
+///
+/// Args:
+///     image: Source image
+///     options: Mipmap generation options (optional)
+///
+/// Returns:
+///     List of mipmap levels
+///
+/// Example:
+///     >>> mipmaps = make_texture(img, MipmapOptions(filter=MipmapFilter.Lanczos))
+///     >>> print(f"Generated {len(mipmaps)} mip levels")
+#[pyfunction]
+#[pyo3(signature = (image, options=None))]
+pub fn make_texture(image: &Image, options: Option<&MipmapOptions>) -> PyResult<Vec<Image>> {
+    let buf = image_to_imagebuf(image);
+    let opts = options.map(|o| o.into()).unwrap_or_default();
+    let mipmaps = imagebufalgo::make_texture(&buf, &opts);
+    mipmaps.iter().map(imagebuf_to_image).collect()
+}
+
+/// Generate a single mip level by downsampling the source.
+///
+/// Args:
+///     image: Source image
+///     level: Mip level to generate (0 = source, 1 = half, etc.)
+///     options: Mipmap generation options (optional)
+///
+/// Returns:
+///     Downsampled image at the specified level
+#[pyfunction]
+#[pyo3(signature = (image, level, options=None))]
+pub fn make_mip_level(image: &Image, level: u32, options: Option<&MipmapOptions>) -> PyResult<Image> {
+    let buf = image_to_imagebuf(image);
+    let opts = options.map(|o| o.into()).unwrap_or_default();
+    let result = imagebufalgo::make_mip_level(&buf, level, &opts);
+    imagebuf_to_image(&result)
+}
+
+/// Calculate the number of mip levels for given dimensions.
+///
+/// Args:
+///     width: Image width
+///     height: Image height
+///
+/// Returns:
+///     Number of mip levels (including level 0)
+#[pyfunction]
+pub fn mip_level_count(width: u32, height: u32) -> u32 {
+    imagebufalgo::mip_level_count(width, height)
+}
+
+/// Calculate dimensions at a specific mip level.
+///
+/// Args:
+///     width: Original image width
+///     height: Original image height
+///     level: Mip level
+///
+/// Returns:
+///     Tuple of (width, height) at that level
+#[pyfunction]
+pub fn mip_dimensions(width: u32, height: u32, level: u32) -> (u32, u32) {
+    imagebufalgo::mip_dimensions(width, height, level)
+}
+
+// ============================================================================
+// Hole Filling Operations
+// ============================================================================
+
+/// Fill holes in alpha channel using push-pull algorithm.
+///
+/// Fills transparent (alpha = 0) regions with colors interpolated from
+/// neighboring pixels using a multi-resolution pyramid approach.
+///
+/// Args:
+///     image: Input RGBA image with holes (alpha = 0)
+///     options: Hole filling options (optional)
+///
+/// Returns:
+///     Image with holes filled
+#[pyfunction]
+#[pyo3(signature = (image, options=None))]
+pub fn fillholes_pushpull(image: &Image, options: Option<&FillHolesOptions>) -> PyResult<Image> {
+    let buf = image_to_imagebuf(image);
+    let opts = options.map(|o| o.into()).unwrap_or_default();
+    let result = imagebufalgo::fillholes_pushpull(&buf, &opts);
+    imagebuf_to_image(&result)
+}
+
+/// Check if an image has any holes (transparent pixels).
+///
+/// Args:
+///     image: Input image with alpha channel
+///     options: Hole detection options (optional)
+///
+/// Returns:
+///     True if any holes are found
+#[pyfunction]
+#[pyo3(signature = (image, options=None))]
+pub fn has_holes(image: &Image, options: Option<&FillHolesOptions>) -> bool {
+    let buf = image_to_imagebuf(image);
+    let opts = options.map(|o| o.into()).unwrap_or_default();
+    imagebufalgo::has_holes(&buf, &opts)
+}
+
+/// Count hole pixels in an image.
+///
+/// Args:
+///     image: Input image with alpha channel
+///     options: Hole detection options (optional)
+///
+/// Returns:
+///     Number of hole pixels
+#[pyfunction]
+#[pyo3(signature = (image, options=None))]
+pub fn count_holes(image: &Image, options: Option<&FillHolesOptions>) -> usize {
+    let buf = image_to_imagebuf(image);
+    let opts = options.map(|o| o.into()).unwrap_or_default();
+    imagebufalgo::count_holes(&buf, &opts)
+}
 
 /// Create a filter kernel by name.
 ///
@@ -1649,6 +1968,11 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FilterType>()?;
     m.add_class::<ResizeFilter>()?;
     m.add_class::<ColorMapName>()?;
+    m.add_class::<BayerPattern>()?;
+    m.add_class::<DemosaicAlgorithm>()?;
+    m.add_class::<MipmapFilter>()?;
+    m.add_class::<MipmapOptions>()?;
+    m.add_class::<FillHolesOptions>()?;
 
     // Geometry
     m.add_function(wrap_pyfunction!(flip, m)?)?;
@@ -1695,8 +2019,21 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(morph_close, m)?)?;
     m.add_function(wrap_pyfunction!(laplacian, m)?)?;
     m.add_function(wrap_pyfunction!(sobel, m)?)?;
-    // m.add_function(wrap_pyfunction!(fillholes_pushpull, m)?)?;  // TODO: not yet in vfx-io
     m.add_function(wrap_pyfunction!(make_kernel, m)?)?;
+
+    // Demosaic
+    m.add_function(wrap_pyfunction!(demosaic, m)?)?;
+
+    // Texture / Mipmaps
+    m.add_function(wrap_pyfunction!(make_texture, m)?)?;
+    m.add_function(wrap_pyfunction!(make_mip_level, m)?)?;
+    m.add_function(wrap_pyfunction!(mip_level_count, m)?)?;
+    m.add_function(wrap_pyfunction!(mip_dimensions, m)?)?;
+
+    // Hole filling
+    m.add_function(wrap_pyfunction!(fillholes_pushpull, m)?)?;
+    m.add_function(wrap_pyfunction!(has_holes, m)?)?;
+    m.add_function(wrap_pyfunction!(count_holes, m)?)?;
 
     // Color
     m.add_function(wrap_pyfunction!(premult, m)?)?;

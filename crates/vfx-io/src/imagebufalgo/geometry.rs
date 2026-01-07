@@ -787,6 +787,7 @@ pub fn reorient_auto(src: &ImageBuf) -> ImageBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vfx_core::ImageSpec;
 
     #[test]
     fn test_flip() {

@@ -780,6 +780,7 @@ pub fn normalize_into(dst: &mut ImageBuf, src: &ImageBuf, in_center: f32, out_ce
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vfx_core::ImageSpec;
 
     #[test]
     fn test_add_images() {

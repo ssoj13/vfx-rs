@@ -45,6 +45,12 @@ pub mod filters;
 pub mod fft;
 pub mod drawing;
 pub mod warp;
+pub mod demosaic;
+pub mod texture;
+pub mod fillholes;
+
+#[cfg(feature = "text")]
+pub mod text;
 
 // Re-export commonly used functions
 pub use patterns::{zero, fill, checker, noise};
@@ -141,6 +147,32 @@ pub use fft::{
 pub use drawing::{
     render_point, render_line, render_box,
     render_circle, render_ellipse, render_polygon,
+};
+
+// Demosaic operations
+pub use demosaic::{
+    demosaic,
+    BayerPattern, DemosaicAlgorithm,
+};
+
+// Texture/mipmap operations
+pub use texture::{
+    make_texture, make_mip_level,
+    mip_level_count, mip_dimensions,
+    MipmapFilter, MipmapOptions,
+};
+
+// Hole filling operations
+pub use fillholes::{
+    fillholes_pushpull, has_holes, count_holes,
+    FillHolesOptions,
+};
+
+// Text rendering (optional)
+#[cfg(feature = "text")]
+pub use text::{
+    render_text, render_text_into,
+    TextStyle, TextAlign,
 };
 
 // Warp operations

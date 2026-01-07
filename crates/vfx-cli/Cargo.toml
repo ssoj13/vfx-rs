@@ -15,6 +15,7 @@ path = "src/main.rs"
 vfx-core = { workspace = true }
 vfx-io = { workspace = true }
 vfx-ops = { workspace = true }
+vfx-compute = { workspace = true }
 vfx-color = { workspace = true }
 vfx-lut = { workspace = true }
 vfx-view = { path = "../vfx-view", optional = true }

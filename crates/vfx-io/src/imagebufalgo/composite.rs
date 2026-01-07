@@ -536,6 +536,7 @@ pub fn zover_into(dst: &mut ImageBuf, a: &ImageBuf, b: &ImageBuf, z_zeroisinf: b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vfx_core::ImageSpec;
 
     fn make_test_image(r: f32, g: f32, b: f32, a: f32) -> ImageBuf {
         let mut spec = ImageSpec::rgba(10, 10);

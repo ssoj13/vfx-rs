@@ -9,6 +9,9 @@ rust-version.workspace = true
 
 [features]
 default = ["exr", "png", "jpeg", "tiff", "dpx", "hdr"]
+
+# Text rendering
+text = ["dep:cosmic-text"]
 exr = ["dep:exr"]
 png = ["dep:png"]
 jpeg = ["dep:jpeg-decoder", "dep:jpeg-encoder"]
@@ -92,6 +95,10 @@ rayon = { version = "1.10", optional = true }
 # FFT support
 rustfft = "6.2"
 num-complex = "0.4"
+
+# Text rendering (optional)
+cosmic-text = { version = "0.14", optional = true }
+lazy_static = "1.5"
 
 [dev-dependencies]
 approx.workspace = true

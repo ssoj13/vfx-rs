@@ -404,6 +404,7 @@ pub fn matrix_invert(m: &[f32; 9]) -> Option<[f32; 9]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vfx_core::ImageSpec;
 
     #[test]
     fn test_warp_identity() {

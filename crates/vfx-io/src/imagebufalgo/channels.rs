@@ -273,6 +273,7 @@ pub fn get_alpha(src: &ImageBuf, roi: Option<Roi3D>) -> ImageBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vfx_core::ImageSpec;
 
     #[test]
     fn test_channels_extract() {

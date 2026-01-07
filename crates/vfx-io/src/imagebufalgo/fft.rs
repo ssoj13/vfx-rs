@@ -362,6 +362,7 @@ pub fn polar_to_complex_into(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vfx_core::ImageSpec;
 
     #[test]
     fn test_fft_ifft_roundtrip() {

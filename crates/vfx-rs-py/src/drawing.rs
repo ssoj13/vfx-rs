@@ -7,6 +7,10 @@ use pyo3::exceptions::PyIOError;
 
 use vfx_io::imagebuf::ImageBuf;
 use vfx_io::imagebufalgo::drawing as rust_drawing;
+#[cfg(feature = "text")]
+use vfx_io::imagebufalgo::text as rust_text;
+#[cfg(feature = "text")]
+use vfx_io::imagebufalgo::text::{TextAlign as RustTextAlign, TextStyle as RustTextStyle};
 use vfx_core::Roi3D as RustRoi3D;
 
 use crate::Image;
@@ -240,6 +244,145 @@ pub fn render_polygon(
 }
 
 // ============================================================================
+// Text Rendering (feature-gated)
+// ============================================================================
+
+/// Text alignment options.
+#[cfg(feature = "text")]
+#[pyclass(eq, eq_int)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextAlign {
+    Left = 0,
+    Center = 1,
+    Right = 2,
+}
+
+#[cfg(feature = "text")]
+impl From<TextAlign> for RustTextAlign {
+    fn from(a: TextAlign) -> Self {
+        match a {
+            TextAlign::Left => RustTextAlign::Left,
+            TextAlign::Center => RustTextAlign::Center,
+            TextAlign::Right => RustTextAlign::Right,
+        }
+    }
+}
+
+/// Text rendering style options.
+#[cfg(feature = "text")]
+#[pyclass]
+#[derive(Debug, Clone)]
+pub struct TextStyle {
+    #[pyo3(get, set)]
+    pub font: String,
+    #[pyo3(get, set)]
+    pub font_size: f32,
+    #[pyo3(get, set)]
+    pub color: [f32; 4],
+    #[pyo3(get, set)]
+    pub bg_color: [f32; 4],
+    #[pyo3(get, set)]
+    pub align: TextAlign,
+    #[pyo3(get, set)]
+    pub line_height: f32,
+}
+
+#[cfg(feature = "text")]
+#[pymethods]
+impl TextStyle {
+    #[new]
+    #[pyo3(signature = (font="sans-serif", font_size=48.0, color=None, bg_color=None, align=None, line_height=1.2))]
+    fn new(
+        font: &str,
+        font_size: f32,
+        color: Option<[f32; 4]>,
+        bg_color: Option<[f32; 4]>,
+        align: Option<TextAlign>,
+        line_height: f32,
+    ) -> Self {
+        Self {
+            font: font.to_string(),
+            font_size,
+            color: color.unwrap_or([1.0, 1.0, 1.0, 1.0]),
+            bg_color: bg_color.unwrap_or([0.0, 0.0, 0.0, 0.0]),
+            align: align.unwrap_or(TextAlign::Left),
+            line_height,
+        }
+    }
+}
+
+#[cfg(feature = "text")]
+impl From<&TextStyle> for RustTextStyle {
+    fn from(s: &TextStyle) -> Self {
+        RustTextStyle {
+            font: s.font.clone(),
+            font_size: s.font_size,
+            color: s.color,
+            bg_color: s.bg_color,
+            align: s.align.into(),
+            line_height: s.line_height,
+        }
+    }
+}
+
+/// Render text to a new image.
+///
+/// Uses cosmic-text for high-quality text rendering with proper
+/// Unicode shaping and antialiasing.
+///
+/// Args:
+///     text: Text content (supports \n for newlines)
+///     style: Text rendering style options
+///     width: Output width (0 = auto-size)
+///     height: Output height (0 = auto-size)
+///
+/// Returns:
+///     RGBA image with rendered text
+///
+/// Example:
+///     >>> style = TextStyle(font_size=64.0, color=[1.0, 0.0, 0.0, 1.0])
+///     >>> img = render_text("Hello World!", style, 512, 128)
+#[cfg(feature = "text")]
+#[pyfunction]
+#[pyo3(signature = (text, style=None, width=0, height=0))]
+pub fn render_text(
+    text: &str,
+    style: Option<&TextStyle>,
+    width: u32,
+    height: u32,
+) -> PyResult<Image> {
+    let rust_style = style.map(|s| s.into()).unwrap_or_default();
+    let result = rust_text::render_text(text, &rust_style, width, height);
+    imagebuf_to_image(&result)
+}
+
+/// Render text into an existing image.
+///
+/// Args:
+///     image: Target image to render into
+///     text: Text content
+///     x, y: Position to render at
+///     style: Text rendering style options
+///
+/// Returns:
+///     Modified image with text rendered
+#[cfg(feature = "text")]
+#[pyfunction]
+#[pyo3(signature = (image, text, x, y, style=None))]
+pub fn render_text_into(
+    image: &Image,
+    text: &str,
+    x: i32,
+    y: i32,
+    style: Option<&TextStyle>,
+) -> PyResult<Image> {
+    let mut buf = image_to_imagebuf(image);
+    let rust_style = style.map(|s| s.into()).unwrap_or_default();
+    rust_text::render_text_into(&mut buf, text, x, y, &rust_style);
+    imagebuf_to_image(&buf)
+}
+
+// ============================================================================
 // Module Registration
 // ============================================================================
 
@@ -251,5 +394,15 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(render_circle, m)?)?;
     m.add_function(wrap_pyfunction!(render_ellipse, m)?)?;
     m.add_function(wrap_pyfunction!(render_polygon, m)?)?;
+
+    // Text rendering (feature-gated)
+    #[cfg(feature = "text")]
+    {
+        m.add_class::<TextAlign>()?;
+        m.add_class::<TextStyle>()?;
+        m.add_function(wrap_pyfunction!(render_text, m)?)?;
+        m.add_function(wrap_pyfunction!(render_text_into, m)?)?;
+    }
+
     Ok(())
 }
