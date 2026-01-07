@@ -1,31 +1,42 @@
 //! Unified tiled executor for all GPU backends.
 //!
-//! Provides automatic tiling and streaming for large images, similar to
-//! stool-rs WarpExecutor but for color/image operations.
+//! Provides automatic tiling and streaming for large images with:
+//! - Intelligent strategy selection via Planner
+//! - Region caching for viewer pan/zoom optimization
+//! - Tile clustering for PCIe bandwidth savings
 //!
 //! # Architecture
 //!
 //! ```text
 //! TiledExecutor<G: GpuPrimitives>
 //!     │
-//!     ├── execute_*() ──> selects strategy based on memory
+//!     ├── Planner ──> selects strategy based on VRAM/kernel/clustering
 //!     │
-//!     ├── SinglePass    ─┐
-//!     ├── Tiled         ─┼── all use G::upload/exec_*/download
+//!     ├── RegionCache ──> caches uploaded regions (viewer mode)
+//!     │
+//!     ├── execute_*() ──> dispatches to strategy
+//!     │
+//!     ├── FullSource    ─┐
+//!     ├── RegionCache   ─┼── all use G::upload/exec_*/download
+//!     ├── AdaptiveTiled ─┤
 //!     └── Streaming     ─┘
 //! ```
 //!
 //! # Strategies
 //!
-//! - **SinglePass**: Image fits in VRAM, process entire image at once
-//! - **Tiled**: Image doesn't fit VRAM but fits RAM, process in tiles
-//! - **Streaming**: Image exceeds RAM, stream from/to disk
+//! - **FullSource** (≤40% VRAM): Process entire image at once
+//! - **RegionCache** (40-80% VRAM): Cache regions for pan/zoom
+//! - **AdaptiveTiled** (>80% VRAM): Process in clustered tiles
+//! - **Streaming**: Stream from/to disk for huge images
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::gpu_primitives::GpuPrimitives;
 use super::tiling::{GpuLimits, ProcessingStrategy, Tile, generate_tiles};
 use super::streaming::{StreamingSource, StreamingOutput};
+use super::planner::{Planner, Constraints};
+use super::cluster::{TileCluster, cluster_tiles, TileTriple, analyze_source_region, ClusterConfig};
+use super::cache::{RegionCache, RegionKey};
 use crate::{ComputeResult, ComputeImage};
 
 // =============================================================================
@@ -92,12 +103,18 @@ pub enum ImageOp {
 /// Executor configuration.
 #[derive(Clone, Debug)]
 pub struct ExecutorConfig {
-    /// Override tile size (None = auto).
+    /// Override tile size (None = auto via Planner).
     pub tile_size: Option<u32>,
     /// Force streaming mode.
     pub force_streaming: bool,
-    /// Available RAM in bytes.
-    pub ram_limit: u64,
+    /// Enable region cache for viewer mode (pan/zoom optimization).
+    pub enable_cache: bool,
+    /// Cache budget in bytes (default: 25% of available memory).
+    pub cache_budget: Option<u64>,
+    /// Kernel radius for operations like blur (affects tile overlap).
+    pub kernel_radius: u32,
+    /// Enable tile clustering for PCIe optimization.
+    pub enable_clustering: bool,
 }
 
 impl Default for ExecutorConfig {
@@ -105,7 +122,10 @@ impl Default for ExecutorConfig {
         Self {
             tile_size: None,
             force_streaming: false,
-            ram_limit: 16 * 1024 * 1024 * 1024, // 16 GB default
+            enable_cache: false,
+            cache_budget: None,
+            kernel_radius: 0,
+            enable_clustering: true,
         }
     }
 }
