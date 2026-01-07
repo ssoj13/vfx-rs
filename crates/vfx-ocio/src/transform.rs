@@ -60,8 +60,17 @@ pub enum Transform {
     /// Exponent/gamma.
     Exponent(ExponentTransform),
 
+    /// Exponent with linear segment (sRGB, Rec.709 style).
+    ExponentWithLinear(ExponentWithLinearTransform),
+
     /// Log transform.
     Log(LogTransform),
+
+    /// Log affine transform (OCIO v2).
+    LogAffine(LogAffineTransform),
+
+    /// Log camera transform (ACEScct, LogC, S-Log3).
+    LogCamera(LogCameraTransform),
 
     /// 1D LUT from file.
     FileTransform(FileTransform),
@@ -155,9 +164,21 @@ impl Transform {
                 t.direction = t.direction.inverse();
                 Self::Exponent(t)
             }
+            Self::ExponentWithLinear(mut t) => {
+                t.direction = t.direction.inverse();
+                Self::ExponentWithLinear(t)
+            }
             Self::Log(mut t) => {
                 t.direction = t.direction.inverse();
                 Self::Log(t)
+            }
+            Self::LogAffine(mut t) => {
+                t.direction = t.direction.inverse();
+                Self::LogAffine(t)
+            }
+            Self::LogCamera(mut t) => {
+                t.direction = t.direction.inverse();
+                Self::LogCamera(t)
             }
             Self::FileTransform(mut t) => {
                 t.direction = t.direction.inverse();
@@ -285,6 +306,358 @@ pub struct LogTransform {
     pub base: f64,
     /// Direction.
     pub direction: TransformDirection,
+}
+
+/// Log affine transform (OCIO v2).
+///
+/// Applies a logarithmic curve with affine parameters per channel.
+/// Formula: out = logSideSlope * log(linSideSlope * in + linSideOffset, base) + logSideOffset
+#[derive(Debug, Clone)]
+pub struct LogAffineTransform {
+    /// Logarithm base (typically 2 or 10).
+    pub base: f64,
+    /// Log side slope per channel [R, G, B].
+    pub log_side_slope: [f64; 3],
+    /// Log side offset per channel [R, G, B].
+    pub log_side_offset: [f64; 3],
+    /// Linear side slope per channel [R, G, B].
+    pub lin_side_slope: [f64; 3],
+    /// Linear side offset per channel [R, G, B].
+    pub lin_side_offset: [f64; 3],
+    /// Direction.
+    pub direction: TransformDirection,
+}
+
+impl Default for LogAffineTransform {
+    fn default() -> Self {
+        Self {
+            base: 2.0,
+            log_side_slope: [1.0, 1.0, 1.0],
+            log_side_offset: [0.0, 0.0, 0.0],
+            lin_side_slope: [1.0, 1.0, 1.0],
+            lin_side_offset: [0.0, 0.0, 0.0],
+            direction: TransformDirection::Forward,
+        }
+    }
+}
+
+impl LogAffineTransform {
+    /// Creates a new LogAffineTransform with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the base.
+    pub fn with_base(mut self, base: f64) -> Self {
+        self.base = base;
+        self
+    }
+
+    /// Sets log side parameters.
+    pub fn with_log_side(mut self, slope: [f64; 3], offset: [f64; 3]) -> Self {
+        self.log_side_slope = slope;
+        self.log_side_offset = offset;
+        self
+    }
+
+    /// Sets linear side parameters.
+    pub fn with_lin_side(mut self, slope: [f64; 3], offset: [f64; 3]) -> Self {
+        self.lin_side_slope = slope;
+        self.lin_side_offset = offset;
+        self
+    }
+
+    /// Applies the transform to RGB values.
+    pub fn apply(&self, rgb: [f64; 3]) -> [f64; 3] {
+        let mut out = [0.0; 3];
+        let ln_base = self.base.ln();
+
+        for i in 0..3 {
+            let lin = self.lin_side_slope[i] * rgb[i] + self.lin_side_offset[i];
+            if lin > 0.0 {
+                out[i] = self.log_side_slope[i] * lin.ln() / ln_base + self.log_side_offset[i];
+            } else {
+                out[i] = self.log_side_offset[i];
+            }
+        }
+        out
+    }
+
+    /// Applies the inverse transform.
+    pub fn apply_inverse(&self, rgb: [f64; 3]) -> [f64; 3] {
+        let mut out = [0.0; 3];
+        let ln_base = self.base.ln();
+
+        for i in 0..3 {
+            let log_val = (rgb[i] - self.log_side_offset[i]) / self.log_side_slope[i];
+            let lin = (log_val * ln_base).exp();
+            out[i] = (lin - self.lin_side_offset[i]) / self.lin_side_slope[i];
+        }
+        out
+    }
+}
+
+/// Log camera transform (OCIO v2).
+///
+/// Camera-specific log encoding with linear segment below break point.
+/// Used for ACEScct, S-Log3, LogC, etc.
+#[derive(Debug, Clone)]
+pub struct LogCameraTransform {
+    /// Logarithm base (typically 2 or 10).
+    pub base: f64,
+    /// Log side slope per channel [R, G, B].
+    pub log_side_slope: [f64; 3],
+    /// Log side offset per channel [R, G, B].
+    pub log_side_offset: [f64; 3],
+    /// Linear side slope per channel [R, G, B].
+    pub lin_side_slope: [f64; 3],
+    /// Linear side offset per channel [R, G, B].
+    pub lin_side_offset: [f64; 3],
+    /// Linear side break point per channel.
+    /// Below this value, a linear segment is used.
+    pub lin_side_break: [f64; 3],
+    /// Linear slope below break point (calculated from continuity).
+    pub linear_slope: Option<[f64; 3]>,
+    /// Direction.
+    pub direction: TransformDirection,
+}
+
+impl Default for LogCameraTransform {
+    fn default() -> Self {
+        Self {
+            base: 2.0,
+            log_side_slope: [1.0, 1.0, 1.0],
+            log_side_offset: [0.0, 0.0, 0.0],
+            lin_side_slope: [1.0, 1.0, 1.0],
+            lin_side_offset: [0.0, 0.0, 0.0],
+            lin_side_break: [0.0, 0.0, 0.0],
+            linear_slope: None,
+            direction: TransformDirection::Forward,
+        }
+    }
+}
+
+impl LogCameraTransform {
+    /// Creates a new LogCameraTransform with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the base.
+    pub fn with_base(mut self, base: f64) -> Self {
+        self.base = base;
+        self
+    }
+
+    /// Sets the linear side break point.
+    pub fn with_lin_side_break(mut self, brk: [f64; 3]) -> Self {
+        self.lin_side_break = brk;
+        self
+    }
+
+    /// Sets the linear slope for the segment below break.
+    pub fn with_linear_slope(mut self, slope: [f64; 3]) -> Self {
+        self.linear_slope = Some(slope);
+        self
+    }
+
+    /// Creates ACEScct-like transform.
+    pub fn acescct() -> Self {
+        Self {
+            base: 2.0,
+            log_side_slope: [17.52 / 9.72; 3],
+            log_side_offset: [0.0729; 3],
+            lin_side_slope: [1.0; 3],
+            lin_side_offset: [9.72; 3],
+            lin_side_break: [0.0078125; 3], // 2^-7
+            linear_slope: Some([10.5; 3]),
+            direction: TransformDirection::Forward,
+        }
+    }
+
+    /// Creates ARRI LogC3-like transform.
+    pub fn logc3() -> Self {
+        Self {
+            base: 10.0,
+            log_side_slope: [0.247190; 3],
+            log_side_offset: [0.385537; 3],
+            lin_side_slope: [5.555556; 3],
+            lin_side_offset: [0.052272; 3],
+            lin_side_break: [0.010591; 3],
+            linear_slope: Some([5.367655; 3]),
+            direction: TransformDirection::Forward,
+        }
+    }
+
+    /// Creates Sony S-Log3-like transform.
+    pub fn slog3() -> Self {
+        Self {
+            base: 10.0,
+            log_side_slope: [0.255620723; 3],
+            log_side_offset: [0.41055718; 3],
+            lin_side_slope: [5.26315789; 3],
+            lin_side_offset: [0.052272; 3],
+            lin_side_break: [0.01125; 3],
+            linear_slope: None,
+            direction: TransformDirection::Forward,
+        }
+    }
+
+    /// Applies the transform to RGB values.
+    pub fn apply(&self, rgb: [f64; 3]) -> [f64; 3] {
+        let mut out = [0.0; 3];
+        let ln_base = self.base.ln();
+
+        for i in 0..3 {
+            if rgb[i] <= self.lin_side_break[i] {
+                // Linear segment
+                let linear_slope = self.linear_slope
+                    .map(|s| s[i])
+                    .unwrap_or(self.log_side_slope[i] * self.lin_side_slope[i] /
+                              ((self.lin_side_slope[i] * self.lin_side_break[i] + self.lin_side_offset[i]) * ln_base));
+                out[i] = linear_slope * rgb[i];
+            } else {
+                // Log segment
+                let lin = self.lin_side_slope[i] * rgb[i] + self.lin_side_offset[i];
+                out[i] = self.log_side_slope[i] * lin.ln() / ln_base + self.log_side_offset[i];
+            }
+        }
+        out
+    }
+}
+
+/// Exponent with linear segment transform (OCIO v2).
+///
+/// Applies gamma with a linear segment in the shadows.
+/// Commonly used for sRGB and Rec.709 transfer functions.
+#[derive(Debug, Clone)]
+pub struct ExponentWithLinearTransform {
+    /// Exponent (gamma) per channel [R, G, B, A].
+    pub gamma: [f64; 4],
+    /// Offset per channel (for linear segment calculation).
+    pub offset: [f64; 4],
+    /// Negative value handling.
+    pub negative_style: NegativeStyle,
+    /// Direction.
+    pub direction: TransformDirection,
+}
+
+impl Default for ExponentWithLinearTransform {
+    fn default() -> Self {
+        Self {
+            gamma: [1.0, 1.0, 1.0, 1.0],
+            offset: [0.0, 0.0, 0.0, 0.0],
+            negative_style: NegativeStyle::Clamp,
+            direction: TransformDirection::Forward,
+        }
+    }
+}
+
+impl ExponentWithLinearTransform {
+    /// Creates a new ExponentWithLinearTransform.
+    pub fn new(gamma: [f64; 4], offset: [f64; 4]) -> Self {
+        Self {
+            gamma,
+            offset,
+            negative_style: NegativeStyle::Clamp,
+            direction: TransformDirection::Forward,
+        }
+    }
+
+    /// Creates sRGB transfer function.
+    pub fn srgb() -> Self {
+        Self {
+            gamma: [2.4, 2.4, 2.4, 1.0],
+            offset: [0.055, 0.055, 0.055, 0.0],
+            negative_style: NegativeStyle::Clamp,
+            direction: TransformDirection::Forward,
+        }
+    }
+
+    /// Creates Rec.709 transfer function.
+    pub fn rec709() -> Self {
+        Self {
+            gamma: [1.0 / 0.45, 1.0 / 0.45, 1.0 / 0.45, 1.0],
+            offset: [0.099, 0.099, 0.099, 0.0],
+            negative_style: NegativeStyle::Clamp,
+            direction: TransformDirection::Forward,
+        }
+    }
+
+    /// Sets negative handling style.
+    pub fn with_negative_style(mut self, style: NegativeStyle) -> Self {
+        self.negative_style = style;
+        self
+    }
+
+    /// Calculates the break point for the linear segment.
+    fn break_point(&self, channel: usize) -> f64 {
+        let g = self.gamma[channel];
+        let o = self.offset[channel];
+        if o.abs() < 1e-10 || g.abs() < 1e-10 {
+            return 0.0;
+        }
+        // Break point where derivative of power = derivative of linear
+        // For (1+offset) * x^gamma - offset, the linear slope at 0 determines break
+        o / (g * (1.0 + o).powf(g - 1.0) - (g - 1.0) * o)
+    }
+
+    /// Applies the transform to a single value.
+    pub fn apply_channel(&self, value: f64, channel: usize) -> f64 {
+        let g = self.gamma[channel];
+        let o = self.offset[channel];
+
+        if g.abs() < 1e-10 || (g - 1.0).abs() < 1e-10 {
+            return value;
+        }
+
+        let brk = self.break_point(channel);
+        let linear_slope = if brk.abs() > 1e-10 {
+            ((1.0 + o) * brk.powf(g) - o) / brk
+        } else {
+            1.0
+        };
+
+        match self.negative_style {
+            NegativeStyle::Clamp => {
+                let v = value.max(0.0);
+                if v <= brk {
+                    linear_slope * v
+                } else {
+                    (1.0 + o) * v.powf(g) - o
+                }
+            }
+            NegativeStyle::Mirror => {
+                let sign = value.signum();
+                let v = value.abs();
+                let result = if v <= brk {
+                    linear_slope * v
+                } else {
+                    (1.0 + o) * v.powf(g) - o
+                };
+                sign * result
+            }
+            NegativeStyle::PassThru => {
+                if value < 0.0 {
+                    value
+                } else if value <= brk {
+                    linear_slope * value
+                } else {
+                    (1.0 + o) * value.powf(g) - o
+                }
+            }
+        }
+    }
+
+    /// Applies the transform to RGBA values.
+    pub fn apply(&self, rgba: [f64; 4]) -> [f64; 4] {
+        [
+            self.apply_channel(rgba[0], 0),
+            self.apply_channel(rgba[1], 1),
+            self.apply_channel(rgba[2], 2),
+            self.apply_channel(rgba[3], 3),
+        ]
+    }
 }
 
 /// File-based transform (LUT, etc.).

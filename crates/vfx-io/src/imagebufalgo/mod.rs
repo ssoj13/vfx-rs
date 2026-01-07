@@ -121,8 +121,12 @@ pub use filters::{
     laplacian, sharpen, sobel,
     convolve, convolve_into,
     box_blur, box_blur_into,
-    fillholes_pushpull, fillholes_pushpull_into,
-    make_kernel,
+    // New OIIO-parity functions from review branch
+    KernelType, make_kernel, make_kernel_from_name,
+    dilate_n, erode_n,
+    morph_gradient, top_hat, black_hat,
+    convolve_with_border, convolve_with_border_into,
+    bilateral, bilateral_into,
 };
 
 // FFT operations

@@ -123,6 +123,101 @@ impl AttrValue {
             _ => None,
         }
     }
+
+    /// Returns the int array if this value is an IntArray.
+    pub fn as_int_array(&self) -> Option<&[i64]> {
+        match self {
+            Self::IntArray(arr) => Some(arr),
+            _ => None,
+        }
+    }
+
+    /// Returns the float array if this value is a FloatArray.
+    pub fn as_float_array(&self) -> Option<&[f64]> {
+        match self {
+            Self::FloatArray(arr) => Some(arr),
+            _ => None,
+        }
+    }
+
+    /// Returns the 3x3 matrix if this value is a Matrix3.
+    pub fn as_matrix3(&self) -> Option<&[f32; 9]> {
+        match self {
+            Self::Matrix3(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    /// Returns the 4x4 matrix if this value is a Matrix4.
+    pub fn as_matrix4(&self) -> Option<&[f32; 16]> {
+        match self {
+            Self::Matrix4(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    /// Returns the type name of this attribute value.
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::Int(_) => "int",
+            Self::Float(_) => "float",
+            Self::String(_) => "string",
+            Self::IntArray(_) => "int[]",
+            Self::FloatArray(_) => "float[]",
+            Self::Matrix3(_) => "matrix33",
+            Self::Matrix4(_) => "matrix44",
+        }
+    }
+}
+
+impl std::fmt::Display for AttrValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Int(v) => write!(f, "{}", v),
+            Self::Float(v) => write!(f, "{}", v),
+            Self::String(s) => write!(f, "\"{}\"", s),
+            Self::IntArray(arr) => {
+                write!(f, "[")?;
+                for (i, v) in arr.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", v)?;
+                }
+                write!(f, "]")
+            }
+            Self::FloatArray(arr) => {
+                write!(f, "[")?;
+                for (i, v) in arr.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", v)?;
+                }
+                write!(f, "]")
+            }
+            Self::Matrix3(m) => {
+                write!(f, "[")?;
+                for (i, v) in m.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", v)?;
+                }
+                write!(f, "]")
+            }
+            Self::Matrix4(m) => {
+                write!(f, "[")?;
+                for (i, v) in m.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", v)?;
+                }
+                write!(f, "]")
+            }
+        }
+    }
 }
 
 impl From<i32> for AttrValue {
@@ -849,6 +944,496 @@ impl ImageSpec {
         self.full_width = roi.width() as u32;
         self.full_height = roi.height() as u32;
         self.full_depth = roi.depth() as u32;
+    }
+
+    // =========================================================================
+    // Metadata Value Formatting (OIIO Parity)
+    // =========================================================================
+
+    /// Returns a formatted string representation of a metadata attribute.
+    ///
+    /// This provides OIIO-compatible metadata formatting, suitable for display.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use vfx_core::ImageSpec;
+    ///
+    /// let mut spec = ImageSpec::rgba(1920, 1080);
+    /// spec.set_attr("Author", "John Doe");
+    /// spec.set_attr("FrameRate", 24);
+    ///
+    /// assert_eq!(spec.metadata_val("Author"), Some("\"John Doe\"".to_string()));
+    /// assert_eq!(spec.metadata_val("FrameRate"), Some("24".to_string()));
+    /// ```
+    pub fn metadata_val(&self, key: &str) -> Option<String> {
+        self.get_attr(key).map(|v| v.to_string())
+    }
+
+    /// Returns iterator over all attribute names.
+    pub fn attribute_names(&self) -> impl Iterator<Item = &str> {
+        self.attributes.keys().map(|s| s.as_str())
+    }
+
+    /// Returns the number of attributes.
+    pub fn attribute_count(&self) -> usize {
+        self.attributes.len()
+    }
+
+    /// Finds an attribute by name pattern (glob-style).
+    ///
+    /// Supports simple wildcards: `*` matches any sequence, `?` matches single char.
+    pub fn find_attribute(&self, pattern: &str) -> Option<(&str, &AttrValue)> {
+        for (key, value) in &self.attributes {
+            if Self::glob_match(pattern, key) {
+                return Some((key.as_str(), value));
+            }
+        }
+        None
+    }
+
+    /// Returns all attributes matching a pattern.
+    pub fn find_attributes(&self, pattern: &str) -> Vec<(&str, &AttrValue)> {
+        self.attributes
+            .iter()
+            .filter(|(key, _)| Self::glob_match(pattern, key))
+            .map(|(k, v)| (k.as_str(), v))
+            .collect()
+    }
+
+    fn glob_match(pattern: &str, text: &str) -> bool {
+        let mut p_chars = pattern.chars().peekable();
+        let mut t_chars = text.chars().peekable();
+
+        while let Some(pc) = p_chars.next() {
+            match pc {
+                '*' => {
+                    // Try matching zero or more characters
+                    let remaining_pattern: String = p_chars.collect();
+                    let remaining_text: String = t_chars.collect();
+
+                    for i in 0..=remaining_text.len() {
+                        if Self::glob_match(&remaining_pattern, &remaining_text[i..]) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                '?' => {
+                    if t_chars.next().is_none() {
+                        return false;
+                    }
+                }
+                c => {
+                    if t_chars.next() != Some(c) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        t_chars.peek().is_none()
+    }
+
+    // =========================================================================
+    // Serialization (OIIO Parity)
+    // =========================================================================
+
+    /// Serialization format: compact text.
+    pub const SERIALIZE_TEXT: u32 = 0;
+    /// Serialization format: verbose text with attributes.
+    pub const SERIALIZE_TEXT_VERBOSE: u32 = 1;
+    /// Serialization format: XML.
+    pub const SERIALIZE_XML: u32 = 2;
+
+    /// Serializes the ImageSpec to a formatted string.
+    ///
+    /// # Arguments
+    ///
+    /// * `format` - Serialization format (SERIALIZE_TEXT, SERIALIZE_TEXT_VERBOSE, or SERIALIZE_XML)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use vfx_core::ImageSpec;
+    ///
+    /// let spec = ImageSpec::rgba(1920, 1080);
+    /// let text = spec.serialize(ImageSpec::SERIALIZE_TEXT);
+    /// assert!(text.contains("1920 x 1080"));
+    /// ```
+    pub fn serialize(&self, format: u32) -> String {
+        match format {
+            Self::SERIALIZE_XML => self.to_xml(),
+            Self::SERIALIZE_TEXT_VERBOSE => self.to_text_verbose(),
+            _ => self.to_text(),
+        }
+    }
+
+    /// Serializes to compact text format.
+    fn to_text(&self) -> String {
+        let mut s = String::new();
+
+        // Dimensions
+        if self.depth > 1 {
+            s.push_str(&format!("{} x {} x {}", self.width, self.height, self.depth));
+        } else {
+            s.push_str(&format!("{} x {}", self.width, self.height));
+        }
+
+        // Channels
+        s.push_str(&format!(", {} channel", self.nchannels));
+        if self.nchannels != 1 {
+            s.push('s');
+        }
+
+        // Channel names if non-default
+        if !self.channel_names.is_empty() {
+            s.push_str(" (");
+            s.push_str(&self.channel_names.join(", "));
+            s.push(')');
+        }
+
+        // Format
+        s.push_str(&format!(", {}", self.format));
+
+        // Data/display window offset
+        if self.x != 0 || self.y != 0 {
+            s.push_str(&format!(", origin +{},+{}", self.x, self.y));
+        }
+
+        // Full/display window if different
+        if self.has_overscan() {
+            s.push_str(&format!(
+                ", full/display window {} x {}",
+                self.full_width, self.full_height
+            ));
+            if self.full_x != 0 || self.full_y != 0 {
+                s.push_str(&format!(" +{},+{}", self.full_x, self.full_y));
+            }
+        }
+
+        // Tiling
+        if self.is_tiled() {
+            s.push_str(&format!(", {} x {} tiles", self.tile_width, self.tile_height));
+            if self.tile_depth > 1 {
+                s.push_str(&format!(" x {}", self.tile_depth));
+            }
+        }
+
+        // Deep
+        if self.deep {
+            s.push_str(", deep");
+        }
+
+        s
+    }
+
+    /// Serializes to verbose text format with all attributes.
+    fn to_text_verbose(&self) -> String {
+        let mut s = self.to_text();
+        s.push('\n');
+
+        // Add all attributes
+        let mut keys: Vec<_> = self.attributes.keys().collect();
+        keys.sort();
+
+        for key in keys {
+            if let Some(value) = self.attributes.get(key) {
+                s.push_str(&format!("    {}: {}\n", key, value));
+            }
+        }
+
+        s
+    }
+
+    /// Serializes the ImageSpec to XML format.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use vfx_core::ImageSpec;
+    ///
+    /// let spec = ImageSpec::rgba(1920, 1080);
+    /// let xml = spec.to_xml();
+    /// assert!(xml.contains("<ImageSpec>"));
+    /// assert!(xml.contains("<width>1920</width>"));
+    /// ```
+    pub fn to_xml(&self) -> String {
+        let mut xml = String::new();
+        xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        xml.push_str("<ImageSpec>\n");
+
+        // Core dimensions
+        xml.push_str(&format!("  <width>{}</width>\n", self.width));
+        xml.push_str(&format!("  <height>{}</height>\n", self.height));
+        xml.push_str(&format!("  <depth>{}</depth>\n", self.depth));
+        xml.push_str(&format!("  <x>{}</x>\n", self.x));
+        xml.push_str(&format!("  <y>{}</y>\n", self.y));
+        xml.push_str(&format!("  <z>{}</z>\n", self.z));
+
+        // Full dimensions
+        xml.push_str(&format!("  <full_width>{}</full_width>\n", self.full_width));
+        xml.push_str(&format!("  <full_height>{}</full_height>\n", self.full_height));
+        xml.push_str(&format!("  <full_depth>{}</full_depth>\n", self.full_depth));
+        xml.push_str(&format!("  <full_x>{}</full_x>\n", self.full_x));
+        xml.push_str(&format!("  <full_y>{}</full_y>\n", self.full_y));
+        xml.push_str(&format!("  <full_z>{}</full_z>\n", self.full_z));
+
+        // Tiles
+        xml.push_str(&format!("  <tile_width>{}</tile_width>\n", self.tile_width));
+        xml.push_str(&format!("  <tile_height>{}</tile_height>\n", self.tile_height));
+        xml.push_str(&format!("  <tile_depth>{}</tile_depth>\n", self.tile_depth));
+
+        // Channels
+        xml.push_str(&format!("  <nchannels>{}</nchannels>\n", self.nchannels));
+        xml.push_str(&format!("  <format>{}</format>\n", self.format));
+        xml.push_str(&format!("  <alpha_channel>{}</alpha_channel>\n", self.alpha_channel));
+        xml.push_str(&format!("  <z_channel>{}</z_channel>\n", self.z_channel));
+        xml.push_str(&format!("  <deep>{}</deep>\n", self.deep));
+
+        // Channel names
+        if !self.channel_names.is_empty() {
+            xml.push_str("  <channel_names>\n");
+            for name in &self.channel_names {
+                xml.push_str(&format!("    <name>{}</name>\n", Self::xml_escape(name)));
+            }
+            xml.push_str("  </channel_names>\n");
+        }
+
+        // Per-channel formats
+        if !self.channelformats.is_empty() {
+            xml.push_str("  <channelformats>\n");
+            for fmt in &self.channelformats {
+                xml.push_str(&format!("    <format>{}</format>\n", fmt));
+            }
+            xml.push_str("  </channelformats>\n");
+        }
+
+        // Attributes
+        if !self.attributes.is_empty() {
+            xml.push_str("  <attributes>\n");
+            let mut keys: Vec<_> = self.attributes.keys().collect();
+            keys.sort();
+            for key in keys {
+                if let Some(value) = self.attributes.get(key) {
+                    xml.push_str(&format!(
+                        "    <attrib name=\"{}\" type=\"{}\">{}</attrib>\n",
+                        Self::xml_escape(key),
+                        value.type_name(),
+                        Self::xml_escape(&value.to_string().replace('"', ""))
+                    ));
+                }
+            }
+            xml.push_str("  </attributes>\n");
+        }
+
+        xml.push_str("</ImageSpec>\n");
+        xml
+    }
+
+    /// Parses an ImageSpec from XML format.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use vfx_core::ImageSpec;
+    ///
+    /// let spec = ImageSpec::rgba(1920, 1080);
+    /// let xml = spec.to_xml();
+    /// let parsed = ImageSpec::from_xml(&xml).unwrap();
+    /// assert_eq!(parsed.width, 1920);
+    /// assert_eq!(parsed.height, 1080);
+    /// ```
+    pub fn from_xml(xml: &str) -> Result<Self, String> {
+        let mut spec = ImageSpec::default();
+
+        // Simple XML parsing - extract values between tags
+        fn extract_value<T: std::str::FromStr>(xml: &str, tag: &str) -> Option<T> {
+            let open_tag = format!("<{}>", tag);
+            let close_tag = format!("</{}>", tag);
+            let start = xml.find(&open_tag)? + open_tag.len();
+            let end = xml[start..].find(&close_tag)? + start;
+            xml[start..end].trim().parse().ok()
+        }
+
+        // Parse core dimensions
+        if let Some(v) = extract_value::<u32>(xml, "width") {
+            spec.width = v;
+        }
+        if let Some(v) = extract_value::<u32>(xml, "height") {
+            spec.height = v;
+        }
+        if let Some(v) = extract_value::<u32>(xml, "depth") {
+            spec.depth = v;
+        }
+        if let Some(v) = extract_value::<i32>(xml, "x") {
+            spec.x = v;
+        }
+        if let Some(v) = extract_value::<i32>(xml, "y") {
+            spec.y = v;
+        }
+        if let Some(v) = extract_value::<i32>(xml, "z") {
+            spec.z = v;
+        }
+
+        // Parse full dimensions
+        if let Some(v) = extract_value::<u32>(xml, "full_width") {
+            spec.full_width = v;
+        }
+        if let Some(v) = extract_value::<u32>(xml, "full_height") {
+            spec.full_height = v;
+        }
+        if let Some(v) = extract_value::<u32>(xml, "full_depth") {
+            spec.full_depth = v;
+        }
+        if let Some(v) = extract_value::<i32>(xml, "full_x") {
+            spec.full_x = v;
+        }
+        if let Some(v) = extract_value::<i32>(xml, "full_y") {
+            spec.full_y = v;
+        }
+        if let Some(v) = extract_value::<i32>(xml, "full_z") {
+            spec.full_z = v;
+        }
+
+        // Parse tile dimensions
+        if let Some(v) = extract_value::<u32>(xml, "tile_width") {
+            spec.tile_width = v;
+        }
+        if let Some(v) = extract_value::<u32>(xml, "tile_height") {
+            spec.tile_height = v;
+        }
+        if let Some(v) = extract_value::<u32>(xml, "tile_depth") {
+            spec.tile_depth = v;
+        }
+
+        // Parse channels
+        if let Some(v) = extract_value::<u8>(xml, "nchannels") {
+            spec.nchannels = v;
+            #[allow(deprecated)]
+            {
+                spec.channels = v;
+            }
+        }
+        if let Some(v) = extract_value::<i32>(xml, "alpha_channel") {
+            spec.alpha_channel = v;
+        }
+        if let Some(v) = extract_value::<i32>(xml, "z_channel") {
+            spec.z_channel = v;
+        }
+
+        // Parse format
+        if let Some(fmt_str) = extract_value::<String>(xml, "format") {
+            spec.format = match fmt_str.to_lowercase().as_str() {
+                "u8" | "uint8" => DataFormat::U8,
+                "u16" | "uint16" => DataFormat::U16,
+                "u32" | "uint32" => DataFormat::U32,
+                "f16" | "half" => DataFormat::F16,
+                "f32" | "float" => DataFormat::F32,
+                _ => DataFormat::F16,
+            };
+        }
+
+        // Parse deep flag
+        if let Some(deep_str) = extract_value::<String>(xml, "deep") {
+            spec.deep = deep_str == "true" || deep_str == "1";
+        }
+
+        // Parse channel names
+        if let Some(names_start) = xml.find("<channel_names>") {
+            if let Some(names_end) = xml.find("</channel_names>") {
+                let names_section = &xml[names_start..names_end];
+                let mut idx = 0;
+                while let Some(start) = names_section[idx..].find("<name>") {
+                    let start = idx + start + 6;
+                    if let Some(end) = names_section[start..].find("</name>") {
+                        let name = &names_section[start..start + end];
+                        spec.channel_names.push(Self::xml_unescape(name));
+                        idx = start + end;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Parse attributes
+        if let Some(attrs_start) = xml.find("<attributes>") {
+            if let Some(attrs_end) = xml.find("</attributes>") {
+                let attrs_section = &xml[attrs_start..attrs_end];
+                let mut idx = 0;
+                while let Some(attrib_start) = attrs_section[idx..].find("<attrib ") {
+                    let start = idx + attrib_start;
+                    if let Some(attrib_end) = attrs_section[start..].find("</attrib>") {
+                        let attrib = &attrs_section[start..start + attrib_end + 9];
+                        if let (Some(name), Some(type_name), Some(value)) =
+                            (Self::extract_attr(attrib, "name"),
+                             Self::extract_attr(attrib, "type"),
+                             Self::extract_content(attrib))
+                        {
+                            let attr_value = match type_name.as_str() {
+                                "int" => value.parse::<i64>().ok().map(AttrValue::Int),
+                                "float" => value.parse::<f64>().ok().map(AttrValue::Float),
+                                "string" => Some(AttrValue::String(value)),
+                                _ => Some(AttrValue::String(value)),
+                            };
+                            if let Some(v) = attr_value {
+                                spec.attributes.insert(name, v);
+                            }
+                        }
+                        idx = start + attrib_end + 9;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Update data/display windows (deprecated fields, but kept for compatibility)
+        #[allow(deprecated)]
+        Self::update_deprecated_windows(&mut spec);
+
+        Ok(spec)
+    }
+
+    #[allow(deprecated)]
+    fn update_deprecated_windows(spec: &mut ImageSpec) {
+        spec.data_window = Rect::new(spec.x as u32, spec.y as u32, spec.width, spec.height);
+        spec.display_window = Rect::new(
+            spec.full_x as u32,
+            spec.full_y as u32,
+            spec.full_width,
+            spec.full_height,
+        );
+    }
+
+    fn xml_escape(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&apos;")
+    }
+
+    fn xml_unescape(s: &str) -> String {
+        s.replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+    }
+
+    fn extract_attr(xml: &str, attr: &str) -> Option<String> {
+        let pattern = format!("{}=\"", attr);
+        let start = xml.find(&pattern)? + pattern.len();
+        let end = xml[start..].find('"')? + start;
+        Some(Self::xml_unescape(&xml[start..end]))
+    }
+
+    fn extract_content(xml: &str) -> Option<String> {
+        let start = xml.find('>')? + 1;
+        let end = xml[start..].find('<')? + start;
+        Some(Self::xml_unescape(xml[start..end].trim()))
     }
 }
 
