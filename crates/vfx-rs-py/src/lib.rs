@@ -12,6 +12,14 @@ mod processor;
 mod lut;
 mod format;
 mod layered;
+mod core;
+mod ops;
+mod stats;
+mod ocio;
+mod deep;
+mod fft;
+mod drawing;
+mod warp;
 #[cfg(feature = "viewer")]
 mod viewer;
 
@@ -76,29 +84,77 @@ fn vfx_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Image>()?;
     m.add_class::<Processor>()?;
     m.add_class::<format::BitDepth>()?;
-    
+
     // Layered image types
     layered::register(m)?;
-    
+
     // Top-level I/O
     m.add_function(wrap_pyfunction!(read, m)?)?;
     m.add_function(wrap_pyfunction!(read_layered, m)?)?;
     m.add_function(wrap_pyfunction!(write, m)?)?;
-    
+
     // Submodules
     let io_module = PyModule::new(m.py(), "io")?;
     io::register(&io_module)?;
     m.add_submodule(&io_module)?;
-    
+
     let lut_module = PyModule::new(m.py(), "lut")?;
     lut::register(&lut_module)?;
     m.add_submodule(&lut_module)?;
-    
+
+    // Core types submodule (TypeDesc, ImageSpec, Roi3D)
+    let core_module = PyModule::new(m.py(), "core")?;
+    core::register(&core_module)?;
+    m.add_submodule(&core_module)?;
+
+    // Operations submodule (ImageBufAlgo)
+    let ops_module = PyModule::new(m.py(), "ops")?;
+    ops::register(&ops_module)?;
+    m.add_submodule(&ops_module)?;
+
+    // Statistics submodule
+    let stats_module = PyModule::new(m.py(), "stats")?;
+    stats::register(&stats_module)?;
+    m.add_submodule(&stats_module)?;
+
+    // OCIO color management submodule
+    let ocio_module = PyModule::new(m.py(), "ocio")?;
+    ocio::register(&ocio_module)?;
+    m.add_submodule(&ocio_module)?;
+
+    // Deep compositing submodule
+    let deep_module = PyModule::new(m.py(), "deep")?;
+    deep::register(&deep_module)?;
+    m.add_submodule(&deep_module)?;
+
+    // FFT (Fourier transform) submodule
+    let fft_module = PyModule::new(m.py(), "fft")?;
+    fft::register(&fft_module)?;
+    m.add_submodule(&fft_module)?;
+
+    // Drawing submodule
+    let drawing_module = PyModule::new(m.py(), "drawing")?;
+    drawing::register(&drawing_module)?;
+    m.add_submodule(&drawing_module)?;
+
+    // Warp submodule
+    let warp_module = PyModule::new(m.py(), "warp")?;
+    warp::register(&warp_module)?;
+    m.add_submodule(&warp_module)?;
+
+    // Also register core types at top level for convenience
+    m.add_class::<core::TypeDesc>()?;
+    m.add_class::<core::ImageSpec>()?;
+    m.add_class::<core::Roi3D>()?;
+    m.add_class::<core::DataFormat>()?;
+    m.add_class::<core::BaseType>()?;
+    m.add_class::<core::Aggregate>()?;
+
     // Viewer (optional)
     #[cfg(feature = "viewer")]
     {
         m.add_function(wrap_pyfunction!(viewer::view, m)?)?;
     }
-    
+
     Ok(())
 }

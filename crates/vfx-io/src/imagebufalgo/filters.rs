@@ -590,6 +590,421 @@ pub fn sobel_into(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi3D>) {
     }
 }
 
+// ============================================================================
+// Hole Filling
+// ============================================================================
+
+/// Fill holes in alpha channel using push-pull algorithm.
+///
+/// This function fills transparent (alpha = 0) regions with colors from
+/// neighboring pixels using a multi-resolution pyramid approach:
+///
+/// 1. **Push phase**: Build an image pyramid by repeatedly downscaling
+/// 2. **Pull phase**: Blend upscaled levels back with original, filling holes
+///
+/// The result preserves fully opaque regions while smoothly interpolating
+/// colors into transparent areas based on surrounding pixels.
+///
+/// # Arguments
+/// * `src` - Source image with alpha channel
+/// * `roi` - Region of interest (or None for full image)
+///
+/// # Example
+/// ```ignore
+/// use vfx_io::imagebuf::ImageBuf;
+/// use vfx_io::imagebufalgo::fillholes_pushpull;
+///
+/// let img_with_holes = ImageBuf::read("cutout.exr").unwrap();
+/// let filled = fillholes_pushpull(&img_with_holes, None);
+/// ```
+pub fn fillholes_pushpull(src: &ImageBuf, roi: Option<Roi3D>) -> ImageBuf {
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let nch = src.nchannels() as usize;
+
+    // Need at least 2 channels (one color + alpha) or standard RGBA
+    if nch < 2 {
+        return src.clone();
+    }
+
+    // Assume alpha is last channel
+    let alpha_channel = nch - 1;
+
+    let width = roi.width() as usize;
+    let height = roi.height() as usize;
+
+    // Create working copy as the top of pyramid
+    let spec = src.spec().clone();
+    let mut pyramid = vec![ImageBuf::new(spec, InitializePixels::No)];
+
+    // Copy source to top of pyramid
+    let mut pixel = vec![0.0f32; nch];
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                src.getpixel(x, y, z, &mut pixel, WrapMode::Black);
+                pyramid[0].setpixel(x, y, z, &pixel);
+            }
+        }
+    }
+
+    // Push phase: build pyramid
+    let mut w = width;
+    let mut h = height;
+
+    while w > 1 || h > 1 {
+        w = (w + 1) / 2;
+        h = (h + 1) / 2;
+
+        let small_spec = vfx_core::ImageSpec::new(w as u32, h as u32, nch as u8, vfx_core::DataFormat::F32);
+        let mut small = ImageBuf::new(small_spec, InitializePixels::Yes);
+
+        let prev = pyramid.last().unwrap();
+        let prev_w = prev.width() as i32;
+        let prev_h = prev.height() as i32;
+
+        // Downsample with box filter (average of 2x2)
+        let mut samples = vec![0.0f32; nch];
+        for y in 0..h {
+            for x in 0..w {
+                for c in 0..nch {
+                    samples[c] = 0.0;
+                }
+                let mut total_weight = 0.0f32;
+
+                // Sample 2x2 block from previous level
+                for dy in 0..2i32 {
+                    for dx in 0..2i32 {
+                        let px = (x as i32 * 2 + dx).min(prev_w - 1);
+                        let py = (y as i32 * 2 + dy).min(prev_h - 1);
+                        prev.getpixel(px, py, 0, &mut pixel, WrapMode::Clamp);
+
+                        let alpha = pixel[alpha_channel];
+                        if alpha > 0.0 {
+                            // Weight by alpha for proper blending
+                            for c in 0..nch {
+                                samples[c] += pixel[c] * alpha;
+                            }
+                            total_weight += alpha;
+                        }
+                    }
+                }
+
+                // Divide by total weight (renormalize)
+                if total_weight > 0.0 {
+                    for c in 0..nch {
+                        samples[c] /= total_weight;
+                    }
+                }
+
+                small.setpixel(x as i32, y as i32, 0, &samples);
+            }
+        }
+
+        pyramid.push(small);
+    }
+
+    // Pull phase: composite from bottom up
+    for i in (0..pyramid.len() - 1).rev() {
+        let big = &pyramid[i];
+        let big_w = big.width() as usize;
+        let big_h = big.height() as usize;
+
+        // Create upscaled version of smaller level
+        let small = &pyramid[i + 1];
+
+        let mut result = ImageBuf::new(big.spec().clone(), InitializePixels::No);
+        let mut big_pixel = vec![0.0f32; nch];
+        let mut small_pixel = vec![0.0f32; nch];
+        let mut out_pixel = vec![0.0f32; nch];
+
+        for y in 0..big_h {
+            for x in 0..big_w {
+                big.getpixel(x as i32, y as i32, 0, &mut big_pixel, WrapMode::Black);
+
+                // Bilinear sample from small
+                let sx = x as f32 / 2.0;
+                let sy = y as f32 / 2.0;
+                let sx0 = sx.floor() as i32;
+                let sy0 = sy.floor() as i32;
+                let fx = sx - sx0 as f32;
+                let fy = sy - sy0 as f32;
+
+                // Get 4 samples for bilinear interpolation
+                let mut s00 = vec![0.0f32; nch];
+                let mut s10 = vec![0.0f32; nch];
+                let mut s01 = vec![0.0f32; nch];
+                let mut s11 = vec![0.0f32; nch];
+
+                small.getpixel(sx0, sy0, 0, &mut s00, WrapMode::Clamp);
+                small.getpixel(sx0 + 1, sy0, 0, &mut s10, WrapMode::Clamp);
+                small.getpixel(sx0, sy0 + 1, 0, &mut s01, WrapMode::Clamp);
+                small.getpixel(sx0 + 1, sy0 + 1, 0, &mut s11, WrapMode::Clamp);
+
+                // Bilinear interpolation
+                for c in 0..nch {
+                    let top = s00[c] * (1.0 - fx) + s10[c] * fx;
+                    let bottom = s01[c] * (1.0 - fx) + s11[c] * fx;
+                    small_pixel[c] = top * (1.0 - fy) + bottom * fy;
+                }
+
+                // Composite: big over upscaled small
+                let alpha = big_pixel[alpha_channel].clamp(0.0, 1.0);
+                let inv_alpha = 1.0 - alpha;
+
+                for c in 0..nch {
+                    out_pixel[c] = big_pixel[c] + small_pixel[c] * inv_alpha;
+                }
+
+                result.setpixel(x as i32, y as i32, 0, &out_pixel);
+            }
+        }
+
+        pyramid[i] = result;
+    }
+
+    pyramid.into_iter().next().unwrap()
+}
+
+/// Fill holes into existing destination buffer.
+pub fn fillholes_pushpull_into(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi3D>) {
+    let result = fillholes_pushpull(src, roi);
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let nch = result.nchannels() as usize;
+    let mut pixel = vec![0.0f32; nch];
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                result.getpixel(x, y, z, &mut pixel, WrapMode::Black);
+                dst.setpixel(x, y, z, &pixel);
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Kernel Generation
+// ============================================================================
+
+/// Create a filter kernel by name.
+///
+/// Generates various filter kernels for use with convolution operations.
+///
+/// # Supported kernels
+/// - "box" - Box/average filter
+/// - "gaussian" - Gaussian blur kernel
+/// - "triangle" - Triangle/tent filter (linear interpolation)
+/// - "laplacian" - Laplacian edge detection (3x3 only)
+/// - "binomial" - Binomial filter (approximates Gaussian)
+/// - "sharpen" - Simple sharpening kernel (3x3)
+///
+/// # Arguments
+/// * `name` - Kernel name (case insensitive)
+/// * `width` - Kernel width
+/// * `height` - Kernel height
+/// * `normalize` - Whether to normalize kernel to sum to 1.0
+///
+/// # Example
+/// ```ignore
+/// use vfx_io::imagebufalgo::make_kernel;
+///
+/// let gaussian = make_kernel("gaussian", 5.0, 5.0, true);
+/// let laplacian = make_kernel("laplacian", 3.0, 3.0, false);
+/// ```
+pub fn make_kernel(name: &str, width: f32, height: f32, normalize: bool) -> ImageBuf {
+    // Round up to odd size
+    let w = (width.ceil() as usize).max(1) | 1;
+    let h = (height.ceil() as usize).max(1) | 1;
+
+    let spec = vfx_core::ImageSpec::gray(w as u32, h as u32);
+    let mut kernel = ImageBuf::new(spec, InitializePixels::No);
+
+    let name_lower = name.to_lowercase();
+
+    match name_lower.as_str() {
+        "gaussian" => {
+            // Gaussian kernel
+            let sigma_x = width / 6.0; // 3 sigma rule
+            let sigma_y = height / 6.0;
+            let cx = (w / 2) as f32;
+            let cy = (h / 2) as f32;
+
+            for y in 0..h {
+                for x in 0..w {
+                    let dx = x as f32 - cx;
+                    let dy = y as f32 - cy;
+                    let val = (-0.5 * ((dx * dx) / (sigma_x * sigma_x) + (dy * dy) / (sigma_y * sigma_y))).exp();
+                    kernel.setpixel(x as i32, y as i32, 0, &[val]);
+                }
+            }
+        }
+        "box" => {
+            // Box/average filter
+            let val = 1.0;
+            for y in 0..h {
+                for x in 0..w {
+                    kernel.setpixel(x as i32, y as i32, 0, &[val]);
+                }
+            }
+        }
+        "triangle" | "tent" => {
+            // Triangle/tent filter
+            let cx = (w / 2) as f32;
+            let cy = (h / 2) as f32;
+            let rx = cx + 0.5;
+            let ry = cy + 0.5;
+
+            for y in 0..h {
+                for x in 0..w {
+                    let dx = (x as f32 - cx).abs();
+                    let dy = (y as f32 - cy).abs();
+                    let wx = (1.0 - dx / rx).max(0.0);
+                    let wy = (1.0 - dy / ry).max(0.0);
+                    kernel.setpixel(x as i32, y as i32, 0, &[wx * wy]);
+                }
+            }
+        }
+        "laplacian" => {
+            // Laplacian edge detection (only valid for 3x3)
+            if w == 3 && h == 3 {
+                let vals = [
+                    0.0, 1.0, 0.0,
+                    1.0, -4.0, 1.0,
+                    0.0, 1.0, 0.0,
+                ];
+                for y in 0..3 {
+                    for x in 0..3 {
+                        kernel.setpixel(x as i32, y as i32, 0, &[vals[y * 3 + x]]);
+                    }
+                }
+                // Laplacian sums to 0, don't normalize
+                return kernel;
+            } else {
+                // For non-3x3, use discrete Laplacian approximation
+                let cx = (w / 2) as f32;
+                let cy = (h / 2) as f32;
+
+                for y in 0..h {
+                    for x in 0..w {
+                        let dx = (x as f32 - cx).abs();
+                        let dy = (y as f32 - cy).abs();
+                        let dist = (dx * dx + dy * dy).sqrt();
+                        let val = if dist < 0.5 {
+                            -((w * h) as f32) + 1.0
+                        } else {
+                            1.0
+                        };
+                        kernel.setpixel(x as i32, y as i32, 0, &[val]);
+                    }
+                }
+                return kernel; // Don't normalize
+            }
+        }
+        "binomial" => {
+            // Binomial filter (approximates Gaussian)
+            let mut row_w = vec![1.0f32; w];
+            let mut row_h = vec![1.0f32; h];
+
+            // Build binomial coefficients for width
+            for _ in 1..w {
+                let mut new_row = vec![0.0f32; w];
+                new_row[0] = row_w[0];
+                for i in 1..w {
+                    new_row[i] = row_w[i - 1] + row_w[i];
+                }
+                row_w = new_row;
+            }
+
+            // Build binomial coefficients for height
+            if h != w {
+                for _ in 1..h {
+                    let mut new_row = vec![0.0f32; h];
+                    new_row[0] = row_h[0];
+                    for i in 1..h {
+                        new_row[i] = row_h[i - 1] + row_h[i];
+                    }
+                    row_h = new_row;
+                }
+            } else {
+                row_h = row_w.clone();
+            }
+
+            for y in 0..h {
+                for x in 0..w {
+                    kernel.setpixel(x as i32, y as i32, 0, &[row_w[x] * row_h[y]]);
+                }
+            }
+        }
+        "sharpen" => {
+            // Simple sharpening kernel (3x3)
+            if w >= 3 && h >= 3 {
+                // Fill with zeros first
+                for y in 0..h {
+                    for x in 0..w {
+                        kernel.setpixel(x as i32, y as i32, 0, &[0.0]);
+                    }
+                }
+                // Set center 3x3 sharpen kernel
+                let cx = w / 2;
+                let cy = h / 2;
+                let sharpen = [
+                    0.0, -1.0, 0.0,
+                    -1.0, 5.0, -1.0,
+                    0.0, -1.0, 0.0,
+                ];
+                for dy in 0..3usize {
+                    for dx in 0..3usize {
+                        let x = (cx - 1 + dx) as i32;
+                        let y = (cy - 1 + dy) as i32;
+                        kernel.setpixel(x, y, 0, &[sharpen[dy * 3 + dx]]);
+                    }
+                }
+                return kernel; // Don't normalize sharpen
+            } else {
+                // Fallback to box
+                for y in 0..h {
+                    for x in 0..w {
+                        kernel.setpixel(x as i32, y as i32, 0, &[1.0]);
+                    }
+                }
+            }
+        }
+        _ => {
+            // Unknown kernel - use box filter
+            for y in 0..h {
+                for x in 0..w {
+                    kernel.setpixel(x as i32, y as i32, 0, &[1.0]);
+                }
+            }
+        }
+    }
+
+    // Normalize if requested
+    if normalize {
+        let mut sum = 0.0f32;
+        let mut pixel = [0.0f32];
+
+        for y in 0..h {
+            for x in 0..w {
+                kernel.getpixel(x as i32, y as i32, 0, &mut pixel, WrapMode::Black);
+                sum += pixel[0];
+            }
+        }
+
+        if sum != 0.0 && sum != 1.0 {
+            for y in 0..h {
+                for x in 0..w {
+                    kernel.getpixel(x as i32, y as i32, 0, &mut pixel, WrapMode::Black);
+                    pixel[0] /= sum;
+                    kernel.setpixel(x as i32, y as i32, 0, &pixel);
+                }
+            }
+        }
+    }
+
+    kernel
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

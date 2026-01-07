@@ -675,6 +675,144 @@ pub fn color_range_check(
 }
 
 // ============================================================================
+// Color Counting
+// ============================================================================
+
+/// Count pixels matching specific colors.
+///
+/// For each color in the list, counts how many pixels in the image match
+/// that color within the specified epsilon tolerance.
+///
+/// # Arguments
+/// * `src` - Source image
+/// * `colors` - List of colors to count (flattened: [r1,g1,b1,a1,r2,g2,b2,a2,...])
+/// * `epsilon` - Tolerance per channel for color matching
+/// * `roi` - Region of interest (or None for full image)
+///
+/// # Returns
+/// Vector with count for each color
+///
+/// # Example
+/// ```ignore
+/// use vfx_io::imagebuf::ImageBuf;
+/// use vfx_io::imagebufalgo::color_count;
+///
+/// let img = ImageBuf::read("image.exr").unwrap();
+/// // Count red and green pixels
+/// let colors = vec![1.0, 0.0, 0.0, 1.0,  // red
+///                   0.0, 1.0, 0.0, 1.0]; // green
+/// let epsilon = vec![0.01, 0.01, 0.01, 0.01];
+/// let counts = color_count(&img, &colors, &epsilon, None);
+/// println!("Red pixels: {}, Green pixels: {}", counts[0], counts[1]);
+/// ```
+pub fn color_count(src: &ImageBuf, colors: &[f32], epsilon: &[f32], roi: Option<Roi3D>) -> Vec<u64> {
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let nch = src.nchannels() as usize;
+
+    // Calculate number of colors
+    if colors.is_empty() || nch == 0 {
+        return Vec::new();
+    }
+    let ncolors = colors.len() / nch;
+
+    // Extend epsilon to nch if needed
+    let mut eps = vec![0.001f32; nch];
+    for (i, &e) in epsilon.iter().enumerate() {
+        if i < nch {
+            eps[i] = e;
+        }
+    }
+    // Fill remaining with last epsilon or default
+    if !epsilon.is_empty() {
+        let last = *epsilon.last().unwrap();
+        for e in eps.iter_mut().skip(epsilon.len()) {
+            *e = last;
+        }
+    }
+
+    let mut counts = vec![0u64; ncolors];
+    let mut pixel = vec![0.0f32; nch];
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                src.getpixel(x, y, z, &mut pixel, WrapMode::Black);
+
+                // Check each color
+                for col in 0..ncolors {
+                    let color_offset = col * nch;
+                    let mut matches = true;
+
+                    for c in 0..nch {
+                        if (pixel[c] - colors[color_offset + c]).abs() > eps[c] {
+                            matches = false;
+                            break;
+                        }
+                    }
+
+                    if matches {
+                        counts[col] += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    counts
+}
+
+/// Count unique colors in an image.
+///
+/// Returns the number of distinct pixel values in the image.
+/// For images with many colors, this may require significant memory.
+///
+/// # Arguments
+/// * `src` - Source image
+/// * `roi` - Region of interest (or None for full image)
+///
+/// # Returns
+/// Number of unique colors found
+pub fn unique_color_count(src: &ImageBuf, roi: Option<Roi3D>) -> usize {
+    use std::collections::HashSet;
+    use std::hash::{Hash, Hasher};
+
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let nch = src.nchannels() as usize;
+
+    // Use a wrapper for hashing floats (quantized to avoid floating point issues)
+    #[derive(Clone, Eq, PartialEq)]
+    struct QuantizedColor(Vec<i64>);
+
+    impl Hash for QuantizedColor {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.0.hash(state);
+        }
+    }
+
+    let mut unique = HashSet::new();
+    let mut pixel = vec![0.0f32; nch];
+
+    // Quantize to avoid floating point comparison issues (1/65536 precision)
+    let scale = 65536.0;
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                src.getpixel(x, y, z, &mut pixel, WrapMode::Black);
+
+                let quantized: Vec<i64> = pixel.iter()
+                    .map(|&v| (v * scale).round() as i64)
+                    .collect();
+
+                unique.insert(QuantizedColor(quantized));
+            }
+        }
+    }
+
+    unique.len()
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 

@@ -13,6 +13,7 @@
 //! - [`composite`] - Compositing operations (Porter-Duff, blend modes)
 //! - [`stats`] - Statistics and analysis (histogram, compare, min/max)
 //! - [`ocio`] - OCIO color conversion (colorconvert, ociodisplay, ociolook)
+//! - [`fft`] - Fast Fourier Transform operations
 //!
 //! # Example
 //!
@@ -41,12 +42,22 @@ pub mod stats;
 pub mod ocio;
 pub mod deep;
 pub mod filters;
+pub mod fft;
+pub mod drawing;
+pub mod warp;
 
 // Re-export commonly used functions
 pub use patterns::{zero, fill, checker, noise};
-pub use channels::{channels, channel_append, channel_sum};
-pub use geometry::{crop, cut, flip, flop, transpose, rotate90, rotate180, rotate270, resize};
-pub use arithmetic::{add, sub, mul, div, abs, absdiff, pow, clamp, invert, over};
+pub use channels::{channels, channel_append, channel_sum, extract_channel, flatten, get_alpha};
+pub use geometry::{
+    crop, cut, flip, flop, transpose,
+    rotate90, rotate180, rotate270,
+    resize, resample, fit,
+    rotate, circular_shift, paste,
+    reorient, reorient_auto,
+    ResizeFilter,
+};
+pub use arithmetic::{add, sub, mul, div, abs, absdiff, pow, clamp, invert, over, max, min, mad, normalize, normalize_into};
 
 // Color operations
 pub use color::{
@@ -65,6 +76,8 @@ pub use composite::{
     // Blend modes
     screen, multiply, overlay, hardlight, softlight,
     difference, exclusion, colordodge, colorburn, add_blend,
+    // Z-depth compositing
+    zover, zover_into,
 };
 
 // Statistics operations
@@ -75,6 +88,7 @@ pub use stats::{
     histogram, Histogram,
     maxchan, minchan,
     color_range_check, RangeCheckResult,
+    color_count, unique_color_count,
 };
 
 // OCIO color conversion operations
@@ -83,12 +97,13 @@ pub use ocio::{
     ociodisplay, ociodisplay_into,
     ociolook, ociolook_into,
     ociofiletransform, ociofiletransform_into,
+    ocionamedtransform, ocionamedtransform_into,
     equivalent_colorspace,
 };
 
 // Deep image operations
 pub use deep::{
-    flatten, flatten_into,
+    flatten_deep, flatten_deep_into,
     deepen, deepen_with_z,
     deep_merge, deep_merge_into,
     deep_holdout, deep_holdout_matte,
@@ -106,4 +121,29 @@ pub use filters::{
     laplacian, sharpen, sobel,
     convolve, convolve_into,
     box_blur, box_blur_into,
+    fillholes_pushpull, fillholes_pushpull_into,
+    make_kernel,
+};
+
+// FFT operations
+pub use fft::{
+    fft, fft_into,
+    ifft, ifft_into,
+    complex_to_polar, complex_to_polar_into,
+    polar_to_complex, polar_to_complex_into,
+};
+
+// Drawing operations
+pub use drawing::{
+    render_point, render_line, render_box,
+    render_circle, render_ellipse, render_polygon,
+};
+
+// Warp operations
+pub use warp::{
+    warp, warp_into,
+    st_warp, st_warp_into,
+    WarpWrap,
+    matrix_identity, matrix_translate, matrix_scale, matrix_rotate, matrix_shear,
+    matrix_multiply, matrix_invert,
 };

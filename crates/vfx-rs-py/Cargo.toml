@@ -15,6 +15,7 @@ pyo3.workspace = true
 numpy.workspace = true
 
 # Internal crates
+vfx-core = { path = "../vfx-core" }
 vfx-io = { path = "../vfx-io", features = ["exr", "png", "jpeg", "tiff", "dpx", "hdr"] }
 vfx-compute = { path = "../vfx-compute", features = ["io"] }
 vfx-lut = { path = "../vfx-lut" }
