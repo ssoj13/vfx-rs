@@ -303,6 +303,7 @@ pub fn count_holes(src: &ImageBuf, options: &FillHolesOptions) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vfx_core::ImageSpec;
 
     #[test]
     fn test_no_holes() {

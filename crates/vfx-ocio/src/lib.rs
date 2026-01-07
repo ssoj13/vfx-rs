@@ -83,7 +83,7 @@ pub mod validate;
 
 // Re-exports
 pub use error::{OcioError, OcioResult};
-pub use config::{Config, ConfigVersion, FileRule};
+pub use config::{Config, ConfigVersion, FileRule, NamedTransform, SharedView};
 pub use colorspace::{ColorSpace, Encoding, Family, BitDepth, AllocationInfo, AllocationType, ColorSpaceBuilder};
 pub use transform::{
     Transform, TransformDirection, Interpolation,

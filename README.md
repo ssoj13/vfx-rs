@@ -29,7 +29,8 @@ OpenImageIO and OpenColorIO are industry-standard tools that power countless pro
 | **LUTs** | .cube, .clf, .spi1d/.spi3d, .csp |
 | **Operations** | Resize, Crop, Rotate, Flip, Blur, Sharpen, Composite |
 | **ACES** | IDT, RRT, ODT, LMT transforms |
-| **GPU** | Matrix, CDL, LUT1D/3D, Resize, Blur, Compositing |
+| **I/O** | Streaming read/write, tiled caching, multi-layer EXR |
+| **GPU** | Auto backend selection, automatic tiling, operation fusion |
 
 ## Quick Start
 
@@ -90,6 +91,40 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
+### OCIO Integration
+
+```rust
+use vfx_ocio::{Config, Processor};
+
+fn main() -> anyhow::Result<()> {
+    // Load config from $OCIO or explicit path
+    let config = Config::from_env()?;  // or Config::from_file("config.ocio")?
+    
+    // List available color spaces
+    for cs in config.color_spaces() {
+        println!("{}: {}", cs.name(), cs.family());
+    }
+    
+    // Create processor for color space conversion
+    let processor = config.processor("ACEScg", "sRGB")?;
+    
+    // Apply to image data
+    let mut pixels: Vec<f32> = read_pixels("render.exr")?;
+    processor.apply(&mut pixels, 4)?;  // 4 channels (RGBA)
+    
+    // Display transform with look
+    let display_processor = config.display_processor(
+        "ACEScg",      // input space
+        "sRGB",        // display
+        "Film",        // view
+        Some("Warm"),  // optional look
+    )?;
+    display_processor.apply(&mut pixels, 4)?;
+    
+    Ok(())
+}
+```
+
 ## Architecture
 
 ```
@@ -118,24 +153,26 @@ vfx-rs/
 |---------|--------|
 | Image I/O (11 formats) | **Production-ready** |
 | Multi-layer EXR | **Production-ready** |
-| Streaming/Tiled I/O | **Production-ready** |
+| Streaming I/O | **Production-ready** - progressive read/write for large files |
+| Tiled image caching | **Production-ready** - on-demand tile loading |
 | UDIM textures | **Production-ready** |
 | ImageBufAlgo (100+ functions) | Partial |
 | Deep data | Not implemented |
 | Plugin system | Not implemented |
 
-### vs OpenColorIO (~70%)
+### vs OpenColorIO (~90%)
 
 | Feature | Status |
 |---------|--------|
 | Config YAML parsing | **Production-ready** |
 | ColorSpace definitions | **Production-ready** |
 | Roles, Displays, Views | **Production-ready** |
+| Shared Views (v2.3+) | **Production-ready** |
 | Context variables | **Production-ready** |
 | Matrix/CDL/Log/Range transforms | **Production-ready** |
 | BuiltinTransform | **Production-ready** |
-| FileTransform (LUTs) | Partial |
-| GradingPrimary/Tone/Curve | Defined, not parsed |
+| FileTransform (LUTs) | **Production-ready** - .cube, .spi1d, .spi3d, .clf, .ctf |
+| GradingPrimary/Tone/Curve | **Production-ready** |
 
 ### Transfer Functions (100%)
 
@@ -155,11 +192,11 @@ All major camera log curves verified against manufacturer specs:
 
 ## GPU Acceleration
 
-vfx-compute provides transparent GPU acceleration:
+vfx-compute provides transparent GPU acceleration with smart defaults:
 
 ```rust
 let processor = Processor::builder()
-    .backend(Backend::Auto)  // Auto-select best GPU
+    .backend(Backend::Auto)  // Auto-select best available
     .build()?;
 
 // Operations run on GPU when available
@@ -168,12 +205,19 @@ processor.blur(&mut img, 5.0)?;
 processor.composite_over(&fg, &mut bg)?;
 ```
 
+**Key features:**
+
+| Feature | Description |
+|---------|-------------|
+| **Auto backend selection** | Automatically picks best GPU: CUDA > wgpu (discrete) > wgpu (integrated) > CPU |
+| **Automatic tiling** | Large images split into tiles based on VRAM limits, stitched transparently |
+| **VRAM detection** | Cross-platform GPU memory detection (DXGI, Metal, NVML, sysfs) |
+| **Operation fusion** | Sequential color ops merged into single GPU pass when possible |
+
 **Supported backends:**
-- **CPU** - Always available, SIMD via rayon
+- **CPU** - Always available, parallel via rayon
 - **wgpu** - Vulkan, Metal, DX12 (feature: `wgpu`)
 - **CUDA** - NVIDIA GPUs (feature: `cuda`)
-
-Backend selection: CUDA > wgpu (discrete) > wgpu (integrated) > CPU
 
 ## CLI Reference
 

@@ -17,7 +17,7 @@ VFX-RS is a well-architected Rust implementation of color management and image I
 | **LUT Support** | **GOOD** | 1D, 3D, CLF, CTF, cube formats |
 | **CDL** | **GOOD** | Full ASC-CDL with saturation |
 | **Image I/O** | **GOOD** | 11 formats, streaming, caching |
-| **OCIO Parity** | **~70%** | Missing grading transform parsing, LUT processor |
+| **OCIO Parity** | **~90%** | Full v2.3 support including shared_views |
 | **OIIO Parity** | **~50%** | Missing ImageBufAlgo (100+ functions) |
 | **Code Quality** | **EXCELLENT** | Zero TODO/FIXME, clean code |
 
@@ -185,23 +185,23 @@ C = 0.5 - A*ln(4*A)   // correct
 | ExponentTransform | GOOD |
 | LogTransform | GOOD |
 | RangeTransform | GOOD |
-| FileTransform | STUB |
+| FileTransform | GOOD - .cube, .spi1d, .spi3d, .clf, .ctf |
 | BuiltinTransform | GOOD |
 | GroupTransform | GOOD |
 | AllocationTransform | GOOD |
-| GradingPrimaryTransform | DEFINED, NOT PARSED |
-| GradingRgbCurveTransform | DEFINED, NOT PARSED |
-| GradingToneTransform | DEFINED, NOT PARSED |
+| GradingPrimaryTransform | GOOD - full YAML parsing + processor |
+| GradingRgbCurveTransform | GOOD - full YAML parsing + processor |
+| GradingToneTransform | GOOD - full YAML parsing + processor |
 
 ### 3.2 Missing Features (HIGH PRIORITY)
 
-1. **LUT Evaluation in Processor**
-   - `FileTransform` defined but LUT application not implemented
-   - Delegates to vfx-lut but not wired up in processor
+1. ~~**LUT Evaluation in Processor**~~ **DONE**
+   - FileTransform fully implemented with .cube, .spi1d, .spi3d, .clf, .ctf support
+   - compile_lut1d/compile_lut3d generate Op::Lut1d/Op::Lut3d
 
-2. **Grading Transform Parsing**
-   - Transform enum has variants but `parse_tagged_transform()` doesn't handle them
-   - config.rs lines ~600-700 missing cases
+2. ~~**Grading Transform Parsing**~~ **DONE**
+   - All three grading transforms now parsed: GradingPrimaryTransform, GradingRGBCurveTransform, GradingToneTransform
+   - Added helper functions: parse_rgbm(), parse_curve_points()
 
 3. **Processor Apply Method**
    - Transform chain compilation incomplete
@@ -348,8 +348,8 @@ Methods like `to_f32()`, `to_u8()` duplicated.
 
 | ID | Location | Description |
 |----|----------|-------------|
-| BUG-001 | vfx-ocio/config.rs | GradingTransform parsing not implemented |
-| BUG-002 | vfx-ocio/processor.rs | LUT application not wired to FileTransform |
+| ~~BUG-001~~ | ~~vfx-ocio/config.rs~~ | ~~GradingTransform parsing not implemented~~ **FIXED** |
+| ~~BUG-002~~ | ~~vfx-ocio/processor.rs~~ | ~~LUT application not wired to FileTransform~~ **FIXED** |
 | BUG-003 | vfx-ocio/processor.rs | Matrix inversion missing for inverse direction |
 | BUG-004 | vfx-ocio/display.rs:854 | View transform logic ambiguous for dual-reference |
 

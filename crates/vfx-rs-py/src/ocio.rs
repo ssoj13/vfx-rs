@@ -313,6 +313,49 @@ impl ColorConfig {
         self.inner.has_look(name)
     }
 
+    // ========================================================================
+    // Named Transforms (OCIO v2.0+)
+    // ========================================================================
+
+    /// Number of named transforms.
+    pub fn num_named_transforms(&self) -> usize {
+        self.inner.num_named_transforms()
+    }
+
+    /// Get all named transform names.
+    pub fn named_transform_names(&self) -> Vec<String> {
+        self.inner.named_transform_names().iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Check if named transform exists.
+    pub fn has_named_transform(&self, name: &str) -> bool {
+        self.inner.has_named_transform(name)
+    }
+
+    /// Get named transform family.
+    pub fn named_transform_family(&self, name: &str) -> Option<String> {
+        self.inner.named_transform_family(name).map(|s| s.to_string())
+    }
+
+    /// Get named transform description.
+    pub fn named_transform_description(&self, name: &str) -> Option<String> {
+        self.inner.named_transform_description(name).map(|s| s.to_string())
+    }
+
+    // ========================================================================
+    // Shared Views (OCIO v2.3+)
+    // ========================================================================
+
+    /// Number of shared views.
+    pub fn num_shared_views(&self) -> usize {
+        self.inner.num_shared_views()
+    }
+
+    /// Get all shared view names.
+    pub fn shared_view_names(&self) -> Vec<String> {
+        self.inner.shared_view_names().iter().map(|s| s.to_string()).collect()
+    }
+
 }
 
 impl ColorConfig {

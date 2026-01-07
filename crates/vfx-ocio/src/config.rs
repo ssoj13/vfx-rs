@@ -63,6 +63,10 @@ pub struct Config {
     active_displays: Vec<String>,
     /// Active views (subset to show in UI).
     active_views: Vec<String>,
+    /// Shared views (OCIO v2.3+).
+    shared_views: Vec<SharedView>,
+    /// Named transforms (OCIO v2.0+).
+    named_transforms: Vec<NamedTransform>,
     /// Inactive color spaces (hidden from UI).
     #[allow(dead_code)]
     inactive_colorspaces: Vec<String>,
@@ -94,6 +98,40 @@ pub struct FileRule {
     pub colorspace: String,
     /// Rule matching kind.
     pub kind: FileRuleKind,
+}
+
+/// Named transform definition (OCIO v2.0+).
+/// Standalone transforms that can be referenced by name.
+#[derive(Debug, Clone)]
+pub struct NamedTransform {
+    /// Transform name.
+    pub name: String,
+    /// Family grouping.
+    pub family: Option<String>,
+    /// Description.
+    pub description: Option<String>,
+    /// Forward transform.
+    pub forward: Option<Transform>,
+    /// Inverse transform.
+    pub inverse: Option<Transform>,
+}
+
+/// Shared view definition (OCIO v2.3+).
+/// Shared views can be referenced by multiple displays.
+#[derive(Debug, Clone)]
+pub struct SharedView {
+    /// View name.
+    pub name: String,
+    /// View transform (optional).
+    pub view_transform: Option<String>,
+    /// Display color space.
+    pub display_colorspace: String,
+    /// Look (optional).
+    pub looks: Option<String>,
+    /// Rule (optional).
+    pub rule: Option<String>,
+    /// Description (optional).
+    pub description: Option<String>,
 }
 
 /// File rule matching behavior.
@@ -132,6 +170,8 @@ impl Config {
             looks: LookManager::new(),
             active_displays: Vec::new(),
             active_views: Vec::new(),
+            shared_views: Vec::new(),
+            named_transforms: Vec::new(),
             inactive_colorspaces: Vec::new(),
             file_rules: Vec::new(),
             context: Context::new(),
@@ -206,6 +246,8 @@ impl Config {
             looks: LookManager::new(),
             active_displays: yaml_str_list(root, "active_displays"),
             active_views: yaml_str_list(root, "active_views"),
+            shared_views: parse_shared_views(root),
+            named_transforms: Vec::new(),  // Parsed below after config is created
             inactive_colorspaces: yaml_str_list(root, "inactive_colorspaces"),
             file_rules: Vec::new(),
             context: Context::new(),
@@ -234,6 +276,17 @@ impl Config {
                                 return Err(e);
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // Parse named transforms (OCIO v2.0+)
+        if let Some(named) = yaml_get(root, "named_transforms") {
+            if let Yaml::Sequence(seq) = unwrap_tagged(named) {
+                for nt_yaml in seq {
+                    if let Ok(nt) = config.parse_named_transform(nt_yaml) {
+                        config.named_transforms.push(nt);
                     }
                 }
             }
@@ -461,6 +514,35 @@ impl Config {
         Ok(builder.build())
     }
 
+    /// Parses a named transform from YAML (OCIO v2.0+).
+    fn parse_named_transform(&self, yaml: &Yaml) -> OcioResult<NamedTransform> {
+        let yaml = unwrap_tagged(yaml);
+        let name = yaml_str(yaml, "name")
+            .ok_or_else(|| OcioError::Yaml("named_transform missing name".into()))?;
+        
+        let forward = if let Some(t) = yaml_get(yaml, "transform") {
+            self.parse_transform(t).ok()
+        } else if let Some(t) = yaml_get(yaml, "forward_transform") {
+            self.parse_transform(t).ok()
+        } else {
+            None
+        };
+        
+        let inverse = if let Some(t) = yaml_get(yaml, "inverse_transform") {
+            self.parse_transform(t).ok()
+        } else {
+            None
+        };
+        
+        Ok(NamedTransform {
+            name: name.to_string(),
+            family: yaml_str(yaml, "family").map(|s| s.to_string()),
+            description: yaml_str(yaml, "description").map(|s| s.to_string()),
+            forward,
+            inverse,
+        })
+    }
+
     /// Parses a transform from YAML (handles tags like !<MatrixTransform>).
     fn parse_transform(&self, yaml: &Yaml) -> OcioResult<Transform> {
         // Check if it's a sequence (group of transforms)
@@ -642,6 +724,50 @@ impl Config {
                     }
                 }
                 Err(OcioError::Yaml("GroupTransform missing children".into()))
+            }
+
+            "GradingPrimaryTransform" => {
+                Ok(Transform::GradingPrimary(GradingPrimaryTransform {
+                    lift: parse_rgb(yaml_f64_list(yaml, "lift"), 0.0),
+                    gamma: parse_rgb(yaml_f64_list(yaml, "gamma"), 1.0),
+                    gain: parse_rgb(yaml_f64_list(yaml, "gain"), 1.0),
+                    offset: yaml_f64(yaml, "offset").unwrap_or(0.0),
+                    exposure: yaml_f64(yaml, "exposure").unwrap_or(0.0),
+                    contrast: yaml_f64(yaml, "contrast").unwrap_or(1.0),
+                    saturation: yaml_f64(yaml, "saturation").unwrap_or(1.0),
+                    pivot: yaml_f64(yaml, "pivot").unwrap_or(0.18),
+                    clamp_black: yaml_f64(yaml, "clamp_black"),
+                    clamp_white: yaml_f64(yaml, "clamp_white"),
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
+
+            "GradingRGBCurveTransform" => {
+                let identity = vec![[0.0, 0.0], [1.0, 1.0]];
+                Ok(Transform::GradingRgbCurve(GradingRgbCurveTransform {
+                    red: parse_curve_points(yaml_get(yaml, "red")).unwrap_or_else(|| identity.clone()),
+                    green: parse_curve_points(yaml_get(yaml, "green")).unwrap_or_else(|| identity.clone()),
+                    blue: parse_curve_points(yaml_get(yaml, "blue")).unwrap_or_else(|| identity.clone()),
+                    master: parse_curve_points(yaml_get(yaml, "master")).unwrap_or(identity),
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
+
+            "GradingToneTransform" => {
+                let neutral = [1.0, 1.0, 1.0, 1.0];
+                let black = [0.0, 0.0, 0.0, 0.0];
+                Ok(Transform::GradingTone(GradingToneTransform {
+                    shadows: parse_rgbm(yaml_f64_list(yaml, "shadows"), neutral),
+                    midtones: parse_rgbm(yaml_f64_list(yaml, "midtones"), neutral),
+                    highlights: parse_rgbm(yaml_f64_list(yaml, "highlights"), neutral),
+                    whites: parse_rgbm(yaml_f64_list(yaml, "whites"), neutral),
+                    blacks: parse_rgbm(yaml_f64_list(yaml, "blacks"), black),
+                    shadow_start: yaml_f64(yaml, "shadow_start").unwrap_or(0.0),
+                    shadow_pivot: yaml_f64(yaml, "shadow_pivot").unwrap_or(0.09),
+                    highlight_start: yaml_f64(yaml, "highlight_start").unwrap_or(0.5),
+                    highlight_pivot: yaml_f64(yaml, "highlight_pivot").unwrap_or(0.89),
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
             }
 
             _ => Err(OcioError::Yaml(format!("unknown transform type: {}", tag))),
@@ -1733,8 +1859,17 @@ impl Config {
     /// Placeholder for named transform count.
     /// Named transforms are a v2 feature for reusable transform definitions.
     pub fn num_named_transforms(&self) -> usize {
-        // TODO: Add named_transforms storage when implementing full v2 support
-        0
+        self.named_transforms.len()
+    }
+
+    /// Returns all named transforms.
+    pub fn named_transforms(&self) -> &[NamedTransform] {
+        &self.named_transforms
+    }
+
+    /// Gets a named transform by name.
+    pub fn named_transform(&self, name: &str) -> Option<&NamedTransform> {
+        self.named_transforms.iter().find(|nt| nt.name == name)
     }
 
     // ========================================================================
@@ -1744,8 +1879,12 @@ impl Config {
     /// Gets the number of shared views.
     /// Shared views are display-independent views defined at the config level.
     pub fn num_shared_views(&self) -> usize {
-        // TODO: Add shared_views storage when implementing full v2 support
-        0
+        self.shared_views.len()
+    }
+
+    /// Returns shared views (OCIO v2.3+).
+    pub fn shared_views(&self) -> &[SharedView] {
+        &self.shared_views
     }
 
     // ========================================================================
@@ -2008,6 +2147,62 @@ fn parse_rgb(v: Vec<f64>, default: f64) -> [f64; 3] {
     }
 }
 
+/// Parses shared_views from YAML (OCIO v2.3+).
+fn parse_shared_views(root: &Yaml) -> Vec<SharedView> {
+    let mut views = Vec::new();
+    if let Some(Yaml::Sequence(seq)) = yaml_get(root, "shared_views") {
+        for item in seq {
+            let item = unwrap_tagged(item);
+            if let Some(name) = yaml_str(item, "name") {
+                let display_colorspace = yaml_str(item, "colorspace")
+                    .or_else(|| yaml_str(item, "display_colorspace"))
+                    .unwrap_or("")
+                    .to_string();
+                views.push(SharedView {
+                    name: name.to_string(),
+                    view_transform: yaml_str(item, "view_transform").map(|s| s.to_string()),
+                    display_colorspace,
+                    looks: yaml_str(item, "looks").map(|s| s.to_string()),
+                    rule: yaml_str(item, "rule").map(|s| s.to_string()),
+                    description: yaml_str(item, "description").map(|s| s.to_string()),
+                });
+            }
+        }
+    }
+    views
+}
+
+/// Parses RGBM (RGB + Master) array for grading transforms.
+fn parse_rgbm(v: Vec<f64>, default: [f64; 4]) -> [f64; 4] {
+    match v.len() {
+        n if n >= 4 => [v[0], v[1], v[2], v[3]],
+        3 => [v[0], v[1], v[2], default[3]],
+        1 => [v[0], v[0], v[0], v[0]],
+        _ => default,
+    }
+}
+
+/// Parses curve control points from YAML sequence.
+fn parse_curve_points(yaml: Option<&Yaml>) -> Option<Vec<[f64; 2]>> {
+    let yaml = yaml?;
+    if let Yaml::Sequence(seq) = unwrap_tagged(yaml) {
+        let mut points = Vec::new();
+        for item in seq {
+            if let Yaml::Sequence(pt) = unwrap_tagged(item) {
+                if pt.len() >= 2 {
+                    let x = yaml_as_f64(&pt[0]).unwrap_or(0.0);
+                    let y = yaml_as_f64(&pt[1]).unwrap_or(0.0);
+                    points.push([x, y]);
+                }
+            }
+        }
+        if !points.is_empty() {
+            return Some(points);
+        }
+    }
+    None
+}
+
 fn normalize_path(path: &str) -> String {
     path.replace('\\', "/")
 }
@@ -2176,5 +2371,170 @@ displays:
         let config = Config::from_yaml_str(yaml, PathBuf::from(".")).unwrap();
         let cs = config.colorspace("WithLook").unwrap();
         assert!(cs.from_reference().is_some());
+    }
+
+    #[test]
+    fn parse_grading_primary_transform() {
+        let yaml = r#"
+ocio_profile_version: 2.1
+roles:
+  default: raw
+colorspaces:
+  - name: raw
+    family: raw
+  - name: Graded
+    from_scene_reference: !<GradingPrimaryTransform>
+      lift: [0.01, 0.0, -0.01]
+      gamma: [1.0, 1.05, 1.0]
+      gain: [1.2, 1.0, 0.9]
+      exposure: 0.5
+      contrast: 1.1
+      saturation: 1.2
+      pivot: 0.18
+displays:
+  sRGB:
+    - name: Raw
+      colorspace: raw
+"#;
+        let config = Config::from_yaml_str(yaml, PathBuf::from(".")).unwrap();
+        let cs = config.colorspace("Graded").unwrap();
+        let transform = cs.from_reference().unwrap();
+        if let Transform::GradingPrimary(gp) = transform {
+            assert!((gp.exposure - 0.5).abs() < 0.001);
+            assert!((gp.saturation - 1.2).abs() < 0.001);
+            assert!((gp.gain[0] - 1.2).abs() < 0.001);
+        } else {
+            panic!("Expected GradingPrimaryTransform");
+        }
+    }
+
+    #[test]
+    fn parse_grading_rgb_curve_transform() {
+        let yaml = r#"
+ocio_profile_version: 2.1
+roles:
+  default: raw
+colorspaces:
+  - name: raw
+    family: raw
+  - name: Curved
+    from_scene_reference: !<GradingRGBCurveTransform>
+      red: [[0.0, 0.0], [0.5, 0.6], [1.0, 1.0]]
+      green: [[0.0, 0.0], [1.0, 1.0]]
+      blue: [[0.0, 0.1], [1.0, 0.9]]
+displays:
+  sRGB:
+    - name: Raw
+      colorspace: raw
+"#;
+        let config = Config::from_yaml_str(yaml, PathBuf::from(".")).unwrap();
+        let cs = config.colorspace("Curved").unwrap();
+        let transform = cs.from_reference().unwrap();
+        if let Transform::GradingRgbCurve(gc) = transform {
+            assert_eq!(gc.red.len(), 3);
+            assert_eq!(gc.green.len(), 2);
+            assert!((gc.red[1][1] - 0.6).abs() < 0.001);
+        } else {
+            panic!("Expected GradingRgbCurveTransform");
+        }
+    }
+
+    #[test]
+    fn parse_grading_tone_transform() {
+        let yaml = r#"
+ocio_profile_version: 2.1
+roles:
+  default: raw
+colorspaces:
+  - name: raw
+    family: raw
+  - name: Toned
+    from_scene_reference: !<GradingToneTransform>
+      shadows: [1.1, 1.0, 0.9, 1.0]
+      midtones: [1.0, 1.0, 1.0, 1.05]
+      highlights: [0.95, 1.0, 1.1, 1.0]
+displays:
+  sRGB:
+    - name: Raw
+      colorspace: raw
+"#;
+        let config = Config::from_yaml_str(yaml, PathBuf::from(".")).unwrap();
+        let cs = config.colorspace("Toned").unwrap();
+        let transform = cs.from_reference().unwrap();
+        if let Transform::GradingTone(gt) = transform {
+            assert!((gt.shadows[0] - 1.1).abs() < 0.001);
+            assert!((gt.midtones[3] - 1.05).abs() < 0.001);
+        } else {
+            panic!("Expected GradingToneTransform");
+        }
+    }
+
+    #[test]
+    fn parse_shared_views() {
+        let yaml = r#"
+ocio_profile_version: 2.3
+roles:
+  default: raw
+colorspaces:
+  - name: raw
+    family: raw
+  - name: sRGB
+    family: display
+shared_views:
+  - name: Raw
+    colorspace: raw
+  - name: sRGB Display
+    view_transform: ACES_1.0_SDR
+    colorspace: sRGB
+    looks: +FilmGrade
+    description: Standard sRGB output
+displays:
+  Monitor:
+    - name: Raw
+      colorspace: raw
+"#;
+        let config = Config::from_yaml_str(yaml, PathBuf::from(".")).unwrap();
+        assert_eq!(config.num_shared_views(), 2);
+        let views = config.shared_views();
+        assert_eq!(views[0].name, "Raw");
+        assert_eq!(views[1].name, "sRGB Display");
+        assert_eq!(views[1].view_transform, Some("ACES_1.0_SDR".to_string()));
+        assert_eq!(views[1].looks, Some("+FilmGrade".to_string()));
+    }
+
+    #[test]
+    fn parse_named_transforms() {
+        let yaml = r#"
+ocio_profile_version: 2.1
+roles:
+  default: raw
+colorspaces:
+  - name: raw
+    family: raw
+named_transforms:
+  - name: Utility - Exposure +1
+    family: Utility
+    description: Add one stop of exposure
+    transform: !<ExposureContrastTransform> {exposure: 1.0, style: linear}
+  - name: Utility - Rec709 to XYZ
+    family: Utility
+    forward_transform: !<MatrixTransform> {matrix: [0.4124, 0.3576, 0.1805, 0, 0.2126, 0.7152, 0.0722, 0, 0.0193, 0.1192, 0.9505, 0, 0, 0, 0, 1]}
+    inverse_transform: !<MatrixTransform> {matrix: [3.2406, -1.5372, -0.4986, 0, -0.9689, 1.8758, 0.0415, 0, 0.0557, -0.2040, 1.0570, 0, 0, 0, 0, 1]}
+displays:
+  sRGB:
+    - name: Raw
+      colorspace: raw
+"#;
+        let config = Config::from_yaml_str(yaml, PathBuf::from(".")).unwrap();
+        assert_eq!(config.num_named_transforms(), 2);
+        
+        let nt1 = config.named_transform("Utility - Exposure +1").unwrap();
+        assert_eq!(nt1.family, Some("Utility".to_string()));
+        assert!(nt1.forward.is_some());
+        assert!(nt1.inverse.is_none());
+        
+        let nt2 = config.named_transform("Utility - Rec709 to XYZ").unwrap();
+        assert!(nt2.forward.is_some());
+        assert!(nt2.inverse.is_some());
     }
 }

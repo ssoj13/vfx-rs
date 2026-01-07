@@ -499,6 +499,7 @@ fn compute_homogeneity(img: &ImageBuf, x: i32, y: i32, w: i32, h: i32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vfx_core::ImageSpec;
 
     #[test]
     fn test_bayer_pattern() {

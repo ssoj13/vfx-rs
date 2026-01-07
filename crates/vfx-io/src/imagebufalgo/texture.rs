@@ -278,6 +278,7 @@ fn linear_to_srgb(x: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vfx_core::ImageSpec;
 
     #[test]
     fn test_mip_level_count() {
