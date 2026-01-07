@@ -49,8 +49,15 @@ pub mod warp;
 // Re-export commonly used functions
 pub use patterns::{zero, fill, checker, noise};
 pub use channels::{channels, channel_append, channel_sum, extract_channel, flatten, get_alpha};
-pub use geometry::{crop, cut, flip, flop, transpose, rotate90, rotate180, rotate270, resize};
-pub use arithmetic::{add, sub, mul, div, abs, absdiff, pow, clamp, invert, over, max, min, mad};
+pub use geometry::{
+    crop, cut, flip, flop, transpose,
+    rotate90, rotate180, rotate270,
+    resize, resample, fit,
+    rotate, circular_shift, paste,
+    reorient, reorient_auto,
+    ResizeFilter,
+};
+pub use arithmetic::{add, sub, mul, div, abs, absdiff, pow, clamp, invert, over, max, min, mad, normalize, normalize_into};
 
 // Color operations
 pub use color::{
@@ -69,6 +76,8 @@ pub use composite::{
     // Blend modes
     screen, multiply, overlay, hardlight, softlight,
     difference, exclusion, colordodge, colorburn, add_blend,
+    // Z-depth compositing
+    zover, zover_into,
 };
 
 // Statistics operations
@@ -110,6 +119,7 @@ pub use filters::{
     laplacian, sharpen, sobel,
     convolve, convolve_into,
     box_blur, box_blur_into,
+    fillholes_pushpull, fillholes_pushpull_into,
 };
 
 // FFT operations

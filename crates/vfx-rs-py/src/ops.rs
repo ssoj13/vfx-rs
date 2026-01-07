@@ -258,6 +258,158 @@ pub fn resize(
     imagebuf_to_image(&result)
 }
 
+/// Rotate an image by an arbitrary angle.
+///
+/// Args:
+///     image: Input image
+///     angle: Rotation angle in radians (positive = counter-clockwise)
+///     filter: Filter type (default: Bilinear)
+///     roi: Optional region of interest
+///
+/// Returns:
+///     Rotated image
+#[pyfunction]
+#[pyo3(signature = (image, angle, filter=None, roi=None))]
+pub fn rotate(
+    image: &Image,
+    angle: f32,
+    filter: Option<ResizeFilter>,
+    roi: Option<&Roi3D>,
+) -> PyResult<Image> {
+    let buf = image_to_imagebuf(image);
+    let rust_filter = filter.map(|f| f.into()).unwrap_or(RustResizeFilter::Bilinear);
+    let result = imagebufalgo::rotate(&buf, angle, rust_filter, convert_roi(roi));
+    imagebuf_to_image(&result)
+}
+
+/// Fit an image into target dimensions while preserving aspect ratio.
+///
+/// Args:
+///     image: Input image
+///     width: Target width
+///     height: Target height
+///     filter: Filter type (default: Bilinear)
+///     roi: Optional region of interest
+///
+/// Returns:
+///     Fitted image (may be smaller than target to preserve aspect ratio)
+#[pyfunction]
+#[pyo3(signature = (image, width, height, filter=None, roi=None))]
+pub fn fit(
+    image: &Image,
+    width: u32,
+    height: u32,
+    filter: Option<ResizeFilter>,
+    roi: Option<&Roi3D>,
+) -> PyResult<Image> {
+    let buf = image_to_imagebuf(image);
+    let rust_filter = filter.map(|f| f.into()).unwrap_or(RustResizeFilter::Bilinear);
+    let result = imagebufalgo::fit(&buf, width, height, rust_filter, convert_roi(roi));
+    imagebuf_to_image(&result)
+}
+
+/// Fast resize using nearest neighbor (point) sampling.
+///
+/// Args:
+///     image: Input image
+///     width: Target width
+///     height: Target height
+///     roi: Optional region of interest
+///
+/// Returns:
+///     Resampled image
+#[pyfunction]
+#[pyo3(signature = (image, width, height, roi=None))]
+pub fn resample(
+    image: &Image,
+    width: u32,
+    height: u32,
+    roi: Option<&Roi3D>,
+) -> PyResult<Image> {
+    let buf = image_to_imagebuf(image);
+    let result = imagebufalgo::resample(&buf, width, height, convert_roi(roi));
+    imagebuf_to_image(&result)
+}
+
+/// Circularly shift an image (wrap around edges).
+///
+/// Args:
+///     image: Input image
+///     xshift: Horizontal shift (positive = right)
+///     yshift: Vertical shift (positive = down)
+///     zshift: Depth shift (default: 0)
+///     roi: Optional region of interest
+///
+/// Returns:
+///     Shifted image with wrap-around
+#[pyfunction]
+#[pyo3(signature = (image, xshift, yshift, zshift=0, roi=None))]
+pub fn circular_shift(
+    image: &Image,
+    xshift: i32,
+    yshift: i32,
+    zshift: i32,
+    roi: Option<&Roi3D>,
+) -> PyResult<Image> {
+    let buf = image_to_imagebuf(image);
+    let result = imagebufalgo::circular_shift(&buf, xshift, yshift, zshift, convert_roi(roi));
+    imagebuf_to_image(&result)
+}
+
+/// Reorient an image based on EXIF orientation value.
+///
+/// Applies the appropriate transformations (flip, rotate) to make the image
+/// upright based on the specified orientation tag.
+///
+/// Args:
+///     image: Source image
+///     orientation: EXIF orientation value (1-8). Values:
+///         1 = Normal
+///         2 = Flip horizontal
+///         3 = Rotate 180
+///         4 = Flip vertical
+///         5 = Transpose (flip + rotate90)
+///         6 = Rotate 90 CW
+///         7 = Transverse (flip + rotate270)
+///         8 = Rotate 270 CW
+///
+/// Returns:
+///     Reoriented image
+///
+/// Example:
+///     >>> # Manually specify orientation
+///     >>> fixed = reorient(img, 6)  # Rotate 90 CW
+#[pyfunction]
+#[pyo3(signature = (image, orientation))]
+pub fn reorient(image: &Image, orientation: u8) -> PyResult<Image> {
+    let buf = image_to_imagebuf(image);
+    let result = imagebufalgo::reorient(&buf, orientation);
+    imagebuf_to_image(&result)
+}
+
+/// Automatically reorient an image using its embedded EXIF orientation.
+///
+/// Reads the "Orientation" metadata from the image and applies the appropriate
+/// transforms to make it upright. This is the recommended function for
+/// automatically fixing image orientation from cameras and phones.
+///
+/// Args:
+///     image: Source image with orientation metadata
+///
+/// Returns:
+///     Reoriented image (orientation = 1)
+///
+/// Example:
+///     >>> photo = vfx_rs.read("photo.jpg")
+///     >>> oriented = reorient_auto(photo)
+#[pyfunction]
+#[pyo3(signature = (image,))]
+pub fn reorient_auto(image: &Image) -> PyResult<Image> {
+    let buf = image_to_imagebuf(image);
+    let result = imagebufalgo::reorient_auto(&buf);
+    imagebuf_to_image(&result)
+}
+
 // ============================================================================
 // Arithmetic Operations
 // ============================================================================
@@ -552,6 +704,38 @@ pub fn over(a: &Image, b: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
     imagebuf_to_image(&result)
 }
 
+/// Normalize RGB vectors to unit length.
+///
+/// Treats each pixel's RGB channels as a 3D vector and normalizes it to unit length.
+/// Useful for normalizing normal maps and direction vectors.
+///
+/// Args:
+///     image: Source image (must have 3 or 4 channels)
+///     in_center: Value to subtract before normalizing (default 0.0)
+///     out_center: Value to add after normalizing (default 0.0)
+///     scale: Scale factor for normalized vector (default 1.0)
+///     roi: Optional region of interest
+///
+/// Returns:
+///     Normalized image
+///
+/// Example:
+///     >>> # For normal maps stored in 0-1 range:
+///     >>> normalized = normalize(normals, in_center=0.5, out_center=0.5, scale=1.0)
+#[pyfunction]
+#[pyo3(signature = (image, in_center=0.0, out_center=0.0, scale=1.0, roi=None))]
+pub fn normalize(
+    image: &Image,
+    in_center: f32,
+    out_center: f32,
+    scale: f32,
+    roi: Option<&Roi3D>,
+) -> PyResult<Image> {
+    let buf = image_to_imagebuf(image);
+    let result = imagebufalgo::normalize(&buf, in_center, out_center, scale, convert_roi(roi));
+    imagebuf_to_image(&result)
+}
+
 // ============================================================================
 // Filter Operations
 // ============================================================================
@@ -716,6 +900,32 @@ pub fn laplacian(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
 pub fn sobel(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
     let buf = image_to_imagebuf(image);
     let result = imagebufalgo::sobel(&buf, convert_roi(roi));
+    imagebuf_to_image(&result)
+}
+
+/// Fill holes in alpha channel using push-pull algorithm.
+///
+/// Fills transparent (alpha = 0) regions with colors interpolated from
+/// neighboring pixels using a multi-resolution pyramid approach.
+///
+/// The result preserves fully opaque regions while smoothly interpolating
+/// colors into transparent areas.
+///
+/// Args:
+///     image: Source image with alpha channel
+///     roi: Optional region of interest
+///
+/// Returns:
+///     Image with holes filled
+///
+/// Example:
+///     >>> cutout = vfx_rs.read("cutout.exr")  # Has transparent areas
+///     >>> filled = fillholes_pushpull(cutout)
+#[pyfunction]
+#[pyo3(signature = (image, roi=None))]
+pub fn fillholes_pushpull(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
+    let buf = image_to_imagebuf(image);
+    let result = imagebufalgo::fillholes_pushpull(&buf, convert_roi(roi));
     imagebuf_to_image(&result)
 }
 
@@ -1084,6 +1294,36 @@ pub fn add_blend(a: &Image, b: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
     imagebuf_to_image(&result)
 }
 
+/// Z-depth compositing (zover).
+///
+/// Composites two images based on their Z-depth channels. The pixel with the
+/// smaller Z value (closer to camera) is composited "over" the further one.
+///
+/// Both images should have an alpha channel and ideally a Z channel. Images
+/// with RGBAZ format (5 channels) work best.
+///
+/// Args:
+///     a: First image
+///     b: Second image
+///     z_zeroisinf: If True, treat Z=0 as infinity (far away). Default False.
+///     roi: Optional region of interest
+///
+/// Returns:
+///     Z-composited image
+///
+/// Example:
+///     >>> fg = vfx_rs.read("fg.exr")  # Has RGBA + Z
+///     >>> bg = vfx_rs.read("bg.exr")  # Has RGBA + Z
+///     >>> composite = zover(fg, bg)
+#[pyfunction]
+#[pyo3(signature = (a, b, z_zeroisinf=false, roi=None))]
+pub fn zover(a: &Image, b: &Image, z_zeroisinf: bool, roi: Option<&Roi3D>) -> PyResult<Image> {
+    let buf_a = image_to_imagebuf(a);
+    let buf_b = image_to_imagebuf(b);
+    let result = imagebufalgo::zover(&buf_a, &buf_b, z_zeroisinf, convert_roi(roi));
+    imagebuf_to_image(&result)
+}
+
 // ============================================================================
 // Pattern Generation
 // ============================================================================
@@ -1303,9 +1543,15 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(rotate90, m)?)?;
     m.add_function(wrap_pyfunction!(rotate180, m)?)?;
     m.add_function(wrap_pyfunction!(rotate270, m)?)?;
+    m.add_function(wrap_pyfunction!(rotate, m)?)?;
     m.add_function(wrap_pyfunction!(crop, m)?)?;
     m.add_function(wrap_pyfunction!(cut, m)?)?;
     m.add_function(wrap_pyfunction!(resize, m)?)?;
+    m.add_function(wrap_pyfunction!(resample, m)?)?;
+    m.add_function(wrap_pyfunction!(fit, m)?)?;
+    m.add_function(wrap_pyfunction!(circular_shift, m)?)?;
+    m.add_function(wrap_pyfunction!(reorient, m)?)?;
+    m.add_function(wrap_pyfunction!(reorient_auto, m)?)?;
 
     // Arithmetic
     m.add_function(wrap_pyfunction!(add, m)?)?;
@@ -1319,6 +1565,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(clamp, m)?)?;
     m.add_function(wrap_pyfunction!(invert, m)?)?;
     m.add_function(wrap_pyfunction!(over, m)?)?;
+    m.add_function(wrap_pyfunction!(normalize, m)?)?;
     m.add_function(wrap_pyfunction!(max, m)?)?;
     m.add_function(wrap_pyfunction!(min, m)?)?;
 
@@ -1334,6 +1581,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(morph_close, m)?)?;
     m.add_function(wrap_pyfunction!(laplacian, m)?)?;
     m.add_function(wrap_pyfunction!(sobel, m)?)?;
+    m.add_function(wrap_pyfunction!(fillholes_pushpull, m)?)?;
 
     // Color
     m.add_function(wrap_pyfunction!(premult, m)?)?;
@@ -1363,6 +1611,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(colordodge, m)?)?;
     m.add_function(wrap_pyfunction!(colorburn, m)?)?;
     m.add_function(wrap_pyfunction!(add_blend, m)?)?;
+    m.add_function(wrap_pyfunction!(zover, m)?)?;
 
     // Patterns
     m.add_function(wrap_pyfunction!(zero, m)?)?;

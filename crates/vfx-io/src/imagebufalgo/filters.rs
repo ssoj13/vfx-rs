@@ -590,6 +590,198 @@ pub fn sobel_into(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi3D>) {
     }
 }
 
+// ============================================================================
+// Hole Filling
+// ============================================================================
+
+/// Fill holes in alpha channel using push-pull algorithm.
+///
+/// This function fills transparent (alpha = 0) regions with colors from
+/// neighboring pixels using a multi-resolution pyramid approach:
+///
+/// 1. **Push phase**: Build an image pyramid by repeatedly downscaling
+/// 2. **Pull phase**: Blend upscaled levels back with original, filling holes
+///
+/// The result preserves fully opaque regions while smoothly interpolating
+/// colors into transparent areas based on surrounding pixels.
+///
+/// # Arguments
+/// * `src` - Source image with alpha channel
+/// * `roi` - Region of interest (or None for full image)
+///
+/// # Example
+/// ```ignore
+/// use vfx_io::imagebuf::ImageBuf;
+/// use vfx_io::imagebufalgo::fillholes_pushpull;
+///
+/// let img_with_holes = ImageBuf::read("cutout.exr").unwrap();
+/// let filled = fillholes_pushpull(&img_with_holes, None);
+/// ```
+pub fn fillholes_pushpull(src: &ImageBuf, roi: Option<Roi3D>) -> ImageBuf {
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let nch = src.nchannels() as usize;
+
+    // Need at least 2 channels (one color + alpha) or standard RGBA
+    if nch < 2 {
+        return src.clone();
+    }
+
+    // Assume alpha is last channel
+    let alpha_channel = nch - 1;
+
+    let width = roi.width() as usize;
+    let height = roi.height() as usize;
+
+    // Create working copy as the top of pyramid
+    let spec = src.spec().clone();
+    let mut pyramid = vec![ImageBuf::new(spec, InitializePixels::No)];
+
+    // Copy source to top of pyramid
+    let mut pixel = vec![0.0f32; nch];
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                src.getpixel(x, y, z, &mut pixel, WrapMode::Black);
+                pyramid[0].setpixel(x, y, z, &pixel);
+            }
+        }
+    }
+
+    // Push phase: build pyramid
+    let mut w = width;
+    let mut h = height;
+
+    while w > 1 || h > 1 {
+        w = (w + 1) / 2;
+        h = (h + 1) / 2;
+
+        let small_spec = vfx_core::ImageSpec::new(w as u32, h as u32, nch as u8, vfx_core::DataFormat::F32);
+        let mut small = ImageBuf::new(small_spec, InitializePixels::Yes);
+
+        let prev = pyramid.last().unwrap();
+        let prev_w = prev.width() as i32;
+        let prev_h = prev.height() as i32;
+
+        // Downsample with box filter (average of 2x2)
+        let mut samples = vec![0.0f32; nch];
+        for y in 0..h {
+            for x in 0..w {
+                for c in 0..nch {
+                    samples[c] = 0.0;
+                }
+                let mut total_weight = 0.0f32;
+
+                // Sample 2x2 block from previous level
+                for dy in 0..2i32 {
+                    for dx in 0..2i32 {
+                        let px = (x as i32 * 2 + dx).min(prev_w - 1);
+                        let py = (y as i32 * 2 + dy).min(prev_h - 1);
+                        prev.getpixel(px, py, 0, &mut pixel, WrapMode::Clamp);
+
+                        let alpha = pixel[alpha_channel];
+                        if alpha > 0.0 {
+                            // Weight by alpha for proper blending
+                            for c in 0..nch {
+                                samples[c] += pixel[c] * alpha;
+                            }
+                            total_weight += alpha;
+                        }
+                    }
+                }
+
+                // Divide by total weight (renormalize)
+                if total_weight > 0.0 {
+                    for c in 0..nch {
+                        samples[c] /= total_weight;
+                    }
+                }
+
+                small.setpixel(x as i32, y as i32, 0, &samples);
+            }
+        }
+
+        pyramid.push(small);
+    }
+
+    // Pull phase: composite from bottom up
+    for i in (0..pyramid.len() - 1).rev() {
+        let big = &pyramid[i];
+        let big_w = big.width() as usize;
+        let big_h = big.height() as usize;
+
+        // Create upscaled version of smaller level
+        let small = &pyramid[i + 1];
+
+        let mut result = ImageBuf::new(big.spec().clone(), InitializePixels::No);
+        let mut big_pixel = vec![0.0f32; nch];
+        let mut small_pixel = vec![0.0f32; nch];
+        let mut out_pixel = vec![0.0f32; nch];
+
+        for y in 0..big_h {
+            for x in 0..big_w {
+                big.getpixel(x as i32, y as i32, 0, &mut big_pixel, WrapMode::Black);
+
+                // Bilinear sample from small
+                let sx = x as f32 / 2.0;
+                let sy = y as f32 / 2.0;
+                let sx0 = sx.floor() as i32;
+                let sy0 = sy.floor() as i32;
+                let fx = sx - sx0 as f32;
+                let fy = sy - sy0 as f32;
+
+                // Get 4 samples for bilinear interpolation
+                let mut s00 = vec![0.0f32; nch];
+                let mut s10 = vec![0.0f32; nch];
+                let mut s01 = vec![0.0f32; nch];
+                let mut s11 = vec![0.0f32; nch];
+
+                small.getpixel(sx0, sy0, 0, &mut s00, WrapMode::Clamp);
+                small.getpixel(sx0 + 1, sy0, 0, &mut s10, WrapMode::Clamp);
+                small.getpixel(sx0, sy0 + 1, 0, &mut s01, WrapMode::Clamp);
+                small.getpixel(sx0 + 1, sy0 + 1, 0, &mut s11, WrapMode::Clamp);
+
+                // Bilinear interpolation
+                for c in 0..nch {
+                    let top = s00[c] * (1.0 - fx) + s10[c] * fx;
+                    let bottom = s01[c] * (1.0 - fx) + s11[c] * fx;
+                    small_pixel[c] = top * (1.0 - fy) + bottom * fy;
+                }
+
+                // Composite: big over upscaled small
+                let alpha = big_pixel[alpha_channel].clamp(0.0, 1.0);
+                let inv_alpha = 1.0 - alpha;
+
+                for c in 0..nch {
+                    out_pixel[c] = big_pixel[c] + small_pixel[c] * inv_alpha;
+                }
+
+                result.setpixel(x as i32, y as i32, 0, &out_pixel);
+            }
+        }
+
+        pyramid[i] = result;
+    }
+
+    pyramid.into_iter().next().unwrap()
+}
+
+/// Fill holes into existing destination buffer.
+pub fn fillholes_pushpull_into(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi3D>) {
+    let result = fillholes_pushpull(src, roi);
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let nch = result.nchannels() as usize;
+    let mut pixel = vec![0.0f32; nch];
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                result.getpixel(x, y, z, &mut pixel, WrapMode::Black);
+                dst.setpixel(x, y, z, &pixel);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -682,6 +682,101 @@ pub fn mad<'a, A: Into<ImageOrConst<'a>>, B: Into<ImageOrConst<'a>>, C: Into<Ima
     dst
 }
 
+/// Normalize RGB vectors to unit length.
+///
+/// Treats each pixel's RGB channels as a 3D vector and normalizes it to unit length.
+/// Useful for normalizing normal maps and direction vectors.
+///
+/// # Arguments
+/// * `src` - Source image (must have 3 or 4 channels)
+/// * `in_center` - Value to subtract before normalizing (default 0.0)
+/// * `out_center` - Value to add after normalizing (default 0.0)
+/// * `scale` - Scale factor for normalized vector (default 1.0)
+/// * `roi` - Region of interest (or None for full image)
+///
+/// # Example
+/// ```ignore
+/// use vfx_io::imagebuf::{ImageBuf, InitializePixels};
+/// use vfx_io::imagebufalgo::normalize;
+/// use vfx_core::ImageSpec;
+///
+/// let spec = ImageSpec::rgb(100, 100);
+/// let normals = ImageBuf::new(spec, InitializePixels::No);
+/// let normalized = normalize(&normals, 0.5, 0.5, 1.0, None);
+/// ```
+pub fn normalize(src: &ImageBuf, in_center: f32, out_center: f32, scale: f32, roi: Option<Roi3D>) -> ImageBuf {
+    let nch = src.nchannels() as usize;
+    if nch != 3 && nch != 4 {
+        // Return empty image for invalid input
+        return ImageBuf::new(ImageSpec::rgb(1, 1), InitializePixels::Yes);
+    }
+
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let spec = ImageSpec::from_roi_nchannels(&roi, nch as u32);
+    let mut dst = ImageBuf::new(spec, InitializePixels::No);
+
+    let mut pixel = vec![0.0f32; nch];
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                src.getpixel(x, y, z, &mut pixel, WrapMode::Black);
+
+                // Treat RGB as 3D vector
+                let vx = pixel[0] - in_center;
+                let vy = pixel[1] - in_center;
+                let vz = pixel[2] - in_center;
+
+                let length = (vx * vx + vy * vy + vz * vz).sqrt();
+                let s = if length > 0.0 { scale / length } else { 0.0 };
+
+                pixel[0] = vx * s + out_center;
+                pixel[1] = vy * s + out_center;
+                pixel[2] = vz * s + out_center;
+                // Alpha channel (if present) is preserved unchanged
+
+                dst.setpixel(x, y, z, &pixel);
+            }
+        }
+    }
+
+    dst
+}
+
+/// Normalize RGB vectors to unit length, storing result in provided buffer.
+///
+/// See [`normalize`] for details.
+pub fn normalize_into(dst: &mut ImageBuf, src: &ImageBuf, in_center: f32, out_center: f32, scale: f32, roi: Option<Roi3D>) {
+    let nch = src.nchannels() as usize;
+    if nch != 3 && nch != 4 {
+        return;
+    }
+
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let mut pixel = vec![0.0f32; nch];
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                src.getpixel(x, y, z, &mut pixel, WrapMode::Black);
+
+                let vx = pixel[0] - in_center;
+                let vy = pixel[1] - in_center;
+                let vz = pixel[2] - in_center;
+
+                let length = (vx * vx + vy * vy + vz * vz).sqrt();
+                let s = if length > 0.0 { scale / length } else { 0.0 };
+
+                pixel[0] = vx * s + out_center;
+                pixel[1] = vy * s + out_center;
+                pixel[2] = vz * s + out_center;
+
+                dst.setpixel(x, y, z, &pixel);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

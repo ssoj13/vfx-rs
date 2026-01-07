@@ -428,6 +428,108 @@ where
 }
 
 // ============================================================================
+// Z-Depth Compositing
+// ============================================================================
+
+/// Z-depth based compositing (zover).
+///
+/// Composites two images based on their Z-depth channels. The pixel with the
+/// smaller Z value (closer to camera) is composited "over" the further one.
+///
+/// Both images must have an alpha channel and a Z channel.
+///
+/// # Arguments
+/// * `a` - First image
+/// * `b` - Second image
+/// * `z_zeroisinf` - If true, treat Z=0 as infinity (far away)
+/// * `roi` - Region of interest
+///
+/// # Example
+/// ```ignore
+/// use vfx_io::imagebuf::ImageBuf;
+/// use vfx_io::imagebufalgo::zover;
+///
+/// let fg = ImageBuf::read("fg.exr").unwrap();  // Has RGBA + Z
+/// let bg = ImageBuf::read("bg.exr").unwrap();  // Has RGBA + Z
+/// let composite = zover(&fg, &bg, false, None);
+/// ```
+pub fn zover(a: &ImageBuf, b: &ImageBuf, z_zeroisinf: bool, roi: Option<Roi3D>) -> ImageBuf {
+    let roi = roi.unwrap_or_else(|| a.roi().union(&b.roi()));
+    let spec = a.spec().clone();
+    let mut dst = ImageBuf::new(spec, InitializePixels::No);
+    zover_into(&mut dst, a, b, z_zeroisinf, Some(roi));
+    dst
+}
+
+/// Z-depth compositing into existing destination.
+pub fn zover_into(dst: &mut ImageBuf, a: &ImageBuf, b: &ImageBuf, z_zeroisinf: bool, roi: Option<Roi3D>) {
+    let roi = roi.unwrap_or_else(|| dst.roi());
+    let nch = dst.nchannels() as usize;
+
+    // Find alpha and Z channel indices
+    // Default to channel 3 for alpha (RGBA) and channel 4 for Z (RGBAZ)
+    let alpha_channel = if nch >= 4 { 3 } else { nch.saturating_sub(1) };
+    let z_channel = if nch >= 5 { 4 } else { nch }; // If no Z channel, use out of bounds
+    let has_z = z_channel < nch;
+
+    let mut pixel_a = vec![0.0f32; nch];
+    let mut pixel_b = vec![0.0f32; nch];
+    let mut result = vec![0.0f32; nch];
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                a.getpixel(x, y, z, &mut pixel_a, WrapMode::Black);
+                b.getpixel(x, y, z, &mut pixel_b, WrapMode::Black);
+
+                // Determine which is closer based on Z
+                let a_is_closer = if has_z {
+                    let mut az = pixel_a[z_channel];
+                    let mut bz = pixel_b[z_channel];
+
+                    if z_zeroisinf {
+                        if az == 0.0 { az = f32::MAX; }
+                        if bz == 0.0 { bz = f32::MAX; }
+                    }
+
+                    az <= bz
+                } else {
+                    true // Default: A over B
+                };
+
+                if a_is_closer {
+                    // A over B
+                    let alpha = pixel_a[alpha_channel].clamp(0.0, 1.0);
+                    let one_minus_alpha = 1.0 - alpha;
+
+                    for c in 0..nch {
+                        result[c] = pixel_a[c] + one_minus_alpha * pixel_b[c];
+                    }
+
+                    if has_z {
+                        result[z_channel] = if alpha != 0.0 { pixel_a[z_channel] } else { pixel_b[z_channel] };
+                    }
+                } else {
+                    // B over A
+                    let alpha = pixel_b[alpha_channel].clamp(0.0, 1.0);
+                    let one_minus_alpha = 1.0 - alpha;
+
+                    for c in 0..nch {
+                        result[c] = pixel_b[c] + one_minus_alpha * pixel_a[c];
+                    }
+
+                    if has_z {
+                        result[z_channel] = if alpha != 0.0 { pixel_b[z_channel] } else { pixel_a[z_channel] };
+                    }
+                }
+
+                dst.setpixel(x, y, z, &result);
+            }
+        }
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 

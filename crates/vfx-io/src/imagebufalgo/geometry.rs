@@ -757,6 +757,34 @@ pub fn reorient(src: &ImageBuf, orientation: u8) -> ImageBuf {
     }
 }
 
+/// Reorients an image using its embedded EXIF orientation metadata.
+///
+/// Reads the "Orientation" attribute from the image and applies the appropriate
+/// transform to make the image upright. After reorienting, the returned image
+/// will have orientation 1 (normal).
+///
+/// This is the recommended function for automatically fixing image orientation
+/// from cameras and phones that embed EXIF orientation tags.
+///
+/// # Example
+///
+/// ```ignore
+/// use vfx_io::imagebuf::ImageBuf;
+/// use vfx_io::imagebufalgo::reorient_auto;
+///
+/// let photo = ImageBuf::read("photo.jpg").unwrap();
+/// let oriented = reorient_auto(&photo);
+/// ```
+pub fn reorient_auto(src: &ImageBuf) -> ImageBuf {
+    let orientation = src.orientation() as u8;
+    if orientation == 1 || orientation == 0 {
+        // Already oriented correctly
+        src.clone()
+    } else {
+        reorient(src, orientation)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
