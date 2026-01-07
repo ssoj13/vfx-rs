@@ -416,6 +416,73 @@ if "depth" in layered.layer_names:
 
 ---
 
+## ColorConfig API
+
+Native OCIO config access without PyOpenColorIO dependency.
+
+```python
+import vfx_rs
+
+# Load config
+config = vfx_rs.ColorConfig()  # Default ACES 1.3
+config = vfx_rs.ColorConfig.from_file("config.ocio")
+config = vfx_rs.ColorConfig.aces_1_3()
+
+# Color spaces
+print(config.colorspace_names())
+print(config.has_colorspace("ACEScg"))
+print(config.is_colorspace_linear("ACEScg"))
+print(config.colorspace_family("ACEScg"))
+
+# Displays and views
+print(config.display_names())
+print(config.default_display())
+for display in config.display_names():
+    print(f"{display}: views={config.num_views(display)}")
+
+# Looks
+print(f"Looks: {config.num_looks()}")
+for i in range(config.num_looks()):
+    print(config.look_name_by_index(i))
+
+# Named Transforms (OCIO v2.0+)
+print(f"Named transforms: {config.num_named_transforms()}")
+for name in config.named_transform_names():
+    print(f"  {name}")
+    family = config.named_transform_family(name)
+    if family:
+        print(f"    Family: {family}")
+
+# Shared Views (OCIO v2.3+)
+print(f"Shared views: {config.num_shared_views()}")
+for name in config.shared_view_names():
+    print(f"  {name}")
+```
+
+### Color Conversion with ColorConfig
+
+```python
+import vfx_rs
+from vfx_rs import colorconvert, ociodisplay, ociolook, ociofiletransform
+
+img = vfx_rs.read("render.exr")
+config = vfx_rs.ColorConfig.from_file("/studio/aces/config.ocio")
+
+# Convert between color spaces
+srgb = colorconvert(img, "ACEScg", "sRGB", config=config)
+
+# Apply display transform
+display = ociodisplay(img, "sRGB", "Film", "ACEScg", config=config)
+
+# Apply look
+graded = ociolook(img, "+ShowLUT", "ACEScg", "ACEScg", config=config)
+
+# Apply LUT file
+lutet = ociofiletransform(img, "grade.cube", config=config)
+```
+
+---
+
 ## External OCIO Config Integration
 
 Using vfx-rs with OpenColorIO configurations.

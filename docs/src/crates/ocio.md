@@ -198,6 +198,46 @@ for look in config.looks() {
 let proc = config.processor_with_look("ACEScg", "sRGB", "ShowLUT")?;
 ```
 
+## Named Transforms (OCIO v2.0+)
+
+Reusable transform definitions not tied to a specific color space:
+
+```rust
+// List named transforms
+for nt in config.named_transforms() {
+    println!("Named transform: {}", nt.name);
+    if let Some(family) = &nt.family {
+        println!("  Family: {}", family);
+    }
+    if let Some(desc) = &nt.description {
+        println!("  Description: {}", desc);
+    }
+}
+
+// Get by name
+if let Some(nt) = config.named_transform("Utility - sRGB - Texture") {
+    println!("Found: {}", nt.name);
+}
+
+// Count
+println!("Total named transforms: {}", config.num_named_transforms());
+```
+
+## Shared Views (OCIO v2.3+)
+
+Views that can be shared across multiple displays:
+
+```rust
+// List shared views
+for sv in config.shared_views() {
+    println!("Shared view: {}", sv.name);
+    println!("  Colorspace: {}", sv.display_colorspace);
+    if let Some(vt) = &sv.view_transform {
+        println!("  View transform: {}", vt);
+    }
+}
+```
+
 ## Context Variables
 
 Environment variable substitution:

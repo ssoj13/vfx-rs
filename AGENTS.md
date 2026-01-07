@@ -203,19 +203,28 @@ C = 0.5 - A*ln(4*A)   // correct
    - All three grading transforms now parsed: GradingPrimaryTransform, GradingRGBCurveTransform, GradingToneTransform
    - Added helper functions: parse_rgbm(), parse_curve_points()
 
-3. **Processor Apply Method**
+3. ~~**Named Transforms**~~ **DONE**
+   - Full NamedTransform struct with name, family, description, forward/inverse transforms
+   - Config parsing, getters (named_transform, named_transforms, num_named_transforms)
+   - Python bindings: named_transform_names(), has_named_transform(), named_transform_family()
+
+4. ~~**Shared Views**~~ **DONE**
+   - SharedView struct with all OCIO v2.3 fields
+   - Config parsing and getters
+   - Python bindings: shared_view_names(), num_shared_views()
+
+5. **Processor Apply Method**
    - Transform chain compilation incomplete
    - Some transform types skip application
 
 ### 3.3 Missing Features (MEDIUM PRIORITY)
 
-4. `viewing_rules` (OCIO v2.0+)
-5. `shared_views` (OCIO v2.3+)
-6. `ColorSpaceNamePathSearch` file rule
-7. `environment` directive
-8. `family_separator` config
-9. Matrix inversion for inverse direction
-10. CDL metadata fields (SOPDescription, etc.)
+6. `viewing_rules` (OCIO v2.0+)
+7. `ColorSpaceNamePathSearch` file rule
+8. `environment` directive
+9. `family_separator` config
+10. Matrix inversion for inverse direction
+11. CDL metadata fields (SOPDescription, etc.)
 
 ---
 

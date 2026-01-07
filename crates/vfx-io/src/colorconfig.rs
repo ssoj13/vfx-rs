@@ -403,6 +403,51 @@ impl ColorConfig {
     }
 
     // ========================================================================
+    // Named Transforms (OCIO v2.0+)
+    // ========================================================================
+
+    /// Returns the number of named transforms.
+    pub fn num_named_transforms(&self) -> usize {
+        self.config.named_transforms().len()
+    }
+
+    /// Returns all named transform names.
+    pub fn named_transform_names(&self) -> Vec<&str> {
+        self.config.named_transforms().iter().map(|nt| nt.name.as_str()).collect()
+    }
+
+    /// Checks if a named transform exists.
+    pub fn has_named_transform(&self, name: &str) -> bool {
+        self.config.named_transform(name).is_some()
+    }
+
+    /// Returns the family of a named transform.
+    pub fn named_transform_family(&self, name: &str) -> Option<&str> {
+        self.config.named_transform(name)
+            .and_then(|nt| nt.family.as_deref())
+    }
+
+    /// Returns the description of a named transform.
+    pub fn named_transform_description(&self, name: &str) -> Option<&str> {
+        self.config.named_transform(name)
+            .and_then(|nt| nt.description.as_deref())
+    }
+
+    // ========================================================================
+    // Shared Views (OCIO v2.3+)
+    // ========================================================================
+
+    /// Returns the number of shared views.
+    pub fn num_shared_views(&self) -> usize {
+        self.config.shared_views().len()
+    }
+
+    /// Returns all shared view names.
+    pub fn shared_view_names(&self) -> Vec<&str> {
+        self.config.shared_views().iter().map(|sv| sv.name.as_str()).collect()
+    }
+
+    // ========================================================================
     // Processor creation
     // ========================================================================
 
