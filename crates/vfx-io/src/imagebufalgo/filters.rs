@@ -782,6 +782,229 @@ pub fn fillholes_pushpull_into(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<R
     }
 }
 
+// ============================================================================
+// Kernel Generation
+// ============================================================================
+
+/// Create a filter kernel by name.
+///
+/// Generates various filter kernels for use with convolution operations.
+///
+/// # Supported kernels
+/// - "box" - Box/average filter
+/// - "gaussian" - Gaussian blur kernel
+/// - "triangle" - Triangle/tent filter (linear interpolation)
+/// - "laplacian" - Laplacian edge detection (3x3 only)
+/// - "binomial" - Binomial filter (approximates Gaussian)
+/// - "sharpen" - Simple sharpening kernel (3x3)
+///
+/// # Arguments
+/// * `name` - Kernel name (case insensitive)
+/// * `width` - Kernel width
+/// * `height` - Kernel height
+/// * `normalize` - Whether to normalize kernel to sum to 1.0
+///
+/// # Example
+/// ```ignore
+/// use vfx_io::imagebufalgo::make_kernel;
+///
+/// let gaussian = make_kernel("gaussian", 5.0, 5.0, true);
+/// let laplacian = make_kernel("laplacian", 3.0, 3.0, false);
+/// ```
+pub fn make_kernel(name: &str, width: f32, height: f32, normalize: bool) -> ImageBuf {
+    // Round up to odd size
+    let w = (width.ceil() as usize).max(1) | 1;
+    let h = (height.ceil() as usize).max(1) | 1;
+
+    let spec = vfx_core::ImageSpec::gray(w as u32, h as u32);
+    let mut kernel = ImageBuf::new(spec, InitializePixels::No);
+
+    let name_lower = name.to_lowercase();
+
+    match name_lower.as_str() {
+        "gaussian" => {
+            // Gaussian kernel
+            let sigma_x = width / 6.0; // 3 sigma rule
+            let sigma_y = height / 6.0;
+            let cx = (w / 2) as f32;
+            let cy = (h / 2) as f32;
+
+            for y in 0..h {
+                for x in 0..w {
+                    let dx = x as f32 - cx;
+                    let dy = y as f32 - cy;
+                    let val = (-0.5 * ((dx * dx) / (sigma_x * sigma_x) + (dy * dy) / (sigma_y * sigma_y))).exp();
+                    kernel.setpixel(x as i32, y as i32, 0, &[val]);
+                }
+            }
+        }
+        "box" => {
+            // Box/average filter
+            let val = 1.0;
+            for y in 0..h {
+                for x in 0..w {
+                    kernel.setpixel(x as i32, y as i32, 0, &[val]);
+                }
+            }
+        }
+        "triangle" | "tent" => {
+            // Triangle/tent filter
+            let cx = (w / 2) as f32;
+            let cy = (h / 2) as f32;
+            let rx = cx + 0.5;
+            let ry = cy + 0.5;
+
+            for y in 0..h {
+                for x in 0..w {
+                    let dx = (x as f32 - cx).abs();
+                    let dy = (y as f32 - cy).abs();
+                    let wx = (1.0 - dx / rx).max(0.0);
+                    let wy = (1.0 - dy / ry).max(0.0);
+                    kernel.setpixel(x as i32, y as i32, 0, &[wx * wy]);
+                }
+            }
+        }
+        "laplacian" => {
+            // Laplacian edge detection (only valid for 3x3)
+            if w == 3 && h == 3 {
+                let vals = [
+                    0.0, 1.0, 0.0,
+                    1.0, -4.0, 1.0,
+                    0.0, 1.0, 0.0,
+                ];
+                for y in 0..3 {
+                    for x in 0..3 {
+                        kernel.setpixel(x as i32, y as i32, 0, &[vals[y * 3 + x]]);
+                    }
+                }
+                // Laplacian sums to 0, don't normalize
+                return kernel;
+            } else {
+                // For non-3x3, use discrete Laplacian approximation
+                let cx = (w / 2) as f32;
+                let cy = (h / 2) as f32;
+
+                for y in 0..h {
+                    for x in 0..w {
+                        let dx = (x as f32 - cx).abs();
+                        let dy = (y as f32 - cy).abs();
+                        let dist = (dx * dx + dy * dy).sqrt();
+                        let val = if dist < 0.5 {
+                            -((w * h) as f32) + 1.0
+                        } else {
+                            1.0
+                        };
+                        kernel.setpixel(x as i32, y as i32, 0, &[val]);
+                    }
+                }
+                return kernel; // Don't normalize
+            }
+        }
+        "binomial" => {
+            // Binomial filter (approximates Gaussian)
+            let mut row_w = vec![1.0f32; w];
+            let mut row_h = vec![1.0f32; h];
+
+            // Build binomial coefficients for width
+            for _ in 1..w {
+                let mut new_row = vec![0.0f32; w];
+                new_row[0] = row_w[0];
+                for i in 1..w {
+                    new_row[i] = row_w[i - 1] + row_w[i];
+                }
+                row_w = new_row;
+            }
+
+            // Build binomial coefficients for height
+            if h != w {
+                for _ in 1..h {
+                    let mut new_row = vec![0.0f32; h];
+                    new_row[0] = row_h[0];
+                    for i in 1..h {
+                        new_row[i] = row_h[i - 1] + row_h[i];
+                    }
+                    row_h = new_row;
+                }
+            } else {
+                row_h = row_w.clone();
+            }
+
+            for y in 0..h {
+                for x in 0..w {
+                    kernel.setpixel(x as i32, y as i32, 0, &[row_w[x] * row_h[y]]);
+                }
+            }
+        }
+        "sharpen" => {
+            // Simple sharpening kernel (3x3)
+            if w >= 3 && h >= 3 {
+                // Fill with zeros first
+                for y in 0..h {
+                    for x in 0..w {
+                        kernel.setpixel(x as i32, y as i32, 0, &[0.0]);
+                    }
+                }
+                // Set center 3x3 sharpen kernel
+                let cx = w / 2;
+                let cy = h / 2;
+                let sharpen = [
+                    0.0, -1.0, 0.0,
+                    -1.0, 5.0, -1.0,
+                    0.0, -1.0, 0.0,
+                ];
+                for dy in 0..3usize {
+                    for dx in 0..3usize {
+                        let x = (cx - 1 + dx) as i32;
+                        let y = (cy - 1 + dy) as i32;
+                        kernel.setpixel(x, y, 0, &[sharpen[dy * 3 + dx]]);
+                    }
+                }
+                return kernel; // Don't normalize sharpen
+            } else {
+                // Fallback to box
+                for y in 0..h {
+                    for x in 0..w {
+                        kernel.setpixel(x as i32, y as i32, 0, &[1.0]);
+                    }
+                }
+            }
+        }
+        _ => {
+            // Unknown kernel - use box filter
+            for y in 0..h {
+                for x in 0..w {
+                    kernel.setpixel(x as i32, y as i32, 0, &[1.0]);
+                }
+            }
+        }
+    }
+
+    // Normalize if requested
+    if normalize {
+        let mut sum = 0.0f32;
+        let mut pixel = [0.0f32];
+
+        for y in 0..h {
+            for x in 0..w {
+                kernel.getpixel(x as i32, y as i32, 0, &mut pixel, WrapMode::Black);
+                sum += pixel[0];
+            }
+        }
+
+        if sum != 0.0 && sum != 1.0 {
+            for y in 0..h {
+                for x in 0..w {
+                    kernel.getpixel(x as i32, y as i32, 0, &mut pixel, WrapMode::Black);
+                    pixel[0] /= sum;
+                    kernel.setpixel(x as i32, y as i32, 0, &pixel);
+                }
+            }
+        }
+    }
+
+    kernel
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

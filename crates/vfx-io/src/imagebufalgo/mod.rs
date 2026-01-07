@@ -88,6 +88,7 @@ pub use stats::{
     histogram, Histogram,
     maxchan, minchan,
     color_range_check, RangeCheckResult,
+    color_count, unique_color_count,
 };
 
 // OCIO color conversion operations
@@ -96,6 +97,7 @@ pub use ocio::{
     ociodisplay, ociodisplay_into,
     ociolook, ociolook_into,
     ociofiletransform, ociofiletransform_into,
+    ocionamedtransform, ocionamedtransform_into,
     equivalent_colorspace,
 };
 
@@ -120,6 +122,7 @@ pub use filters::{
     convolve, convolve_into,
     box_blur, box_blur_into,
     fillholes_pushpull, fillholes_pushpull_into,
+    make_kernel,
 };
 
 // FFT operations

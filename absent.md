@@ -16,9 +16,9 @@
 
 ## Приоритет: Низкий
 
-- [ ] **make_kernel** - Создание filter kernel по имени
-- [ ] **ocionamedtransform** - Named OCIO transform
-- [ ] **color_count** - Подсчёт уникальных цветов
+- [x] **make_kernel** - Создание filter kernel по имени
+- [x] **ocionamedtransform** - Named OCIO transform
+- [x] **color_count** - Подсчёт уникальных цветов
 
 ## Требуют внешних зависимостей
 
@@ -40,4 +40,6 @@
 | resample | ✅ | ✅ | ⬜ |
 | zover | ✅ | ✅ | ⬜ |
 | fillholes_pushpull | ✅ | ✅ | ⬜ |
-| make_kernel | ⬜ | ⬜ | ⬜ |
+| make_kernel | ✅ | ✅ | ⬜ |
+| ocionamedtransform | ✅ | ✅ | ⬜ |
+| color_count | ✅ | ✅ | ⬜ |

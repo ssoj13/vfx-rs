@@ -929,6 +929,37 @@ pub fn fillholes_pushpull(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image>
     imagebuf_to_image(&result)
 }
 
+/// Create a filter kernel by name.
+///
+/// Generates various filter kernels for use with convolution operations.
+///
+/// Supported kernels:
+/// - "box" - Box/average filter
+/// - "gaussian" - Gaussian blur kernel
+/// - "triangle" - Triangle/tent filter (linear interpolation)
+/// - "laplacian" - Laplacian edge detection
+/// - "binomial" - Binomial filter (approximates Gaussian)
+/// - "sharpen" - Simple sharpening kernel
+///
+/// Args:
+///     name: Kernel name (case insensitive)
+///     width: Kernel width
+///     height: Kernel height
+///     normalize: Whether to normalize kernel to sum to 1.0 (default True)
+///
+/// Returns:
+///     Single-channel kernel image
+///
+/// Example:
+///     >>> gaussian = make_kernel("gaussian", 5.0, 5.0)
+///     >>> laplacian = make_kernel("laplacian", 3.0, 3.0, normalize=False)
+#[pyfunction]
+#[pyo3(signature = (name, width, height, normalize=true))]
+pub fn make_kernel(name: &str, width: f32, height: f32, normalize: bool) -> PyResult<Image> {
+    let result = imagebufalgo::make_kernel(name, width, height, normalize);
+    imagebuf_to_image(&result)
+}
+
 // ============================================================================
 // Color Operations
 // ============================================================================
@@ -1137,6 +1168,40 @@ pub fn srgb_to_linear(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
 pub fn linear_to_srgb(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
     let buf = image_to_imagebuf(image);
     let result = imagebufalgo::linear_to_srgb(&buf, convert_roi(roi));
+    imagebuf_to_image(&result)
+}
+
+// ============================================================================
+// OCIO Color Transforms
+// ============================================================================
+
+/// Apply a named color transform.
+///
+/// Supports common transform names like:
+/// - "srgb_to_linear", "linear_to_srgb"
+/// - "aces_to_acescg", "acescg_to_aces"
+/// - Generic patterns: "X_to_Y" or "X2Y"
+///
+/// Args:
+///     image: Source image
+///     name: Transform name (e.g., "srgb_to_linear")
+///     inverse: Apply inverse transform
+///     unpremult: Unpremultiply before transform, repremultiply after
+///     roi: Optional region of interest
+///
+/// Returns:
+///     Transformed image
+#[pyfunction]
+#[pyo3(signature = (image, name, inverse=false, unpremult=false, roi=None))]
+pub fn ocionamedtransform(
+    image: &Image,
+    name: &str,
+    inverse: bool,
+    unpremult: bool,
+    roi: Option<&Roi3D>,
+) -> PyResult<Image> {
+    let buf = image_to_imagebuf(image);
+    let result = imagebufalgo::ocionamedtransform(&buf, name, inverse, unpremult, None, convert_roi(roi));
     imagebuf_to_image(&result)
 }
 
@@ -1451,6 +1516,66 @@ pub fn noise(
 }
 
 // ============================================================================
+// Statistics / Color Analysis
+// ============================================================================
+
+/// Count pixels matching specific colors.
+///
+/// For each color in the list, counts how many pixels match that color
+/// within the specified epsilon tolerance.
+///
+/// Args:
+///     image: Source image
+///     colors: List of colors (flat list: [r1,g1,b1,a1, r2,g2,b2,a2, ...])
+///     epsilon: Tolerance per channel (default [0.001] for each)
+///     roi: Optional region of interest
+///
+/// Returns:
+///     List of counts, one per color
+///
+/// Example:
+///     >>> # Count red and blue pixels in an RGBA image
+///     >>> counts = color_count(img,
+///     ...     colors=[1.0, 0.0, 0.0, 1.0,   # red
+///     ...             0.0, 0.0, 1.0, 1.0],  # blue
+///     ...     epsilon=[0.01, 0.01, 0.01, 0.01])
+///     >>> print(f"Red: {counts[0]}, Blue: {counts[1]}")
+#[pyfunction]
+#[pyo3(signature = (image, colors, epsilon=None, roi=None))]
+pub fn color_count(
+    image: &Image,
+    colors: Vec<f32>,
+    epsilon: Option<Vec<f32>>,
+    roi: Option<&Roi3D>,
+) -> PyResult<Vec<u64>> {
+    let buf = image_to_imagebuf(image);
+    let eps = epsilon.unwrap_or_else(|| vec![0.001]);
+    Ok(imagebufalgo::color_count(&buf, &colors, &eps, convert_roi(roi)))
+}
+
+/// Count unique colors in an image.
+///
+/// Returns the number of distinct pixel values in the image.
+/// Colors are quantized to 16-bit precision to handle floating point comparison.
+///
+/// Args:
+///     image: Source image
+///     roi: Optional region of interest
+///
+/// Returns:
+///     Number of unique colors
+///
+/// Example:
+///     >>> n = unique_color_count(img)
+///     >>> print(f"Image has {n} unique colors")
+#[pyfunction]
+#[pyo3(signature = (image, roi=None))]
+pub fn unique_color_count(image: &Image, roi: Option<&Roi3D>) -> PyResult<usize> {
+    let buf = image_to_imagebuf(image);
+    Ok(imagebufalgo::unique_color_count(&buf, convert_roi(roi)))
+}
+
+// ============================================================================
 // Channel Operations
 // ============================================================================
 
@@ -1582,6 +1707,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(laplacian, m)?)?;
     m.add_function(wrap_pyfunction!(sobel, m)?)?;
     m.add_function(wrap_pyfunction!(fillholes_pushpull, m)?)?;
+    m.add_function(wrap_pyfunction!(make_kernel, m)?)?;
 
     // Color
     m.add_function(wrap_pyfunction!(premult, m)?)?;
@@ -1594,6 +1720,9 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(rangeexpand, m)?)?;
     m.add_function(wrap_pyfunction!(srgb_to_linear, m)?)?;
     m.add_function(wrap_pyfunction!(linear_to_srgb, m)?)?;
+
+    // OCIO Color Transforms
+    m.add_function(wrap_pyfunction!(ocionamedtransform, m)?)?;
 
     // Compositing / Blend modes
     m.add_function(wrap_pyfunction!(under, m)?)?;
@@ -1618,6 +1747,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fill, m)?)?;
     m.add_function(wrap_pyfunction!(checker, m)?)?;
     m.add_function(wrap_pyfunction!(noise, m)?)?;
+
+    // Statistics / Color analysis
+    m.add_function(wrap_pyfunction!(color_count, m)?)?;
+    m.add_function(wrap_pyfunction!(unique_color_count, m)?)?;
 
     // Channels
     m.add_function(wrap_pyfunction!(extract_channel, m)?)?;

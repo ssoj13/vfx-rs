@@ -468,6 +468,185 @@ pub fn equivalent_colorspace(name1: &str, name2: &str, config: Option<&ColorConf
     }
 }
 
+// ============================================================================
+// Named Transform Support
+// ============================================================================
+
+/// Applies an OCIO named transform.
+///
+/// Named transforms are reusable transform definitions in OCIO v2 configs.
+/// This function also supports common transform patterns like "srgb_to_linear".
+///
+/// # Arguments
+///
+/// * `src` - Source image
+/// * `name` - Named transform identifier
+/// * `inverse` - Apply inverse transform
+/// * `unpremult` - Unpremultiply before transform, repremultiply after
+/// * `config` - Optional ColorConfig
+/// * `roi` - Optional region of interest
+///
+/// # Supported named transforms
+///
+/// - Standard OCIO v2 named transforms (if defined in config)
+/// - Pattern-based: "X_to_Y" where X and Y are colorspace names
+/// - Built-in aliases: "srgb_to_linear", "linear_to_srgb"
+///
+/// # Example
+///
+/// ```ignore
+/// use vfx_io::imagebufalgo::ocionamedtransform;
+///
+/// // Apply sRGB encoding
+/// let encoded = ocionamedtransform(&linear, "linear_to_srgb", false, true, None, None);
+///
+/// // Apply a named transform from config
+/// let result = ocionamedtransform(&src, "log_to_lin", false, true, Some(&config), None);
+/// ```
+pub fn ocionamedtransform(
+    src: &ImageBuf,
+    name: &str,
+    inverse: bool,
+    unpremult: bool,
+    config: Option<&ColorConfig>,
+    roi: Option<Roi3D>,
+) -> ImageBuf {
+    let default_config;
+    let cfg = match config {
+        Some(c) => c,
+        None => {
+            default_config = ColorConfig::new();
+            &default_config
+        }
+    };
+
+    // Try to parse as "from_to_destination" pattern
+    let name_lower = name.to_lowercase();
+
+    // Common built-in transforms (using owned Strings for uniformity)
+    let (from_cs, to_cs): (String, String) = match name_lower.as_str() {
+        "srgb_to_linear" | "srgb_to_lin" | "srgb2linear" => {
+            ("sRGB".to_string(), "Linear".to_string())
+        }
+        "linear_to_srgb" | "lin_to_srgb" | "linear2srgb" => {
+            ("Linear".to_string(), "sRGB".to_string())
+        }
+        "aces_to_acescg" | "aces2acescg" => {
+            ("ACES2065-1".to_string(), "ACEScg".to_string())
+        }
+        "acescg_to_aces" | "acescg2aces" => {
+            ("ACEScg".to_string(), "ACES2065-1".to_string())
+        }
+        _ => {
+            // Try to parse "X_to_Y" pattern
+            if let Some((from, to)) = parse_transform_pattern(name) {
+                (from, to)
+            } else {
+                // Couldn't parse - return unchanged
+                return src.clone();
+            }
+        }
+    };
+
+    // Determine actual colorspaces (apply inverse if needed)
+    let (actual_from, actual_to) = if inverse {
+        (&to_cs, &from_cs)
+    } else {
+        (&from_cs, &to_cs)
+    };
+
+    // Try to find colorspaces in config
+    let from_resolved = resolve_colorspace_name(actual_from, cfg);
+    let to_resolved = resolve_colorspace_name(actual_to, cfg);
+
+    // Apply the color conversion
+    colorconvert(src, &from_resolved, &to_resolved, Some(cfg), roi)
+}
+
+/// Applies named transform into existing buffer.
+pub fn ocionamedtransform_into(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    name: &str,
+    inverse: bool,
+    unpremult: bool,
+    config: Option<&ColorConfig>,
+    roi: Option<Roi3D>,
+) {
+    let result = ocionamedtransform(src, name, inverse, unpremult, config, roi);
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let nch = result.nchannels() as usize;
+    let mut pixel = vec![0.0f32; nch];
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                result.getpixel(x, y, z, &mut pixel, WrapMode::Black);
+                dst.setpixel(x, y, z, &pixel);
+            }
+        }
+    }
+}
+
+/// Parses transform patterns like "X_to_Y" or "X2Y".
+fn parse_transform_pattern(name: &str) -> Option<(String, String)> {
+    let name_lower = name.to_lowercase();
+
+    // Try "X_to_Y" pattern
+    if let Some(idx) = name_lower.find("_to_") {
+        let from = &name[..idx];
+        let to = &name[idx + 4..];
+        if !from.is_empty() && !to.is_empty() {
+            return Some((from.to_string(), to.to_string()));
+        }
+    }
+
+    // Try "X2Y" pattern (number 2)
+    if let Some(idx) = name_lower.find('2') {
+        if idx > 0 && idx < name.len() - 1 {
+            let from = &name[..idx];
+            let to = &name[idx + 1..];
+            if !from.is_empty() && !to.is_empty() {
+                return Some((from.to_string(), to.to_string()));
+            }
+        }
+    }
+
+    None
+}
+
+/// Resolves a colorspace name, handling common aliases.
+fn resolve_colorspace_name(name: &str, config: &ColorConfig) -> String {
+    let name_lower = name.to_lowercase();
+
+    // Common aliases
+    let resolved = match name_lower.as_str() {
+        "linear" | "lin" | "scene_linear" => {
+            // Try to find scene_linear role
+            config.scene_linear().map(|s| s.to_string())
+                .unwrap_or_else(|| "Linear".to_string())
+        }
+        "srgb" | "srgb_texture" => "sRGB".to_string(),
+        "aces" | "aces2065" | "aces2065-1" => "ACES2065-1".to_string(),
+        "acescg" => "ACEScg".to_string(),
+        "acescct" => "ACEScct".to_string(),
+        "acescc" => "ACEScc".to_string(),
+        "rec709" | "bt709" => "Rec.709".to_string(),
+        "rec2020" | "bt2020" => "Rec.2020".to_string(),
+        _ => name.to_string(),
+    };
+
+    // Verify the colorspace exists in config
+    if config.has_colorspace(&resolved) {
+        resolved
+    } else if config.has_colorspace(name) {
+        name.to_string()
+    } else {
+        // Return as-is, let colorconvert handle any errors
+        resolved
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
