@@ -33,5 +33,12 @@ sys-info = "0.9"
 # Error handling
 thiserror = { workspace = true }
 
+# VRAM detection (platform-specific)
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = ["Win32_Graphics_Dxgi"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nvml-wrapper = { version = "0.10", optional = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }

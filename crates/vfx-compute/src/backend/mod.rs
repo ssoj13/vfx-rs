@@ -19,6 +19,11 @@ mod detect;
 mod cpu_backend;
 mod executor;
 pub mod streaming;
+mod memory;
+mod vram;
+mod cache;
+mod cluster;
+mod planner;
 
 #[cfg(feature = "wgpu")]
 mod wgpu_backend;
@@ -30,6 +35,31 @@ mod cuda_backend;
 pub use gpu_primitives::{GpuPrimitives, ImageHandle, KernelParams, AsAny};
 pub use tiling::{GpuLimits, Tile, generate_tiles, ProcessingStrategy, TileWorkflow};
 pub use detect::{detect_backends, select_best_backend, describe_backends, BackendInfo};
+
+// Memory management
+pub use memory::{
+    available_memory, system_memory, processing_budget, cache_budget,
+    cache_disabled, tile_size_override, backend_override,
+    image_memory, processing_memory, format_bytes,
+    BYTES_PER_PIXEL, SAFE_MEMORY_FRACTION,
+};
+
+// VRAM detection
+pub use vram::{detect_vram, total_vram, free_vram, available_vram, VramInfo};
+#[cfg(feature = "wgpu")]
+pub use vram::is_software_renderer;
+
+// Region cache
+pub use cache::{RegionCache, RegionKey, CachedRegion};
+
+// Tile clustering
+pub use cluster::{
+    SourceRegion, TileTriple, TileCluster, ClusterConfig,
+    cluster_tiles, analyze_source_region, compute_savings,
+};
+
+// Execution planner
+pub use planner::{Planner, ExecutionPlan, Constraints};
 
 // Executor
 pub use executor::{TiledExecutor, ExecutorConfig, ColorOp, ImageOp, set_verbose};
