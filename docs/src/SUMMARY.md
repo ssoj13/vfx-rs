@@ -129,6 +129,7 @@
 # Appendix
 
 - [Overview](./appendix/README.md)
+- [Feature Matrix](./appendix/feature-matrix.md)
 - [Format Support](./appendix/formats.md)
 - [Color Space Reference](./appendix/color-spaces.md)
 - [CLI Quick Reference](./appendix/cli-ref.md)

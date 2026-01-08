@@ -25,7 +25,7 @@ OpenImageIO and OpenColorIO are industry-standard tools that power countless pro
 |----------|----------|
 | **Formats** | EXR, PNG, JPEG, TIFF, DPX, HDR, WebP, PSD (read), TX |
 | **Color** | sRGB, Rec.709, Rec.2020, DCI-P3, ACEScg, ACES2065-1 |
-| **Transfer Functions** | PQ, HLG, LogC3, S-Log2/3, V-Log, ACEScc/cct, REDLog |
+| **Transfer Functions** | sRGB, PQ, HLG, LogC3, LogC4, S-Log2/3, V-Log, Canon Log 2/3, Apple Log, ACEScc/cct, REDLog |
 | **LUTs** | .cube, .clf, .spi1d/.spi3d, .csp |
 | **Operations** | Resize, Crop, Rotate, Flip, Blur, Sharpen, Composite |
 | **ACES** | IDT, RRT, ODT, LMT transforms |
@@ -130,20 +130,33 @@ fn main() -> anyhow::Result<()> {
 ```
 vfx-rs/
 ├── vfx-core        # ImageData, ImageSpec, ChannelType
-├── vfx-math        # Vec3, Mat3, Mat4, color matrices
-├── vfx-transfer    # Transfer functions (sRGB, PQ, HLG, LogC...)
-├── vfx-primaries   # Color space primaries (Rec.709, P3, Rec.2020...)
-├── vfx-lut         # LUT parsing (.cube, .clf, .spi)
-├── vfx-color       # Color pipeline orchestration
-├── vfx-io          # Image I/O (EXR, PNG, JPEG, TIFF, DPX...)
+├── vfx-math        # Vec3, Mat3, Mat4, SIMD (f32x4/x8), chromatic adaptation
+├── vfx-transfer    # Transfer functions (sRGB, PQ, HLG, LogC3/4, Canon Log...)
+├── vfx-primaries   # Color primaries (Rec.709, P3, Rec.2020, AWG4, CGamut...)
+├── vfx-lut         # LUT parsing (.cube, .clf, .spi, .csp, CDL)
+├── vfx-color       # Color pipeline, ACES 2.0, grading ops
+├── vfx-io          # Image I/O (EXR, PNG, JPEG, TIFF, DPX, HDR...)
 ├── vfx-icc         # ICC profile support (lcms2)
 ├── vfx-ocio        # OpenColorIO config compatibility
-├── vfx-ops         # Image operations (resize, blur, composite)
+├── vfx-ops         # Image operations (resize, blur, composite, FFT)
 ├── vfx-compute     # GPU backends (CPU/wgpu/CUDA)
 ├── vfx-view        # Image viewer (egui)
 ├── vfx-cli         # Command-line tool
 └── vfx-rs-py       # Python bindings (PyO3)
 ```
+
+### Camera Color Spaces
+
+Full camera gamut support verified against OCIO ColorMatrixHelpers.cpp:
+
+| Camera | Gamut | Transfer | Status |
+|--------|-------|----------|--------|
+| ARRI Alexa | AWG3, AWG4 | LogC3, LogC4 | Verified |
+| Sony Venice/FX | S-Gamut3, S-Gamut3.Cine | S-Log3 | Verified |
+| Canon C500/C300 | Cinema Gamut | Canon Log 2/3 | Verified |
+| RED | REDWideGamutRGB | Log3G10, REDLogFilm | Verified |
+| Panasonic VariCam | V-Gamut | V-Log | Verified |
+| Apple iPhone 15 Pro+ | - | Apple Log | Verified |
 
 ## Parity Status
 
@@ -176,18 +189,21 @@ vfx-rs/
 
 ### Transfer Functions (100%)
 
-All major camera log curves verified against manufacturer specs:
+All major camera log curves verified against OCIO reference code:
 
-| Function | Spec | Status |
-|----------|------|--------|
+| Function | Verified Against | Status |
+|----------|-----------------|--------|
 | sRGB | IEC 61966-2-1 | 51+ tests passing |
 | PQ (HDR10) | SMPTE ST 2084 | Verified |
 | HLG | ITU-R BT.2100-2 | Verified |
-| ARRI LogC3 | ARRI | Verified |
-| Sony S-Log2/3 | Sony | Verified |
-| Panasonic V-Log | Panasonic | Verified |
-| RED REDLogFilm/3G10 | RED | Verified |
-| Blackmagic Film Gen5 | BMD | Verified |
+| ARRI LogC3 | OCIO ArriCameras.cpp | Verified |
+| ARRI LogC4 | OCIO ArriCameras.cpp | Verified (new) |
+| Sony S-Log2/3 | OCIO SonyCameras.cpp | Verified |
+| Panasonic V-Log | OCIO PanasonicCameras.cpp | Verified |
+| Canon Log 2/3 | OCIO CanonCameras.cpp | Verified (new) |
+| Apple Log | OCIO AppleCameras.cpp | Verified (new) |
+| RED REDLogFilm/3G10 | OCIO RedCameras.cpp | Verified |
+| Blackmagic Film Gen5 | BMD spec | Verified |
 | ACEScc/cct | AMPAS | Verified |
 
 ## GPU Acceleration

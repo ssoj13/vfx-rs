@@ -31,23 +31,26 @@ Transfer functions convert between linear light and encoded values. This crate i
 
 ### Camera Log (Scene-Referred)
 
-| Module | Camera/System | Dynamic Range |
-|--------|---------------|---------------|
-| `log_c` | ARRI Alexa | ~14 stops |
-| `s_log2` | Sony F65/F55 (legacy) | ~15 stops |
-| `s_log3` | Sony Venice/FX | ~15 stops |
-| `v_log` | Panasonic VariCam | ~14 stops |
-| `red_log` | RED cameras | ~16+ stops |
-| `bmd_film` | Blackmagic | ~13 stops |
-| `acescc` | ACES grading | ~25 stops |
-| `acescct` | ACES grading (toe) | ~25 stops |
+| Module | Camera/System | Dynamic Range | Verified Against |
+|--------|---------------|---------------|------------------|
+| `log_c` | ARRI Alexa (LogC3) | ~14 stops | OCIO ArriCameras.cpp |
+| `log_c4` | ARRI Alexa 35 (LogC4) | ~17 stops | OCIO ArriCameras.cpp |
+| `s_log2` | Sony F65/F55 (legacy) | ~15 stops | OCIO SonyCameras.cpp |
+| `s_log3` | Sony Venice/FX | ~15 stops | OCIO SonyCameras.cpp |
+| `v_log` | Panasonic VariCam | ~14 stops | OCIO PanasonicCameras.cpp |
+| `canon_log` | Canon Cinema EOS (Log2/3) | ~15 stops | OCIO CanonCameras.cpp |
+| `apple_log` | Apple iPhone 15 Pro+ | ~12 stops | OCIO AppleCameras.cpp |
+| `red_log` | RED cameras | ~16+ stops | OCIO RedCameras.cpp |
+| `bmd_film` | Blackmagic | ~13 stops | BMD spec |
+| `acescc` | ACES grading | ~25 stops | AMPAS S-2014-003 |
+| `acescct` | ACES grading (toe) | ~25 stops | AMPAS S-2016-001 |
 
 ## Usage
 
 ### Basic Encode/Decode
 
 ```rust
-use vfx_transfer::{srgb, pq, log_c};
+use vfx_transfer::{srgb, pq, log_c, log_c4, canon_log, apple_log};
 
 // sRGB: common display encoding
 let linear = srgb::eotf(0.5);      // Decode: 0.5 → 0.214
@@ -57,9 +60,19 @@ let encoded = srgb::oetf(0.214);   // Encode: 0.214 → 0.5
 let nits = pq::eotf(0.5);          // ~100 cd/m²
 let pq_code = pq::oetf(100.0);     // ~0.5
 
-// ARRI LogC: camera log
+// ARRI LogC3: camera log
 let scene_linear = log_c::decode(0.5);
 let log_value = log_c::encode(scene_linear);
+
+// ARRI LogC4: newer cameras (Alexa 35)
+let linear = log_c4::decode(0.5);
+let log_val = log_c4::encode(linear);
+
+// Canon Log 2/3
+let linear = canon_log::clog3_decode(0.5);
+
+// Apple Log
+let linear = apple_log::decode(0.5);
 ```
 
 ### Gamma Functions

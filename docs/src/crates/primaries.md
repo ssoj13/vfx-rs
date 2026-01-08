@@ -72,11 +72,17 @@ let custom = Primaries {
 
 ### Camera Native
 
-| Constant | Camera | White Point |
-|----------|--------|-------------|
-| `ARRI_WIDE_GAMUT_3` | ARRI Alexa | D65 |
-| `S_GAMUT3` | Sony Venice | D65 |
-| `V_GAMUT` | Panasonic VariCam | D65 |
+All camera gamuts verified against OCIO ColorMatrixHelpers.cpp:
+
+| Constant | Camera | White Point | Verified |
+|----------|--------|-------------|----------|
+| `ARRI_WIDE_GAMUT_3` | ARRI Alexa (classic) | D65 | OCIO |
+| `ARRI_WIDE_GAMUT_4` | ARRI Alexa 35 | D65 | OCIO |
+| `S_GAMUT3` | Sony Venice/FX | D65 | OCIO |
+| `S_GAMUT3_CINE` | Sony (cinema trim) | D65 | OCIO |
+| `V_GAMUT` | Panasonic VariCam | D65 | OCIO |
+| `CANON_CGAMUT` | Canon Cinema EOS | D65 | OCIO |
+| `RED_WIDE_GAMUT` | RED cameras | D65 | OCIO |
 
 ## White Points
 
@@ -180,10 +186,23 @@ ACES AP1:        ~80%
 ACES AP0:        >100% (imaginary colors)
 ```
 
+## Camera Gamut Coordinates
+
+Exact chromaticity values (xy) for camera gamuts:
+
+| Gamut | Red | Green | Blue |
+|-------|-----|-------|------|
+| ARRI AWG4 | (0.7347, 0.2653) | (0.1424, 0.8576) | (0.0991, -0.0308) |
+| Canon CGamut | (0.7400, 0.2700) | (0.1700, 1.1400) | (0.0800, -0.1000) |
+| RED WideGamut | (0.7803, 0.3043) | (0.1216, 1.4940) | (0.0956, -0.0846) |
+| S-Gamut3.Cine | (0.7660, 0.2750) | (0.2250, 0.8000) | (0.0890, -0.0870) |
+
+Note: Some primaries have imaginary (negative) y coordinates for wider gamuts.
+
 ## Dependencies
 
 - `vfx-core` - Core types
-- `vfx-math` - Matrix operations
+- `vfx-math` - Matrix operations, chromatic adaptation
 - `glam` - SIMD math
 
 ## Used By

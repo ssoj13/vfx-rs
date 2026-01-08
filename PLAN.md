@@ -447,20 +447,66 @@ Maturin пока не поддерживает Python 3.14. Варианты:
 
 | Phase | Total | Done | Progress |
 |-------|-------|------|----------|
-| 1. Transfer Functions | ~40 | 0 | 0% |
-| 2. LUT Formats | ~25 | 0 | 0% |
-| 3. Core Ops | ~50 | 0 | 0% |
-| 4. OCIO Config | ~25 | 0 | 0% |
-| 5. SIMD | ~15 | 0 | 0% |
-| 6. Primaries | ~30 | 0 | 0% |
-| 7. Testing | ~15 | 0 | 0% |
-| 8. Documentation | ~10 | 0 | 0% |
-| **TOTAL** | **~210** | **0** | **0%** |
+| 1. Transfer Functions | ~40 | 35 | 87% |
+| 2. LUT Formats | ~25 | 9 | 36% |
+| 3. Core Ops | ~50 | 10 | 20% |
+| 4. OCIO Config | ~25 | 15 | 60% |
+| 5. SIMD | ~15 | 10 | 67% |
+| 6. Primaries | ~30 | 25 | 83% |
+| 7. Testing | ~15 | 12 | 80% |
+| 8. Documentation | ~10 | 8 | 80% |
+| **TOTAL** | **~210** | **~124** | **~59%** |
 
 ---
 
-## Current Focus
+## Completed (Audit 2026-01-06)
 
-**Next task**: Phase 1.1 - ARRI LogC4 implementation
+**Phase 1 - Transfer Functions:**
+- [x] ARRI LogC4 - verified against OCIO ArriCameras.cpp
+- [x] Canon Log 2/3 - verified against OCIO CanonCameras.cpp
+- [x] Apple Log - verified against OCIO AppleCameras.cpp
+- [x] S-Log3 - verified against OCIO SonyCameras.cpp
+- [x] V-Log - verified against OCIO PanasonicCameras.cpp
+- [x] All existing transfer functions verified
 
-Starting point: `_ref/OpenColorIO/src/OpenColorIO/transforms/builtins/ArriCameras.cpp`
+**Phase 3 - Core Ops:**
+- [x] ACES2 Output Transform (32 tests pass)
+- [x] ExposureContrast (Linear, Video, Logarithmic)
+- [x] GradingPrimary (lift/gamma/gain)
+
+**Phase 6 - Primaries & Adaptation:**
+- [x] Canon CGamut primaries added
+- [x] ARRI Wide Gamut 4 primaries added
+- [x] RED Wide Gamut RGB primaries added
+- [x] S-Gamut3.Cine primaries added
+- [x] Bradford matrix verified against OCIO
+- [x] CAT02 matrix verified against OCIO
+- [x] All white points verified
+
+**Infrastructure:**
+- [x] .cargo/config.toml for macOS pyo3 linking
+- [x] 1200+ tests passing
+
+---
+
+## Remaining Work
+
+### High Priority
+- [ ] GradingTone op
+- [ ] GradingRGBCurve op
+- [ ] RangeOp
+- [ ] GPU compute shaders (wgpu)
+
+### Medium Priority
+- [ ] Autodesk 1DL format
+- [ ] SPI Matrix format
+- [ ] GradingHueCurve op
+- [ ] FixedFunction ops
+- [ ] CUDA backend
+
+### Low Priority
+- [ ] Pandora LUT format
+- [ ] Truelight format
+- [ ] Iridas ITX/Look formats
+- [ ] HDL (Houdini) format
+- [ ] Canon Log (original)
