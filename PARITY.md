@@ -112,25 +112,25 @@ Per-channel exponent:
 **Reference:** `_ref/OpenColorIO/src/OpenColorIO/ops/fixedfunction/`
 
 Специальные функции ACES и др:
-- [ ] `ACES_RED_MOD_03` (forward/inverse)
+- [x] `ACES_RED_MOD_03` (forward/inverse)
 - [x] `ACES_RED_MOD_10` (forward/inverse) - Note: inverse not exact per ACES 1.0 spec
-- [ ] `ACES_GLOW_03` (forward/inverse)
+- [x] `ACES_GLOW_03` (forward/inverse)
 - [x] `ACES_GLOW_10` (forward/inverse)
-- [ ] `ACES_DARK_TO_DIM_10` (forward/inverse)
-- [ ] `ACES_GAMUT_COMP_13` (forward/inverse)
+- [x] `ACES_DARK_TO_DIM_10` (forward/inverse)
+- [x] `ACES_GAMUT_COMP_13` (forward/inverse)
 - [x] `REC2100_SURROUND` (forward/inverse)
 - [x] `RGB_TO_HSV` / `HSV_TO_RGB` (есть в vfx-color)
 - [x] `XYZ_TO_xyY` / `xyY_TO_XYZ`
 - [x] `XYZ_TO_uvY` / `uvY_TO_XYZ`
-- [ ] `XYZ_TO_LUV` / `LUV_TO_XYZ`
-- [ ] `LIN_TO_PQ` / `PQ_TO_LIN` (fixed params version)
-- [ ] `LIN_TO_GAMMA_LOG` / `GAMMA_LOG_TO_LIN`
-- [ ] `LIN_TO_DOUBLE_LOG` / `DOUBLE_LOG_TO_LIN`
+- [x] `XYZ_TO_LUV` / `LUV_TO_XYZ`
+- [x] `LIN_TO_PQ` / `PQ_TO_LIN` (fixed params version)
+- [x] `LIN_TO_GAMMA_LOG` / `GAMMA_LOG_TO_LIN`
+- [x] `LIN_TO_DOUBLE_LOG` / `DOUBLE_LOG_TO_LIN`
 - [x] `ACES_OUTPUT_TRANSFORM_20` (есть в vfx-color/aces2)
-- [ ] `ACES_RGB_TO_JMh_20` / `ACES_JMh_TO_RGB_20`
-- [ ] `ACES_TONESCALE_COMPRESS_20`
-- [ ] `ACES_GAMUT_COMPRESS_20`
-- [ ] `RGB_TO_HSY_LIN/LOG/VID` / `HSY_TO_RGB`
+- [x] `ACES_RGB_TO_JMh_20` / `ACES_JMh_TO_RGB_20` (есть в vfx-color/aces2)
+- [x] `ACES_TONESCALE_COMPRESS_20` (есть в vfx-color/aces2)
+- [x] `ACES_GAMUT_COMPRESS_20` (есть в vfx-color/aces2)
+- [x] `RGB_TO_HSY_LIN/LOG/VID` / `HSY_TO_RGB`
 - [x] Файл: `crates/vfx-ops/src/fixed_function.rs`
 
 ---
@@ -341,8 +341,8 @@ Per-channel exponent:
 | OCIO Transforms | 9 | 7 | 2 |
 | GPU Compute | 2 | 0 | 2 |
 | Primaries | 2 | 0 | 2 |
-| FixedFunction styles | 20 | 8 | 12 |
-| **TOTAL** | **52** | **30** | **22** |
+| FixedFunction styles | 19 | 19 | 0 |
+| **TOTAL** | **51** | **41** | **10** |
 
 ---
 
@@ -389,4 +389,6 @@ Per-channel exponent:
 
 ## Current Task
 
-**Next:** Phase E - GPU (wgpu shaders) or remaining FixedFunction styles
+**Done:** FixedFunction styles (all 19 implemented)
+
+**Next:** Phase E - GPU (wgpu shaders) or Transfer Functions (Canon Log original, DJI D-Log, Moncurve)

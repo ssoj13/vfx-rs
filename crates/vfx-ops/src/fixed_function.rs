@@ -982,6 +982,301 @@ pub fn apply_lin_to_pq_rgba(pixels: &mut [f32]) {
 }
 
 // ============================================================================
+// LIN_TO_GAMMA_LOG / GAMMA_LOG_TO_LIN
+// ============================================================================
+
+/// Parameters for Gamma-Log curve.
+/// 
+/// Reference: OCIO FixedFunctionOpCPU.cpp Renderer_LIN_TO_GAMMA_LOG
+/// 
+/// The curve has two segments:
+/// - Gamma segment (below break): slope * (x + off)^power
+/// - Log segment (above break): logSlope * log(linSlope * x + linOff) + logOff
+#[derive(Debug, Clone, Copy)]
+pub struct GammaLogParams {
+    /// Mirror point for negative value handling
+    pub mirror: f32,
+    /// Break point between gamma and log segments
+    pub break_point: f32,
+    /// Gamma segment power
+    pub gamma_power: f32,
+    /// Gamma segment slope
+    pub gamma_slope: f32,
+    /// Gamma segment offset
+    pub gamma_off: f32,
+    /// Log base (e.g., 10.0 or e)
+    pub log_base: f32,
+    /// Log segment slope (before log base conversion)
+    pub log_slope: f32,
+    /// Log segment offset
+    pub log_off: f32,
+    /// Linear scaling slope inside log
+    pub lin_slope: f32,
+    /// Linear offset inside log
+    pub lin_off: f32,
+    // Precomputed values
+    log_slope_baked: f32,  // log_slope / ln(log_base)
+    prime_break: f32,      // break point in non-linear domain
+    prime_mirror: f32,     // mirror point in non-linear domain
+}
+
+impl GammaLogParams {
+    /// Create new parameters with precomputed values.
+    pub fn new(
+        mirror: f32, break_point: f32,
+        gamma_power: f32, gamma_slope: f32, gamma_off: f32,
+        log_base: f32, log_slope: f32, log_off: f32,
+        lin_slope: f32, lin_off: f32,
+    ) -> Self {
+        let log_slope_baked = log_slope / log_base.ln();
+        let prime_break = gamma_slope * (break_point + gamma_off).powf(gamma_power);
+        let prime_mirror = gamma_slope * (mirror + gamma_off).powf(gamma_power);
+        
+        Self {
+            mirror,
+            break_point,
+            gamma_power,
+            gamma_slope,
+            gamma_off,
+            log_base,
+            log_slope,
+            log_off,
+            lin_slope,
+            lin_off,
+            log_slope_baked,
+            prime_break,
+            prime_mirror,
+        }
+    }
+}
+
+/// Linear to Gamma-Log curve (forward).
+/// 
+/// Two-segment curve with gamma below break and log above.
+#[inline]
+pub fn lin_to_gamma_log(v: f32, params: &GammaLogParams) -> f32 {
+    let mirror_in = v - params.mirror;
+    let e = mirror_in.abs() + params.mirror;
+    
+    let e_prime = if e < params.break_point {
+        // Gamma segment
+        params.gamma_slope * (e + params.gamma_off).powf(params.gamma_power)
+    } else {
+        // Log segment
+        params.log_slope_baked * (params.lin_slope * e + params.lin_off).ln() + params.log_off
+    };
+    
+    e_prime.copysign(mirror_in)
+}
+
+/// Gamma-Log to Linear curve (inverse).
+/// 
+/// Inverse of lin_to_gamma_log.
+#[inline]
+pub fn gamma_log_to_lin(v: f32, params: &GammaLogParams) -> f32 {
+    let mirror_in = v - params.prime_mirror;
+    let e_prime = mirror_in.abs() + params.prime_mirror;
+    
+    let e = if e_prime < params.prime_break {
+        // Inverse gamma segment
+        (e_prime / params.gamma_slope).powf(1.0 / params.gamma_power) - params.gamma_off
+    } else {
+        // Inverse log segment
+        (((e_prime - params.log_off) / params.log_slope_baked).exp() - params.lin_off) / params.lin_slope
+    };
+    
+    e.copysign(mirror_in)
+}
+
+/// Apply Linear to Gamma-Log to RGB.
+#[inline]
+pub fn apply_lin_to_gamma_log(rgb: &mut [f32; 3], params: &GammaLogParams) {
+    rgb[0] = lin_to_gamma_log(rgb[0], params);
+    rgb[1] = lin_to_gamma_log(rgb[1], params);
+    rgb[2] = lin_to_gamma_log(rgb[2], params);
+}
+
+/// Apply Gamma-Log to Linear to RGB.
+#[inline]
+pub fn apply_gamma_log_to_lin(rgb: &mut [f32; 3], params: &GammaLogParams) {
+    rgb[0] = gamma_log_to_lin(rgb[0], params);
+    rgb[1] = gamma_log_to_lin(rgb[1], params);
+    rgb[2] = gamma_log_to_lin(rgb[2], params);
+}
+
+/// Apply Linear to Gamma-Log to RGBA buffer.
+pub fn apply_lin_to_gamma_log_rgba(pixels: &mut [f32], params: &GammaLogParams) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        chunk[0] = lin_to_gamma_log(chunk[0], params);
+        chunk[1] = lin_to_gamma_log(chunk[1], params);
+        chunk[2] = lin_to_gamma_log(chunk[2], params);
+    }
+}
+
+/// Apply Gamma-Log to Linear to RGBA buffer.
+pub fn apply_gamma_log_to_lin_rgba(pixels: &mut [f32], params: &GammaLogParams) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        chunk[0] = gamma_log_to_lin(chunk[0], params);
+        chunk[1] = gamma_log_to_lin(chunk[1], params);
+        chunk[2] = gamma_log_to_lin(chunk[2], params);
+    }
+}
+
+// ============================================================================
+// LIN_TO_DOUBLE_LOG / DOUBLE_LOG_TO_LIN
+// ============================================================================
+
+/// Parameters for Double-Log curve.
+/// 
+/// Reference: OCIO FixedFunctionOpCPU.cpp Renderer_LIN_TO_DOUBLE_LOG
+/// 
+/// The curve has three segments:
+/// - Log segment 1 (below break1)
+/// - Linear segment (between break1 and break2)
+/// - Log segment 2 (above break2)
+#[derive(Debug, Clone, Copy)]
+pub struct DoubleLogParams {
+    /// Log base
+    pub base: f32,
+    /// First break point
+    pub break1: f32,
+    /// Second break point
+    pub break2: f32,
+    /// Log segment 1: log slope
+    pub log1_slope: f32,
+    /// Log segment 1: log offset
+    pub log1_off: f32,
+    /// Log segment 1: linear slope
+    pub log1_lin_slope: f32,
+    /// Log segment 1: linear offset
+    pub log1_lin_off: f32,
+    /// Log segment 2: log slope
+    pub log2_slope: f32,
+    /// Log segment 2: log offset
+    pub log2_off: f32,
+    /// Log segment 2: linear slope
+    pub log2_lin_slope: f32,
+    /// Log segment 2: linear offset
+    pub log2_lin_off: f32,
+    /// Linear segment slope
+    pub lin_slope: f32,
+    /// Linear segment offset
+    pub lin_off: f32,
+    // Precomputed values
+    log1_slope_baked: f32,
+    log2_slope_baked: f32,
+    prime_break1: f32,
+    prime_break2: f32,
+}
+
+impl DoubleLogParams {
+    /// Create new parameters with precomputed values.
+    pub fn new(
+        base: f32,
+        break1: f32, break2: f32,
+        log1_slope: f32, log1_off: f32, log1_lin_slope: f32, log1_lin_off: f32,
+        log2_slope: f32, log2_off: f32, log2_lin_slope: f32, log2_lin_off: f32,
+        lin_slope: f32, lin_off: f32,
+    ) -> Self {
+        let ln_base = base.ln();
+        let log1_slope_baked = log1_slope / ln_base;
+        let log2_slope_baked = log2_slope / ln_base;
+        
+        // Calculate break points in non-linear domain
+        let prime_break1 = log1_slope_baked * (log1_lin_slope * break1 + log1_lin_off).ln() + log1_off;
+        let prime_break2 = log2_slope_baked * (log2_lin_slope * break2 + log2_lin_off).ln() + log2_off;
+        
+        Self {
+            base,
+            break1,
+            break2,
+            log1_slope,
+            log1_off,
+            log1_lin_slope,
+            log1_lin_off,
+            log2_slope,
+            log2_off,
+            log2_lin_slope,
+            log2_lin_off,
+            lin_slope,
+            lin_off,
+            log1_slope_baked,
+            log2_slope_baked,
+            prime_break1,
+            prime_break2,
+        }
+    }
+}
+
+/// Linear to Double-Log curve (forward).
+/// 
+/// Three-segment curve with two log segments and one linear.
+#[inline]
+pub fn lin_to_double_log(v: f32, params: &DoubleLogParams) -> f32 {
+    if v < params.break1 {
+        // Log segment 1
+        params.log1_slope_baked * (params.log1_lin_slope * v + params.log1_lin_off).ln() + params.log1_off
+    } else if v < params.break2 {
+        // Linear segment
+        params.lin_slope * v + params.lin_off
+    } else {
+        // Log segment 2
+        params.log2_slope_baked * (params.log2_lin_slope * v + params.log2_lin_off).ln() + params.log2_off
+    }
+}
+
+/// Double-Log to Linear curve (inverse).
+/// 
+/// Inverse of lin_to_double_log.
+#[inline]
+pub fn double_log_to_lin(v: f32, params: &DoubleLogParams) -> f32 {
+    if v < params.prime_break1 {
+        // Inverse log segment 1
+        (((v - params.log1_off) / params.log1_slope_baked).exp() - params.log1_lin_off) / params.log1_lin_slope
+    } else if v < params.prime_break2 {
+        // Inverse linear segment
+        (v - params.lin_off) / params.lin_slope
+    } else {
+        // Inverse log segment 2
+        (((v - params.log2_off) / params.log2_slope_baked).exp() - params.log2_lin_off) / params.log2_lin_slope
+    }
+}
+
+/// Apply Linear to Double-Log to RGB.
+#[inline]
+pub fn apply_lin_to_double_log(rgb: &mut [f32; 3], params: &DoubleLogParams) {
+    rgb[0] = lin_to_double_log(rgb[0], params);
+    rgb[1] = lin_to_double_log(rgb[1], params);
+    rgb[2] = lin_to_double_log(rgb[2], params);
+}
+
+/// Apply Double-Log to Linear to RGB.
+#[inline]
+pub fn apply_double_log_to_lin(rgb: &mut [f32; 3], params: &DoubleLogParams) {
+    rgb[0] = double_log_to_lin(rgb[0], params);
+    rgb[1] = double_log_to_lin(rgb[1], params);
+    rgb[2] = double_log_to_lin(rgb[2], params);
+}
+
+/// Apply Linear to Double-Log to RGBA buffer.
+pub fn apply_lin_to_double_log_rgba(pixels: &mut [f32], params: &DoubleLogParams) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        chunk[0] = lin_to_double_log(chunk[0], params);
+        chunk[1] = lin_to_double_log(chunk[1], params);
+        chunk[2] = lin_to_double_log(chunk[2], params);
+    }
+}
+
+/// Apply Double-Log to Linear to RGBA buffer.
+pub fn apply_double_log_to_lin_rgba(pixels: &mut [f32], params: &DoubleLogParams) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        chunk[0] = double_log_to_lin(chunk[0], params);
+        chunk[1] = double_log_to_lin(chunk[1], params);
+        chunk[2] = double_log_to_lin(chunk[2], params);
+    }
+}
+
+// ============================================================================
 // ACES Gamut Compression 1.3
 // ============================================================================
 
@@ -1148,6 +1443,222 @@ pub fn apply_aces_gamut_comp_13_inv_rgba(pixels: &mut [f32], params: &GamutComp1
     for chunk in pixels.chunks_exact_mut(4) {
         let mut rgb = [chunk[0], chunk[1], chunk[2]];
         aces_gamut_comp_13_inv(&mut rgb, params);
+        chunk[0] = rgb[0];
+        chunk[1] = rgb[1];
+        chunk[2] = rgb[2];
+    }
+}
+
+// ============================================================================
+// RGB <-> HSY (Hue-Saturation-Luma)
+// ============================================================================
+
+/// HSY variant determines saturation calculation method.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HsyVariant {
+    /// Linear: complex saturation for linear light images
+    Lin,
+    /// Log: simple saturation gain of 4.0 for log-encoded images
+    Log,
+    /// Video: simple saturation gain of 1.25 for video/display images
+    Vid,
+}
+
+/// BT.709 luma coefficients
+const LUMA_R: f32 = 0.2126;
+const LUMA_G: f32 = 0.7152;
+const LUMA_B: f32 = 0.0722;
+
+/// Convert RGB to HSY (Hue-Saturation-Luma).
+/// 
+/// Unlike typical HSV, HSY maps magenta to hue=0 (not red).
+/// This provides better placement for curve manipulation in UIs.
+/// 
+/// Reference: OCIO FixedFunctionOpCPU.cpp applyRGBToHSY
+#[inline]
+pub fn rgb_to_hsy(rgb: [f32; 3], variant: HsyVariant) -> [f32; 3] {
+    let (red, grn, blu) = (rgb[0], rgb[1], rgb[2]);
+    
+    let rgb_min = red.min(grn).min(blu);
+    let rgb_max = red.max(grn).max(blu);
+    
+    // BT.709 luma
+    let luma = LUMA_R * red + LUMA_G * grn + LUMA_B * blu;
+    
+    // Distance from luma (chroma-like)
+    let rm = red - luma;
+    let gm = grn - luma;
+    let bm = blu - luma;
+    let dist_rgb = rm.abs() + gm.abs() + bm.abs();
+    
+    // Saturation calculation varies by variant
+    let sat = match variant {
+        HsyVariant::Lin => {
+            // Complex saturation for linear light
+            let sum_rgb = red + grn + blu;
+            let k = 0.15;
+            let sat_hi = dist_rgb / (0.07 * dist_rgb + 1e-6_f32).max(k + sum_rgb);
+            let lo_gain = 5.0;
+            let sat_lo = dist_rgb * lo_gain;
+            let max_lum = 0.01;
+            let min_lum = max_lum * 0.1;
+            let alpha = ((luma - min_lum) / (max_lum - min_lum)).clamp(0.0, 1.0);
+            (sat_lo + alpha * (sat_hi - sat_lo)) * 1.4
+        }
+        HsyVariant::Log => dist_rgb * 4.0,
+        HsyVariant::Vid => dist_rgb * 1.25,
+    };
+    
+    // Hue: magenta at 0 instead of red
+    let mut hue = if rgb_min != rgb_max {
+        let delta = rgb_max - rgb_min;
+        if red == rgb_max {
+            1.0 + (grn - blu) / delta
+        } else if grn == rgb_max {
+            3.0 + (blu - red) / delta
+        } else {
+            5.0 + (red - grn) / delta
+        }
+    } else {
+        0.0
+    } * (1.0 / 6.0);
+    
+    // Rotate hue 180 deg for negative luma
+    if luma < 0.0 {
+        hue += 0.5;
+        hue -= hue.floor();
+    }
+    
+    [hue, sat, luma]
+}
+
+/// Convert HSY (Hue-Saturation-Luma) to RGB.
+/// 
+/// Inverse of rgb_to_hsy.
+/// 
+/// Reference: OCIO FixedFunctionOpCPU.cpp applyHSYToRGB
+#[inline]
+pub fn hsy_to_rgb(hsy: [f32; 3], variant: HsyVariant) -> [f32; 3] {
+    let (h_in, sat, luma) = (hsy[0], hsy[1], hsy[2]);
+    
+    // Shift hue: magenta at 0 -> red at 0
+    let mut hue = h_in - 1.0 / 6.0;
+    
+    // Rotate hue 180 for negative luma
+    if luma < 0.0 {
+        hue += 0.5;
+    }
+    hue = (hue - hue.floor()) * 6.0;
+    
+    // Calculate base RGB from hue (normalized to luma=1)
+    let red = ((hue - 3.0).abs() - 1.0).clamp(0.0, 1.0);
+    let grn = (2.0 - (hue - 2.0).abs()).clamp(0.0, 1.0);
+    let blu = (2.0 - (hue - 4.0).abs()).clamp(0.0, 1.0);
+    
+    // Scale to match target luma
+    let curr_y = LUMA_R * red + LUMA_G * grn + LUMA_B * blu;
+    let scale = if curr_y.abs() > 1e-10 { luma / curr_y } else { 0.0 };
+    let (red, grn, blu) = (red * scale, grn * scale, blu * scale);
+    
+    // Distance from luma
+    let dist_rgb = (red - luma).abs() + (grn - luma).abs() + (blu - luma).abs();
+    
+    // Saturation gain (inverse of forward)
+    let gain_s = match variant {
+        HsyVariant::Lin => hsy_lin_inv_sat(sat, luma, dist_rgb, red + grn + blu),
+        HsyVariant::Log => {
+            let curr_sat = dist_rgb * 4.0;
+            sat / curr_sat.max(1e-10)
+        }
+        HsyVariant::Vid => {
+            let curr_sat = dist_rgb * 1.25;
+            sat / curr_sat.max(1e-10)
+        }
+    };
+    
+    // Apply saturation
+    [
+        luma + (red - luma) * gain_s,
+        luma + (grn - luma) * gain_s,
+        luma + (blu - luma) * gain_s,
+    ]
+}
+
+/// Complex saturation inversion for HSY_LIN variant.
+#[inline]
+fn hsy_lin_inv_sat(sat: f32, luma: f32, dist_rgb: f32, sum_rgb: f32) -> f32 {
+    const K: f32 = 0.15;
+    const LO_GAIN: f32 = 5.0;
+    const MAX_LUM: f32 = 0.01;
+    const MIN_LUM: f32 = MAX_LUM * 0.1;
+    
+    // Undo the 1.4 gain
+    let sat = sat / 1.4;
+    
+    // Calculate blend alpha
+    let alpha = ((luma - MIN_LUM) / (MAX_LUM - MIN_LUM)).clamp(0.0, 1.0);
+    
+    if alpha == 1.0 {
+        // Pure high-luma formula
+        let tmp = (-sat * sum_rgb + sat * 3.0 * luma + dist_rgb).max(1e-6);
+        (sat * (K + 3.0 * luma) / tmp).min(50.0)
+    } else if alpha == 0.0 {
+        // Pure low-luma formula
+        sat / (dist_rgb * LO_GAIN).max(1e-10)
+    } else {
+        // Blended: solve quadratic equation
+        let a = dist_rgb * LO_GAIN * (1.0 - alpha) * (sum_rgb - 3.0 * luma);
+        let b = dist_rgb * LO_GAIN * (1.0 - alpha) * (K + 3.0 * luma) 
+              + dist_rgb * alpha 
+              - sat * (sum_rgb - 3.0 * luma);
+        let c = -sat * (K + 3.0 * luma);
+        
+        let discrim = (b * b - 4.0 * a * c).sqrt();
+        let denom = -discrim - b;
+        let gain_s = (2.0 * c) / denom;
+        
+        if gain_s >= 0.0 {
+            gain_s
+        } else {
+            (2.0 * c) / (denom + discrim * 2.0)
+        }
+    }
+}
+
+/// Apply RGB to HSY in-place.
+#[inline]
+pub fn apply_rgb_to_hsy(rgb: &mut [f32; 3], variant: HsyVariant) {
+    let hsy = rgb_to_hsy(*rgb, variant);
+    rgb[0] = hsy[0];
+    rgb[1] = hsy[1];
+    rgb[2] = hsy[2];
+}
+
+/// Apply HSY to RGB in-place.
+#[inline]
+pub fn apply_hsy_to_rgb(hsy: &mut [f32; 3], variant: HsyVariant) {
+    let rgb = hsy_to_rgb(*hsy, variant);
+    hsy[0] = rgb[0];
+    hsy[1] = rgb[1];
+    hsy[2] = rgb[2];
+}
+
+/// Apply RGB to HSY on RGBA buffer.
+pub fn apply_rgb_to_hsy_rgba(pixels: &mut [f32], variant: HsyVariant) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        let rgb = [chunk[0], chunk[1], chunk[2]];
+        let hsy = rgb_to_hsy(rgb, variant);
+        chunk[0] = hsy[0];
+        chunk[1] = hsy[1];
+        chunk[2] = hsy[2];
+    }
+}
+
+/// Apply HSY to RGB on RGBA buffer.
+pub fn apply_hsy_to_rgb_rgba(pixels: &mut [f32], variant: HsyVariant) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        let hsy = [chunk[0], chunk[1], chunk[2]];
+        let rgb = hsy_to_rgb(hsy, variant);
         chunk[0] = rgb[0];
         chunk[1] = rgb[1];
         chunk[2] = rgb[2];
@@ -2047,6 +2558,193 @@ mod tests {
     }
     
     // ========================================================================
+    // LIN_TO_GAMMA_LOG / GAMMA_LOG_TO_LIN tests
+    // ========================================================================
+    
+    fn sample_gamma_log_params() -> GammaLogParams {
+        // Parameters that form a continuous curve at the break point
+        // The key is that at break, both segments must give the same value.
+        // gamma at break: slope * (break + off)^power
+        // log at break: (log_slope/ln(base)) * ln(lin_slope * break + lin_off) + log_off
+        // 
+        // Using a simpler curve where both segments connect properly:
+        let mirror = 0.0_f32;
+        let break_pt = 0.01_f32;
+        let gamma_power = 0.5_f32;  // sqrt for gamma segment
+        let gamma_slope = 1.0_f32;
+        let gamma_off = 0.0_f32;
+        let log_base = 10.0_f32;
+        let log_slope = 1.0_f32;
+        let lin_slope = 1.0_f32;
+        let lin_off = 1.0_f32;  // Makes ln(lin_slope * break + lin_off) = ln(1.01) at break
+        
+        // Calculate log_off for continuity:
+        // gamma at break = 1.0 * (0.01 + 0)^0.5 = 0.1
+        // log at break = (1/ln10) * ln(1*0.01 + 1) + log_off = 0.00434 + log_off
+        // For continuity: log_off = 0.1 - 0.00434 = 0.09566
+        let gamma_at_break = gamma_slope * (break_pt + gamma_off).powf(gamma_power);
+        let log_slope_baked = log_slope / log_base.ln();
+        let log_at_break_without_off = log_slope_baked * (lin_slope * break_pt + lin_off).ln();
+        let log_off = gamma_at_break - log_at_break_without_off;
+        
+        GammaLogParams::new(
+            mirror, break_pt,
+            gamma_power, gamma_slope, gamma_off,
+            log_base, log_slope, log_off,
+            lin_slope, lin_off,
+        )
+    }
+    
+    #[test]
+    fn test_gamma_log_roundtrip() {
+        let params = sample_gamma_log_params();
+        // Test values in both segments and at the break point
+        let test_values = [0.0, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0];
+        
+        for &v in &test_values {
+            let encoded = lin_to_gamma_log(v, &params);
+            let decoded = gamma_log_to_lin(encoded, &params);
+            
+            let tol = if v == 0.0 { 1e-6 } else { v * 1e-4 + 1e-5 };
+            assert!(
+                (decoded - v).abs() < tol,
+                "GammaLog roundtrip failed for {}: encoded={}, decoded={}", v, encoded, decoded
+            );
+        }
+    }
+    
+    #[test]
+    fn test_gamma_log_negative_mirroring() {
+        let params = sample_gamma_log_params();
+        let test_values = [-0.01, -0.1, -0.5];
+        
+        for &v in &test_values {
+            let encoded = lin_to_gamma_log(v, &params);
+            let encoded_pos = lin_to_gamma_log(-v, &params);
+            
+            // Should be mirrored
+            assert!(encoded < 0.0, "lin_to_gamma_log({}) should be negative", v);
+            assert!(
+                (encoded + encoded_pos).abs() < 1e-5,
+                "Mirroring failed: {} vs {}", encoded, encoded_pos
+            );
+        }
+    }
+    
+    #[test]
+    fn test_gamma_log_rgba() {
+        let params = sample_gamma_log_params();
+        let mut pixels = [
+            0.1, 0.05, 0.005, 1.0,
+            0.5, 0.2, 0.001, 0.5,
+        ];
+        let original = pixels;
+        
+        apply_lin_to_gamma_log_rgba(&mut pixels, &params);
+        apply_gamma_log_to_lin_rgba(&mut pixels, &params);
+        
+        // Alpha unchanged
+        assert!((pixels[3] - 1.0).abs() < EPSILON);
+        assert!((pixels[7] - 0.5).abs() < EPSILON);
+        
+        // Roundtrip
+        for i in 0..3 {
+            assert!(
+                (pixels[i] - original[i]).abs() < 1e-4,
+                "Channel {} roundtrip failed", i
+            );
+        }
+    }
+    
+    // ========================================================================
+    // LIN_TO_DOUBLE_LOG / DOUBLE_LOG_TO_LIN tests
+    // ========================================================================
+    
+    fn sample_double_log_params() -> DoubleLogParams {
+        // Sample parameters for a double-log curve
+        DoubleLogParams::new(
+            10.0,   // base
+            0.01,   // break1
+            0.5,    // break2
+            0.3,    // log1 slope
+            0.1,    // log1 offset
+            10.0,   // log1 lin slope
+            0.01,   // log1 lin offset
+            0.3,    // log2 slope
+            0.5,    // log2 offset
+            2.0,    // log2 lin slope
+            0.1,    // log2 lin offset
+            0.8,    // lin slope
+            0.15,   // lin offset
+        )
+    }
+    
+    #[test]
+    fn test_double_log_roundtrip() {
+        let params = sample_double_log_params();
+        let test_values = [0.005, 0.01, 0.05, 0.1, 0.3, 0.5, 0.8, 1.0];
+        
+        for &v in &test_values {
+            let encoded = lin_to_double_log(v, &params);
+            let decoded = double_log_to_lin(encoded, &params);
+            
+            let tol = v * 1e-4 + 1e-5;
+            assert!(
+                (decoded - v).abs() < tol,
+                "DoubleLog roundtrip failed for {}: encoded={}, decoded={}", v, encoded, decoded
+            );
+        }
+    }
+    
+    #[test]
+    fn test_double_log_segments() {
+        let params = sample_double_log_params();
+        
+        // Test value in each segment
+        let v1 = 0.005;  // Below break1 (log segment 1)
+        let v2 = 0.2;    // Between breaks (linear segment)
+        let v3 = 0.8;    // Above break2 (log segment 2)
+        
+        let e1 = lin_to_double_log(v1, &params);
+        let e2 = lin_to_double_log(v2, &params);
+        let e3 = lin_to_double_log(v3, &params);
+        
+        // All should be finite
+        assert!(e1.is_finite());
+        assert!(e2.is_finite());
+        assert!(e3.is_finite());
+        
+        // Should be monotonically increasing
+        assert!(e1 < e2, "e1={} should be < e2={}", e1, e2);
+        assert!(e2 < e3, "e2={} should be < e3={}", e2, e3);
+    }
+    
+    #[test]
+    fn test_double_log_rgba() {
+        let params = sample_double_log_params();
+        let mut pixels = [
+            0.1, 0.3, 0.7, 1.0,
+            0.01, 0.2, 0.5, 0.5,
+        ];
+        let original = pixels;
+        
+        apply_lin_to_double_log_rgba(&mut pixels, &params);
+        apply_double_log_to_lin_rgba(&mut pixels, &params);
+        
+        // Alpha unchanged
+        assert!((pixels[3] - 1.0).abs() < EPSILON);
+        assert!((pixels[7] - 0.5).abs() < EPSILON);
+        
+        // Roundtrip
+        for i in 0..3 {
+            assert!(
+                (pixels[i] - original[i]).abs() < 1e-4,
+                "Channel {} roundtrip failed", i
+            );
+        }
+    }
+    
+    // ========================================================================
     // ACES Gamut Compression 1.3 tests
     // ========================================================================
     
@@ -2168,5 +2866,167 @@ mod tests {
         assert!(params.scale_cyan > 0.0 && params.scale_cyan < 1.0);
         assert!(params.scale_magenta > 0.0 && params.scale_magenta < 1.0);
         assert!(params.scale_yellow > 0.0 && params.scale_yellow < 1.0);
+    }
+    
+    // ========================================================================
+    // RGB <-> HSY tests
+    // ========================================================================
+    
+    #[test]
+    fn test_hsy_achromatic() {
+        // Achromatic colors (R=G=B) should have saturation=0
+        for variant in [HsyVariant::Lin, HsyVariant::Log, HsyVariant::Vid] {
+            let rgb = [0.5, 0.5, 0.5];
+            let hsy = rgb_to_hsy(rgb, variant);
+            
+            // Saturation should be 0
+            assert!(hsy[1].abs() < EPSILON, "Achromatic sat should be 0 for {:?}, got {}", variant, hsy[1]);
+            
+            // Luma should be 0.5
+            assert!((hsy[2] - 0.5).abs() < EPSILON, "Luma should be 0.5 for {:?}", variant);
+        }
+    }
+    
+    #[test]
+    fn test_hsy_black() {
+        // Black should remain black
+        for variant in [HsyVariant::Lin, HsyVariant::Log, HsyVariant::Vid] {
+            let rgb = [0.0, 0.0, 0.0];
+            let hsy = rgb_to_hsy(rgb, variant);
+            
+            assert!(hsy[1].abs() < EPSILON, "Black sat should be 0");
+            assert!(hsy[2].abs() < EPSILON, "Black luma should be 0");
+        }
+    }
+    
+    #[test]
+    fn test_hsy_white() {
+        // White should have saturation 0
+        for variant in [HsyVariant::Lin, HsyVariant::Log, HsyVariant::Vid] {
+            let rgb = [1.0, 1.0, 1.0];
+            let hsy = rgb_to_hsy(rgb, variant);
+            
+            assert!(hsy[1].abs() < EPSILON, "White sat should be 0");
+            assert!((hsy[2] - 1.0).abs() < EPSILON, "White luma should be 1.0");
+        }
+    }
+    
+    #[test]
+    fn test_hsy_log_roundtrip() {
+        // LOG variant should roundtrip well
+        let test_colors = [
+            [0.8, 0.4, 0.2],  // Orange-ish
+            [0.2, 0.6, 0.4],  // Green-ish
+            [0.3, 0.3, 0.8],  // Blue-ish
+            [0.5, 0.5, 0.5],  // Grey
+            [0.18, 0.18, 0.18], // 18% grey
+        ];
+        
+        for original in test_colors {
+            let hsy = rgb_to_hsy(original, HsyVariant::Log);
+            let back = hsy_to_rgb(hsy, HsyVariant::Log);
+            
+            for i in 0..3 {
+                assert!(
+                    (back[i] - original[i]).abs() < 1e-4,
+                    "HSY_LOG roundtrip failed for {:?}: got {:?}", original, back
+                );
+            }
+        }
+    }
+    
+    #[test]
+    fn test_hsy_vid_roundtrip() {
+        // VID variant should roundtrip well
+        let test_colors = [
+            [0.8, 0.4, 0.2],
+            [0.2, 0.6, 0.4],
+            [0.3, 0.3, 0.8],
+            [0.5, 0.5, 0.5],
+        ];
+        
+        for original in test_colors {
+            let hsy = rgb_to_hsy(original, HsyVariant::Vid);
+            let back = hsy_to_rgb(hsy, HsyVariant::Vid);
+            
+            for i in 0..3 {
+                assert!(
+                    (back[i] - original[i]).abs() < 1e-4,
+                    "HSY_VID roundtrip failed for {:?}: got {:?}", original, back
+                );
+            }
+        }
+    }
+    
+    #[test]
+    fn test_hsy_lin_roundtrip() {
+        // LIN variant with moderate values
+        let test_colors = [
+            [0.2, 0.1, 0.05],  // Low light
+            [0.5, 0.3, 0.2],   // Mid tones
+            [0.8, 0.5, 0.3],   // Highlights
+        ];
+        
+        for original in test_colors {
+            let hsy = rgb_to_hsy(original, HsyVariant::Lin);
+            let back = hsy_to_rgb(hsy, HsyVariant::Lin);
+            
+            for i in 0..3 {
+                assert!(
+                    (back[i] - original[i]).abs() < 1e-3,
+                    "HSY_LIN roundtrip failed for {:?}: got {:?}", original, back
+                );
+            }
+        }
+    }
+    
+    #[test]
+    fn test_hsy_magenta_hue() {
+        // Magenta should have hue near 0 (not red!)
+        let magenta = [1.0, 0.0, 1.0];
+        let hsy = rgb_to_hsy(magenta, HsyVariant::Log);
+        
+        // Hue should be near 0 or 1 (wrapped)
+        assert!(
+            hsy[0] < 0.1 || hsy[0] > 0.9,
+            "Magenta hue should be near 0, got {}", hsy[0]
+        );
+    }
+    
+    #[test]
+    fn test_hsy_red_hue() {
+        // Red should have hue ~1/6 (shifted from 0)
+        let red = [1.0, 0.0, 0.0];
+        let hsy = rgb_to_hsy(red, HsyVariant::Log);
+        
+        // Red should be around 1/6
+        assert!(
+            (hsy[0] - 1.0/6.0).abs() < 0.02,
+            "Red hue should be ~1/6, got {}", hsy[0]
+        );
+    }
+    
+    #[test]
+    fn test_hsy_rgba() {
+        let mut pixels = [
+            0.6, 0.4, 0.2, 1.0,
+            0.3, 0.5, 0.7, 0.5,
+        ];
+        let original = pixels;
+        
+        apply_rgb_to_hsy_rgba(&mut pixels, HsyVariant::Log);
+        apply_hsy_to_rgb_rgba(&mut pixels, HsyVariant::Log);
+        
+        // Alpha unchanged
+        assert!((pixels[3] - 1.0).abs() < EPSILON);
+        assert!((pixels[7] - 0.5).abs() < EPSILON);
+        
+        // Roundtrip
+        for i in 0..3 {
+            assert!(
+                (pixels[i] - original[i]).abs() < 1e-4,
+                "RGBA roundtrip failed at {}", i
+            );
+        }
     }
 }
