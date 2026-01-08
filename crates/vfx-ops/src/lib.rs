@@ -50,6 +50,9 @@
 #![warn(rustdoc::missing_crate_level_docs)]
 
 mod error;
+pub mod cdl;
+pub mod exposure_contrast;
+pub mod grading_primary;
 pub mod guard;
 pub mod layer_ops;
 pub mod resize;
@@ -67,3 +70,6 @@ pub mod fft;
 pub use error::{OpsError, OpsResult};
 pub use resize::Filter;
 pub use composite::BlendMode;
+pub use cdl::Cdl;
+pub use exposure_contrast::{ExposureContrast, ExposureContrastStyle};
+pub use grading_primary::{GradingPrimary, GradingRGBM, GradingStyle};

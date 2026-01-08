@@ -93,6 +93,7 @@ mod processor;
 pub mod convert;
 pub mod cdl;
 pub mod aces;
+pub mod aces2;
 
 pub use error::{ColorError, ColorResult};
 pub use pipeline::{Pipeline, TransformOp};

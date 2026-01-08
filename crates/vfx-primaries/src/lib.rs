@@ -265,6 +265,46 @@ pub const S_GAMUT3: Primaries = Primaries {
     name: "S-Gamut3",
 };
 
+/// Sony S-Gamut3.Cine primaries.
+/// Reference: OCIO SonyCameras.cpp
+pub const S_GAMUT3_CINE: Primaries = Primaries {
+    r: (0.7660, 0.2750),
+    g: (0.2250, 0.8000),
+    b: (0.0890, -0.0870),
+    w: D65_XY,
+    name: "S-Gamut3.Cine",
+};
+
+/// Canon Cinema Gamut primaries.
+/// Reference: OCIO CanonCameras.cpp
+pub const CANON_CGAMUT: Primaries = Primaries {
+    r: (0.7400, 0.2700),
+    g: (0.1700, 1.1400),
+    b: (0.0800, -0.1000),
+    w: D65_XY,
+    name: "Canon CGamut",
+};
+
+/// RED Wide Gamut RGB primaries.
+/// Reference: OCIO RedCameras.cpp
+pub const RED_WIDE_GAMUT: Primaries = Primaries {
+    r: (0.780308, 0.304253),
+    g: (0.121595, 1.493994),
+    b: (0.095612, -0.084589),
+    w: D65_XY,
+    name: "RED Wide Gamut",
+};
+
+/// ARRI Wide Gamut 4 primaries.
+/// Reference: OCIO ArriCameras.cpp
+pub const ARRI_WIDE_GAMUT_4: Primaries = Primaries {
+    r: (0.7347, 0.2653),
+    g: (0.1424, 0.8576),
+    b: (0.0991, -0.0308),
+    w: D65_XY,
+    name: "ARRI Wide Gamut 4",
+};
+
 /// Panasonic V-Gamut primaries.
 pub const V_GAMUT: Primaries = Primaries {
     r: (0.7300, 0.2800),

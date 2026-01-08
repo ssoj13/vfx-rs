@@ -20,7 +20,10 @@
 //! | [`rec709`] | HDTV broadcast | [0, 1] |
 //! | [`pq`] | HDR (HDR10, Dolby Vision) | [0, 10000] cd/m2 |
 //! | [`hlg`] | HDR broadcast (HLG) | [0, 1] |
-//! | [`log_c`] | ARRI cameras | Scene-referred |
+//! | [`log_c`] | ARRI LogC3 cameras (ALEXA) | Scene-referred |
+//! | [`log_c4`] | ARRI LogC4 cameras (ALEXA 35) | Scene-referred |
+//! | [`canon_log`] | Canon Log 2/3 cameras | Scene-referred |
+//! | [`apple_log`] | Apple ProRes RAW | Scene-referred |
 //! | [`s_log2`] | Sony cameras (F65, F55, FS7 legacy) | Scene-referred |
 //! | [`s_log3`] | Sony cameras | Scene-referred |
 //! | [`v_log`] | Panasonic cameras | Scene-referred |
@@ -68,6 +71,9 @@ pub mod rec709;
 pub mod pq;
 pub mod hlg;
 pub mod log_c;
+pub mod log_c4;
+pub mod canon_log;
+pub mod apple_log;
 pub mod s_log2;
 pub mod s_log3;
 pub mod v_log;
@@ -83,6 +89,9 @@ pub use rec709::{eotf as rec709_eotf, oetf as rec709_oetf};
 pub use pq::{eotf as pq_eotf, oetf as pq_oetf};
 pub use hlg::{eotf as hlg_eotf, oetf as hlg_oetf};
 pub use log_c::{decode as log_c_decode, encode as log_c_encode};
+pub use log_c4::{decode as log_c4_decode, encode as log_c4_encode};
+pub use canon_log::{clog2_encode, clog2_decode, clog3_encode, clog3_decode};
+pub use apple_log::{encode as apple_log_encode, decode as apple_log_decode};
 pub use s_log2::{decode as s_log2_decode, encode as s_log2_encode};
 pub use s_log3::{decode as s_log3_decode, encode as s_log3_encode};
 pub use v_log::{decode as v_log_decode, encode as v_log_encode};

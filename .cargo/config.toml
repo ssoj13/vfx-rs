@@ -1,0 +1,35 @@
+# Cargo configuration for cross-platform builds
+#
+# macOS: Required for pyo3 to link correctly. The -undefined dynamic_lookup
+# flag tells the linker to allow undefined symbols that will be resolved
+# at runtime when Python loads the extension module.
+#
+# Linux: RPATH settings for portable binaries.
+
+[target.aarch64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-undefined",
+    "-C", "link-arg=dynamic_lookup",
+]
+
+[target.x86_64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-undefined",
+    "-C", "link-arg=dynamic_lookup",
+]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+    "-C", "link-arg=-Wl,-z,origin",
+    "-C", "link-arg=-Wl,-rpath,$ORIGIN:$ORIGIN/../lib"
+]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = [
+    "-C", "link-arg=-Wl,-z,origin",
+    "-C", "link-arg=-Wl,-rpath,$ORIGIN:$ORIGIN/../lib"
+]
+
+[alias]
+# Build the Python extension
+pyext = "build -p vfx-rs-py --release"

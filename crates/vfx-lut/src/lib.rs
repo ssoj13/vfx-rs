@@ -52,6 +52,8 @@ mod lut1d;
 mod lut3d;
 mod interp;
 mod error;
+pub mod cdl;
+pub mod csp;
 pub mod cube;
 pub mod clf;
 pub mod spi;
@@ -65,3 +67,8 @@ pub use cube::{read_1d as read_cube_1d, read_3d as read_cube_3d, write_1d as wri
 pub use clf::{ProcessList, ProcessNode, read_clf, write_clf, read_ctf, write_ctf, parse_ctf};
 pub use spi::{read_spi1d, read_spi3d, write_spi1d, write_spi3d};
 pub use threedl::{read_3dl, parse_3dl, write_3dl, write_3dl_with_depth};
+pub use cdl::{ColorCorrection, ColorCorrectionCollection, ColorDecisionList, ColorDecision};
+pub use cdl::{read_cc, read_ccc, read_cdl, read_any as read_cdl_any};
+pub use cdl::{write_cc, write_ccc};
+pub use csp::{CspFile, PreLut, PreLutChannel, read_csp, parse_csp};
+pub use csp::{write_csp_3d, write_csp_1d};
