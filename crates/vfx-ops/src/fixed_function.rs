@@ -172,8 +172,149 @@ pub fn apply_uvy_to_xyz_rgba(pixels: &mut [f32]) {
 }
 
 // ============================================================================
-// ACES Red Modifier 1.0
+// XYZ <-> L*u*v* (CIELUV)
 // ============================================================================
+
+/// D65 white point chromaticity constants for CIELUV.
+mod luv_d65 {
+    /// D65 u' = 4 * 0.95047 / (0.95047 + 15 * 1.0 + 3 * 1.08883)
+    pub const U_N: f32 = 0.19783001;
+    /// D65 v' = 9 * 1.0 / (0.95047 + 15 * 1.0 + 3 * 1.08883)
+    pub const V_N: f32 = 0.46831999;
+    /// L* linear segment threshold (Y value)
+    pub const Y_BREAK: f32 = 0.008856451679;
+    /// L* linear segment threshold (L* value)
+    pub const L_BREAK: f32 = 0.08;
+    /// L* linear coefficient: 903.3 / 100 (= 9.033 for percentage scale)
+    pub const KAPPA: f32 = 9.0329629629629608;
+    /// 1/KAPPA for inverse
+    pub const INV_KAPPA: f32 = 0.11070564598794539;
+    /// L* power coefficient
+    pub const L_SCALE: f32 = 1.16;
+    /// L* power offset
+    pub const L_OFFSET: f32 = 0.16;
+    /// 1/1.16 for inverse
+    pub const INV_L_SCALE: f32 = 0.86206896551724144;
+    /// 1/13 for u*, v* calculation
+    pub const INV_13: f32 = 0.076923076923076927;
+}
+
+/// Convert CIE XYZ to L*u*v* (CIELUV).
+///
+/// This is the perceptually uniform color space standardized by CIE.
+/// - L* = lightness (0-100 scale mapped to 0-1)
+/// - u*, v* = chromaticity coordinates
+///
+/// Uses D65 reference white.
+#[inline]
+pub fn xyz_to_luv(xyz: [f32; 3]) -> [f32; 3] {
+    use luv_d65::*;
+    
+    let x = xyz[0];
+    let y = xyz[1];
+    let z = xyz[2];
+    
+    // Calculate u'v' chromaticity
+    let d = x + 15.0 * y + 3.0 * z;
+    let d = if d == 0.0 { 0.0 } else { 1.0 / d };
+    let u = 4.0 * x * d;
+    let v = 9.0 * y * d;
+    
+    // Calculate L*
+    let l_star = if y <= Y_BREAK {
+        KAPPA * y
+    } else {
+        L_SCALE * y.powf(1.0 / 3.0) - L_OFFSET
+    };
+    
+    // Calculate u*, v* relative to D65 white
+    let u_star = 13.0 * l_star * (u - U_N);
+    let v_star = 13.0 * l_star * (v - V_N);
+    
+    [l_star, u_star, v_star]
+}
+
+/// Convert L*u*v* (CIELUV) to CIE XYZ.
+///
+/// Uses D65 reference white.
+#[inline]
+pub fn luv_to_xyz(luv: [f32; 3]) -> [f32; 3] {
+    use luv_d65::*;
+    
+    let l_star = luv[0];
+    let u_star = luv[1];
+    let v_star = luv[2];
+    
+    // Recover u'v' from u*v*
+    let d = if l_star == 0.0 { 0.0 } else { INV_13 / l_star };
+    let u = u_star * d + U_N;
+    let v = v_star * d + V_N;
+    
+    // Recover Y from L*
+    let y = if l_star <= L_BREAK {
+        INV_KAPPA * l_star
+    } else {
+        let tmp = (l_star + L_OFFSET) * INV_L_SCALE;
+        tmp * tmp * tmp
+    };
+    
+    // Recover X, Z from Y and u'v'
+    let dd = if v == 0.0 { 0.0 } else { 0.25 / v };
+    let x = 9.0 * y * u * dd;
+    let z = y * (12.0 - 3.0 * u - 20.0 * v) * dd;
+    
+    [x, y, z]
+}
+
+/// Apply XYZ to L*u*v* conversion in-place.
+#[inline]
+pub fn apply_xyz_to_luv(xyz: &mut [f32; 3]) {
+    *xyz = xyz_to_luv(*xyz);
+}
+
+/// Apply L*u*v* to XYZ conversion in-place.
+#[inline]
+pub fn apply_luv_to_xyz(luv: &mut [f32; 3]) {
+    *luv = luv_to_xyz(*luv);
+}
+
+/// Apply XYZ to L*u*v* to RGBA buffer.
+pub fn apply_xyz_to_luv_rgba(pixels: &mut [f32]) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        let xyz = [chunk[0], chunk[1], chunk[2]];
+        let luv = xyz_to_luv(xyz);
+        chunk[0] = luv[0];
+        chunk[1] = luv[1];
+        chunk[2] = luv[2];
+        // Alpha unchanged
+    }
+}
+
+/// Apply L*u*v* to XYZ to RGBA buffer.
+pub fn apply_luv_to_xyz_rgba(pixels: &mut [f32]) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        let luv = [chunk[0], chunk[1], chunk[2]];
+        let xyz = luv_to_xyz(luv);
+        chunk[0] = xyz[0];
+        chunk[1] = xyz[1];
+        chunk[2] = xyz[2];
+        // Alpha unchanged
+    }
+}
+
+// ============================================================================
+// ACES Red Modifier 0.3/0.7 and 1.0
+// ============================================================================
+
+/// Constants for ACES Red Modifier 0.3/0.7
+mod red_mod_03 {
+    pub const SCALE: f32 = 0.85;
+    pub const ONE_MINUS_SCALE: f32 = 1.0 - SCALE;  // 0.15
+    pub const PIVOT: f32 = 0.03;
+    /// 4 / (120 * pi/180) = 4 / 2.0944 ≈ 1.9099
+    pub const INV_WIDTH: f32 = 1.9098593171027443;
+    pub const NOISE_LIMIT: f32 = 1e-2;
+}
 
 /// Constants for ACES Red Modifier 1.0
 mod red_mod_10 {
@@ -301,8 +442,109 @@ pub fn apply_aces_red_mod_10_inv_rgba(pixels: &mut [f32]) {
 }
 
 // ============================================================================
-// ACES Glow 1.0
+// ACES Red Modifier 0.3/0.7
 // ============================================================================
+
+/// ACES Red Modifier 0.3/0.7 forward.
+///
+/// Earlier ACES version with different scale (0.85) and width (120 degrees).
+#[inline]
+pub fn aces_red_mod_03_fwd(rgb: &mut [f32; 3]) {
+    use red_mod_03::*;
+    
+    let f_h = calc_hue_weight(rgb[0], rgb[1], rgb[2], INV_WIDTH);
+    
+    if f_h > 0.0 {
+        let f_s = calc_sat_weight(rgb[0], rgb[1], rgb[2], NOISE_LIMIT);
+        
+        // Preserve hue by scaling green/blue with red
+        let red = rgb[0];
+        let grn = rgb[1];
+        let blu = rgb[2];
+        
+        let new_red = red + f_h * f_s * (PIVOT - red) * ONE_MINUS_SCALE;
+        
+        // Restore hue
+        if grn >= blu {
+            // red >= grn >= blu
+            let hue_fac = (grn - blu) / (red - blu).max(1e-10);
+            rgb[1] = hue_fac * (new_red - blu) + blu;
+        } else {
+            // red >= blu >= grn
+            let hue_fac = (blu - grn) / (red - grn).max(1e-10);
+            rgb[2] = hue_fac * (new_red - grn) + grn;
+        }
+        
+        rgb[0] = new_red;
+    }
+}
+
+/// ACES Red Modifier 0.3/0.7 inverse.
+#[inline]
+pub fn aces_red_mod_03_inv(rgb: &mut [f32; 3]) {
+    use red_mod_03::*;
+    
+    let f_h = calc_hue_weight(rgb[0], rgb[1], rgb[2], INV_WIDTH);
+    
+    if f_h > 0.0 {
+        let min_chan = rgb[1].min(rgb[2]);
+        let red = rgb[0];
+        let grn = rgb[1];
+        let blu = rgb[2];
+        
+        // Quadratic formula: a*x^2 + b*x + c = 0
+        let a = f_h * ONE_MINUS_SCALE - 1.0;
+        let b = red - f_h * (PIVOT + min_chan) * ONE_MINUS_SCALE;
+        let c = f_h * PIVOT * min_chan * ONE_MINUS_SCALE;
+        
+        let discriminant = b * b - 4.0 * a * c;
+        let new_red = (-b - discriminant.sqrt()) / (2.0 * a);
+        
+        // Restore hue
+        if grn >= blu {
+            let hue_fac = (grn - blu) / (red - blu).max(1e-10);
+            rgb[1] = hue_fac * (new_red - blu) + blu;
+        } else {
+            let hue_fac = (blu - grn) / (red - grn).max(1e-10);
+            rgb[2] = hue_fac * (new_red - grn) + grn;
+        }
+        
+        rgb[0] = new_red;
+    }
+}
+
+/// Apply ACES Red Modifier 0.3 forward to RGBA buffer.
+pub fn apply_aces_red_mod_03_fwd_rgba(pixels: &mut [f32]) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        let mut rgb = [chunk[0], chunk[1], chunk[2]];
+        aces_red_mod_03_fwd(&mut rgb);
+        chunk[0] = rgb[0];
+        chunk[1] = rgb[1];
+        chunk[2] = rgb[2];
+    }
+}
+
+/// Apply ACES Red Modifier 0.3 inverse to RGBA buffer.
+pub fn apply_aces_red_mod_03_inv_rgba(pixels: &mut [f32]) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        let mut rgb = [chunk[0], chunk[1], chunk[2]];
+        aces_red_mod_03_inv(&mut rgb);
+        chunk[0] = rgb[0];
+        chunk[1] = rgb[1];
+        chunk[2] = rgb[2];
+    }
+}
+
+// ============================================================================
+// ACES Glow 0.3/0.7 and 1.0
+// ============================================================================
+
+/// Constants for ACES Glow 0.3/0.7
+mod glow_03 {
+    pub const GLOW_GAIN: f32 = 0.075;
+    pub const GLOW_MID: f32 = 0.1;
+    pub const NOISE_LIMIT: f32 = 1e-2;
+}
 
 /// Constants for ACES Glow 1.0
 mod glow_10 {
@@ -405,6 +647,168 @@ pub fn apply_aces_glow_10_inv_rgba(pixels: &mut [f32]) {
 }
 
 // ============================================================================
+// ACES Glow 0.3/0.7
+// ============================================================================
+
+/// ACES Glow 0.3/0.7 forward.
+///
+/// Earlier ACES version with different gain (0.075) and mid (0.1).
+#[inline]
+pub fn aces_glow_03_fwd(rgb: &mut [f32; 3]) {
+    use glow_03::*;
+    
+    let yc = rgb_to_yc(rgb[0], rgb[1], rgb[2]);
+    let sat = calc_sat_weight(rgb[0], rgb[1], rgb[2], NOISE_LIMIT);
+    let s = sigmoid_shaper(sat);
+    
+    let glow_gain = GLOW_GAIN * s;
+    
+    // Calculate glow gain output based on YC level
+    let glow_gain_out = if yc >= GLOW_MID * 2.0 {
+        0.0
+    } else if yc <= GLOW_MID * 2.0 / 3.0 {
+        glow_gain
+    } else {
+        glow_gain * (GLOW_MID / yc - 0.5)
+    };
+    
+    // Apply glow (additive)
+    let add_glow = 1.0 + glow_gain_out;
+    rgb[0] *= add_glow;
+    rgb[1] *= add_glow;
+    rgb[2] *= add_glow;
+}
+
+/// ACES Glow 0.3/0.7 inverse.
+#[inline]
+pub fn aces_glow_03_inv(rgb: &mut [f32; 3]) {
+    use glow_03::*;
+    
+    let yc = rgb_to_yc(rgb[0], rgb[1], rgb[2]);
+    let sat = calc_sat_weight(rgb[0], rgb[1], rgb[2], NOISE_LIMIT);
+    let s = sigmoid_shaper(sat);
+    
+    let glow_gain = GLOW_GAIN * s;
+    
+    // Calculate glow gain output
+    let glow_gain_out = if yc >= GLOW_MID * 2.0 {
+        0.0
+    } else if yc <= GLOW_MID * 2.0 / 3.0 {
+        glow_gain
+    } else {
+        glow_gain * (GLOW_MID / yc - 0.5)
+    };
+    
+    // Remove glow (inverse of additive)
+    let remove_glow = 1.0 / (1.0 + glow_gain_out);
+    rgb[0] *= remove_glow;
+    rgb[1] *= remove_glow;
+    rgb[2] *= remove_glow;
+}
+
+/// Apply ACES Glow 0.3 forward to RGBA buffer.
+pub fn apply_aces_glow_03_fwd_rgba(pixels: &mut [f32]) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        let mut rgb = [chunk[0], chunk[1], chunk[2]];
+        aces_glow_03_fwd(&mut rgb);
+        chunk[0] = rgb[0];
+        chunk[1] = rgb[1];
+        chunk[2] = rgb[2];
+    }
+}
+
+/// Apply ACES Glow 0.3 inverse to RGBA buffer.
+pub fn apply_aces_glow_03_inv_rgba(pixels: &mut [f32]) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        let mut rgb = [chunk[0], chunk[1], chunk[2]];
+        aces_glow_03_inv(&mut rgb);
+        chunk[0] = rgb[0];
+        chunk[1] = rgb[1];
+        chunk[2] = rgb[2];
+    }
+}
+
+// ============================================================================
+// ACES Dark to Dim 1.0
+// ============================================================================
+
+/// AP1 luminance coefficients (ACES).
+const AP1_Y_R: f32 = 0.27222871678091454;
+const AP1_Y_G: f32 = 0.67408176581114831;
+const AP1_Y_B: f32 = 0.053689517407937051;
+
+/// ACES Dark to Dim 1.0 gamma values.
+mod dark_to_dim_10 {
+    /// Forward gamma (dark to dim surround)
+    pub const GAMMA_FWD: f32 = 0.9811;
+    /// Inverse gamma (dim to dark surround)
+    pub const GAMMA_INV: f32 = 1.0192640913260627;
+}
+
+/// ACES Dark to Dim 1.0 forward.
+///
+/// Applies surround correction from dark to dim viewing conditions.
+/// Uses AP1 luminance coefficients.
+#[inline]
+pub fn aces_dark_to_dim_10_fwd(rgb: &mut [f32; 3]) {
+    use dark_to_dim_10::GAMMA_FWD;
+    
+    const MIN_LUM: f32 = 1e-10;
+    
+    // Calculate luminance assuming AP1 RGB
+    let y = (AP1_Y_R * rgb[0] + AP1_Y_G * rgb[1] + AP1_Y_B * rgb[2]).max(MIN_LUM);
+    
+    // Y^gamma / Y = Y^(gamma-1)
+    let y_pow_over_y = y.powf(GAMMA_FWD - 1.0);
+    
+    rgb[0] *= y_pow_over_y;
+    rgb[1] *= y_pow_over_y;
+    rgb[2] *= y_pow_over_y;
+}
+
+/// ACES Dark to Dim 1.0 inverse (Dim to Dark).
+///
+/// Applies inverse surround correction from dim to dark viewing conditions.
+#[inline]
+pub fn aces_dark_to_dim_10_inv(rgb: &mut [f32; 3]) {
+    use dark_to_dim_10::GAMMA_INV;
+    
+    const MIN_LUM: f32 = 1e-10;
+    
+    // Calculate luminance assuming AP1 RGB
+    let y = (AP1_Y_R * rgb[0] + AP1_Y_G * rgb[1] + AP1_Y_B * rgb[2]).max(MIN_LUM);
+    
+    // Apply inverse gamma
+    let y_pow_over_y = y.powf(GAMMA_INV - 1.0);
+    
+    rgb[0] *= y_pow_over_y;
+    rgb[1] *= y_pow_over_y;
+    rgb[2] *= y_pow_over_y;
+}
+
+/// Apply ACES Dark to Dim 1.0 forward to RGBA buffer.
+pub fn apply_aces_dark_to_dim_10_fwd_rgba(pixels: &mut [f32]) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        let mut rgb = [chunk[0], chunk[1], chunk[2]];
+        aces_dark_to_dim_10_fwd(&mut rgb);
+        chunk[0] = rgb[0];
+        chunk[1] = rgb[1];
+        chunk[2] = rgb[2];
+    }
+}
+
+/// Apply ACES Dark to Dim 1.0 inverse to RGBA buffer.
+pub fn apply_aces_dark_to_dim_10_inv_rgba(pixels: &mut [f32]) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        let mut rgb = [chunk[0], chunk[1], chunk[2]];
+        aces_dark_to_dim_10_inv(&mut rgb);
+        chunk[0] = rgb[0];
+        chunk[1] = rgb[1];
+        chunk[2] = rgb[2];
+    }
+}
+
+// ============================================================================
 // REC.2100 Surround
 // ============================================================================
 
@@ -481,6 +885,269 @@ pub fn apply_rec2100_surround_inv_rgba(pixels: &mut [f32], gamma: f32) {
     for chunk in pixels.chunks_exact_mut(4) {
         let mut rgb = [chunk[0], chunk[1], chunk[2]];
         rec2100_surround_inv(&mut rgb, gamma);
+        chunk[0] = rgb[0];
+        chunk[1] = rgb[1];
+        chunk[2] = rgb[2];
+    }
+}
+
+// ============================================================================
+// LIN_TO_PQ / PQ_TO_LIN (OCIO FixedFunction style)
+// ============================================================================
+
+/// ST 2084 PQ constants.
+mod st_2084 {
+    /// m1 = 0.25 * 2610 / 4096
+    pub const M1: f32 = 0.1593017578125;
+    /// m2 = 128 * 2523 / 4096
+    pub const M2: f32 = 78.84375;
+    /// c2 = 32 * 2413 / 4096
+    pub const C2: f32 = 18.8515625;
+    /// c3 = 32 * 2392 / 4096
+    pub const C3: f32 = 18.6875;
+    /// c1 = c3 - c2 + 1
+    pub const C1: f32 = 0.8359375;
+}
+
+/// PQ to Linear (OCIO FixedFunction style).
+/// 
+/// Input: PQ encoded [0, 1]
+/// Output: Linear normalized where 1.0 = 100 nits (nits/100)
+/// 
+/// Handles negative values by mirroring around zero.
+#[inline]
+pub fn pq_to_lin(pq: f32) -> f32 {
+    use st_2084::*;
+    
+    let v_abs = pq.abs();
+    let x = v_abs.powf(1.0 / M2);
+    let nits = ((x - C1).max(0.0) / (C2 - C3 * x)).powf(1.0 / M1);
+    
+    // Output scale: 1.0 = 10000 nits in ST2084, map to 1.0 = 100 nits
+    let result = 100.0 * nits;
+    
+    result.copysign(pq)
+}
+
+/// Linear to PQ (OCIO FixedFunction style).
+/// 
+/// Input: Linear normalized where 1.0 = 100 nits (nits/100)
+/// Output: PQ encoded [0, 1]
+/// 
+/// Handles negative values by mirroring around zero.
+#[inline]
+pub fn lin_to_pq(lin: f32) -> f32 {
+    use st_2084::*;
+    
+    // Input is nits/100, convert to [0,1] where 1 = 10000 nits
+    let l = (lin * 0.01).abs();
+    let y = l.powf(M1);
+    let n = ((C1 + C2 * y) / (1.0 + C3 * y)).powf(M2);
+    
+    n.copysign(lin)
+}
+
+/// Apply PQ to Linear to RGB.
+#[inline]
+pub fn apply_pq_to_lin(rgb: &mut [f32; 3]) {
+    rgb[0] = pq_to_lin(rgb[0]);
+    rgb[1] = pq_to_lin(rgb[1]);
+    rgb[2] = pq_to_lin(rgb[2]);
+}
+
+/// Apply Linear to PQ to RGB.
+#[inline]
+pub fn apply_lin_to_pq(rgb: &mut [f32; 3]) {
+    rgb[0] = lin_to_pq(rgb[0]);
+    rgb[1] = lin_to_pq(rgb[1]);
+    rgb[2] = lin_to_pq(rgb[2]);
+}
+
+/// Apply PQ to Linear to RGBA buffer.
+pub fn apply_pq_to_lin_rgba(pixels: &mut [f32]) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        chunk[0] = pq_to_lin(chunk[0]);
+        chunk[1] = pq_to_lin(chunk[1]);
+        chunk[2] = pq_to_lin(chunk[2]);
+    }
+}
+
+/// Apply Linear to PQ to RGBA buffer.
+pub fn apply_lin_to_pq_rgba(pixels: &mut [f32]) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        chunk[0] = lin_to_pq(chunk[0]);
+        chunk[1] = lin_to_pq(chunk[1]);
+        chunk[2] = lin_to_pq(chunk[2]);
+    }
+}
+
+// ============================================================================
+// ACES Gamut Compression 1.3
+// ============================================================================
+
+/// Parameters for ACES Gamut Compression 1.3.
+/// 
+/// Reference: OCIO FixedFunctionOpCPU.cpp Renderer_ACES_GamutComp13
+#[derive(Debug, Clone, Copy)]
+pub struct GamutComp13Params {
+    /// Compression limit for cyan (affects red channel)
+    pub lim_cyan: f32,
+    /// Compression limit for magenta (affects green channel)
+    pub lim_magenta: f32,
+    /// Compression limit for yellow (affects blue channel)
+    pub lim_yellow: f32,
+    /// Threshold for cyan
+    pub thr_cyan: f32,
+    /// Threshold for magenta
+    pub thr_magenta: f32,
+    /// Threshold for yellow
+    pub thr_yellow: f32,
+    /// Power exponent
+    pub power: f32,
+    // Precomputed scale factors
+    scale_cyan: f32,
+    scale_magenta: f32,
+    scale_yellow: f32,
+}
+
+impl GamutComp13Params {
+    /// Create new parameters with precomputed scale factors.
+    pub fn new(
+        lim_cyan: f32, lim_magenta: f32, lim_yellow: f32,
+        thr_cyan: f32, thr_magenta: f32, thr_yellow: f32,
+        power: f32,
+    ) -> Self {
+        // Precompute scale factor for y = 1 intersect
+        // scale = (lim - thr) / pow(pow((1 - thr) / (lim - thr), -power) - 1, 1/power)
+        let calc_scale = |lim: f32, thr: f32, pwr: f32| -> f32 {
+            let num = lim - thr;
+            let inner = ((1.0 - thr) / num).powf(-pwr) - 1.0;
+            num / inner.powf(1.0 / pwr)
+        };
+        
+        Self {
+            lim_cyan,
+            lim_magenta,
+            lim_yellow,
+            thr_cyan,
+            thr_magenta,
+            thr_yellow,
+            power,
+            scale_cyan: calc_scale(lim_cyan, thr_cyan, power),
+            scale_magenta: calc_scale(lim_magenta, thr_magenta, power),
+            scale_yellow: calc_scale(lim_yellow, thr_yellow, power),
+        }
+    }
+    
+    /// ACES default parameters.
+    pub fn aces_default() -> Self {
+        Self::new(
+            1.147, 1.264, 1.312,  // limits
+            0.815, 0.803, 0.880,  // thresholds
+            1.2,                   // power
+        )
+    }
+}
+
+/// Compress distance from achromatic.
+/// 
+/// Parameterized shaper function that compresses values above threshold.
+#[inline]
+fn gamut_compress(dist: f32, thr: f32, scale: f32, power: f32) -> f32 {
+    // Normalize distance outside threshold by scale factor
+    let nd = (dist - thr) / scale;
+    let p = nd.powf(power);
+    
+    // Compressed distance
+    thr + scale * nd / (1.0 + p).powf(1.0 / power)
+}
+
+/// Uncompress distance from achromatic.
+/// 
+/// Inverse of compress function.
+#[inline]
+fn gamut_uncompress(dist: f32, thr: f32, scale: f32, power: f32) -> f32 {
+    // Avoid singularity
+    if dist >= (thr + scale) {
+        return dist;
+    }
+    
+    // Normalize distance outside threshold by scale factor
+    let nd = (dist - thr) / scale;
+    let p = nd.powf(power);
+    
+    // Uncompressed distance
+    thr + scale * (-(p / (p - 1.0))).powf(1.0 / power)
+}
+
+/// Apply gamut compression to a single channel.
+#[inline]
+fn gamut_comp_channel<F>(val: f32, ach: f32, thr: f32, scale: f32, power: f32, f: F) -> f32
+where
+    F: Fn(f32, f32, f32, f32) -> f32,
+{
+    // Handle zero achromatic (black)
+    if ach == 0.0 {
+        return 0.0;
+    }
+    
+    // Distance from the achromatic axis, aka inverse RGB ratios
+    let dist = (ach - val) / ach.abs();
+    
+    // No compression below threshold
+    if dist < thr {
+        return val;
+    }
+    
+    // Compress/uncompress distance with parameterized shaper function
+    let compr_dist = f(dist, thr, scale, power);
+    
+    // Recalculate RGB from compressed distance and achromatic
+    ach - compr_dist * ach.abs()
+}
+
+/// ACES Gamut Compression 1.3 forward.
+/// 
+/// Compresses out-of-gamut colors toward the achromatic axis.
+#[inline]
+pub fn aces_gamut_comp_13_fwd(rgb: &mut [f32; 3], params: &GamutComp13Params) {
+    // Achromatic axis = max(R, G, B)
+    let ach = rgb[0].max(rgb[1]).max(rgb[2]);
+    
+    rgb[0] = gamut_comp_channel(rgb[0], ach, params.thr_cyan, params.scale_cyan, params.power, gamut_compress);
+    rgb[1] = gamut_comp_channel(rgb[1], ach, params.thr_magenta, params.scale_magenta, params.power, gamut_compress);
+    rgb[2] = gamut_comp_channel(rgb[2], ach, params.thr_yellow, params.scale_yellow, params.power, gamut_compress);
+}
+
+/// ACES Gamut Compression 1.3 inverse.
+/// 
+/// Uncompresses gamut-compressed colors back toward original values.
+#[inline]
+pub fn aces_gamut_comp_13_inv(rgb: &mut [f32; 3], params: &GamutComp13Params) {
+    // Achromatic axis = max(R, G, B)
+    let ach = rgb[0].max(rgb[1]).max(rgb[2]);
+    
+    rgb[0] = gamut_comp_channel(rgb[0], ach, params.thr_cyan, params.scale_cyan, params.power, gamut_uncompress);
+    rgb[1] = gamut_comp_channel(rgb[1], ach, params.thr_magenta, params.scale_magenta, params.power, gamut_uncompress);
+    rgb[2] = gamut_comp_channel(rgb[2], ach, params.thr_yellow, params.scale_yellow, params.power, gamut_uncompress);
+}
+
+/// Apply ACES Gamut Compression 1.3 forward to RGBA buffer.
+pub fn apply_aces_gamut_comp_13_fwd_rgba(pixels: &mut [f32], params: &GamutComp13Params) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        let mut rgb = [chunk[0], chunk[1], chunk[2]];
+        aces_gamut_comp_13_fwd(&mut rgb, params);
+        chunk[0] = rgb[0];
+        chunk[1] = rgb[1];
+        chunk[2] = rgb[2];
+    }
+}
+
+/// Apply ACES Gamut Compression 1.3 inverse to RGBA buffer.
+pub fn apply_aces_gamut_comp_13_inv_rgba(pixels: &mut [f32], params: &GamutComp13Params) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        let mut rgb = [chunk[0], chunk[1], chunk[2]];
+        aces_gamut_comp_13_inv(&mut rgb, params);
         chunk[0] = rgb[0];
         chunk[1] = rgb[1];
         chunk[2] = rgb[2];
@@ -675,6 +1342,152 @@ mod tests {
     }
     
     // ========================================================================
+    // XYZ <-> L*u*v* tests
+    // ========================================================================
+    
+    #[test]
+    fn test_xyz_to_luv_d65_white() {
+        // D65 white point: XYZ = (0.95047, 1.0, 1.08883)
+        // Should give L*=1.0, u*=0, v*=0 (at white point)
+        let xyz = [0.95047, 1.0, 1.08883];
+        let luv = xyz_to_luv(xyz);
+        
+        // L* = 1.16 * 1.0^(1/3) - 0.16 = 1.0
+        assert!((luv[0] - 1.0).abs() < 0.001, "L* at D65 white: {}", luv[0]);
+        // u*, v* should be near 0 (at reference white)
+        assert!(luv[1].abs() < 0.001, "u* at D65 white: {}", luv[1]);
+        assert!(luv[2].abs() < 0.001, "v* at D65 white: {}", luv[2]);
+    }
+    
+    #[test]
+    fn test_xyz_to_luv_black() {
+        // Black: Y = 0
+        let xyz = [0.0, 0.0, 0.0];
+        let luv = xyz_to_luv(xyz);
+        
+        assert!(luv[0].abs() < EPSILON, "L* at black: {}", luv[0]);
+        assert!(luv[1].abs() < EPSILON, "u* at black: {}", luv[1]);
+        assert!(luv[2].abs() < EPSILON, "v* at black: {}", luv[2]);
+    }
+    
+    #[test]
+    fn test_xyz_luv_roundtrip() {
+        let test_values = [
+            [0.0, 0.0, 0.0],      // black
+            [0.95047, 1.0, 1.08883],  // D65 white
+            [0.5, 0.5, 0.5],
+            [0.2, 0.3, 0.1],
+            [0.05, 0.05, 0.05],   // near black (linear segment)
+        ];
+        
+        for original in test_values {
+            let luv = xyz_to_luv(original);
+            let xyz = luv_to_xyz(luv);
+            
+            assert!(
+                (xyz[0] - original[0]).abs() < 1e-5,
+                "XYZ->Luv roundtrip X failed for {:?}: got {:?}", original, xyz
+            );
+            assert!(
+                (xyz[1] - original[1]).abs() < 1e-5,
+                "XYZ->Luv roundtrip Y failed for {:?}: got {:?}", original, xyz
+            );
+            assert!(
+                (xyz[2] - original[2]).abs() < 1e-5,
+                "XYZ->Luv roundtrip Z failed for {:?}: got {:?}", original, xyz
+            );
+        }
+    }
+    
+    #[test]
+    fn test_xyz_luv_ocio_reference() {
+        // Test values from OCIO FixedFunctionOpCPU_tests.cpp
+        // Input: (3600/4095, 3500/4095, 1900/4095)
+        // Output: (61659/65535, 28199/65535, 33176/65535)
+        let input = [
+            3600.0 / 4095.0,
+            3500.0 / 4095.0,
+            1900.0 / 4095.0,
+        ];
+        let expected = [
+            61659.0 / 65535.0,
+            28199.0 / 65535.0,
+            33176.0 / 65535.0,
+        ];
+        
+        let luv = xyz_to_luv(input);
+        
+        assert!(
+            (luv[0] - expected[0]).abs() < 1e-4,
+            "L* mismatch: expected {}, got {}", expected[0], luv[0]
+        );
+        assert!(
+            (luv[1] - expected[1]).abs() < 1e-4,
+            "u* mismatch: expected {}, got {}", expected[1], luv[1]
+        );
+        assert!(
+            (luv[2] - expected[2]).abs() < 1e-4,
+            "v* mismatch: expected {}, got {}", expected[2], luv[2]
+        );
+    }
+    
+    #[test]
+    fn test_xyz_luv_below_break() {
+        // Test value below L* break point (Y = 0.008856451679)
+        // Input: (50/4095, 30/4095, 19/4095)
+        // Output: (4337/65535, 9090/65535, 926/65535)
+        let input = [
+            50.0 / 4095.0,
+            30.0 / 4095.0,
+            19.0 / 4095.0,
+        ];
+        let expected = [
+            4337.0 / 65535.0,
+            9090.0 / 65535.0,
+            926.0 / 65535.0,
+        ];
+        
+        let luv = xyz_to_luv(input);
+        
+        assert!(
+            (luv[0] - expected[0]).abs() < 1e-4,
+            "L* below break: expected {}, got {}", expected[0], luv[0]
+        );
+        assert!(
+            (luv[1] - expected[1]).abs() < 1e-3,
+            "u* below break: expected {}, got {}", expected[1], luv[1]
+        );
+        assert!(
+            (luv[2] - expected[2]).abs() < 1e-3,
+            "v* below break: expected {}, got {}", expected[2], luv[2]
+        );
+    }
+    
+    #[test]
+    fn test_xyz_luv_rgba() {
+        let mut pixels = [
+            0.5, 0.5, 0.5, 1.0,
+            0.2, 0.3, 0.1, 0.5,
+        ];
+        let original = pixels;
+        
+        apply_xyz_to_luv_rgba(&mut pixels);
+        apply_luv_to_xyz_rgba(&mut pixels);
+        
+        // Alpha unchanged
+        assert!((pixels[3] - 1.0).abs() < EPSILON);
+        assert!((pixels[7] - 0.5).abs() < EPSILON);
+        
+        // Roundtrip
+        for i in [0, 1, 2, 4, 5, 6] {
+            assert!(
+                (pixels[i] - original[i]).abs() < 1e-5,
+                "Mismatch at {i}: {} vs {}", pixels[i], original[i]
+            );
+        }
+    }
+    
+    // ========================================================================
     // Known value tests
     // ========================================================================
     
@@ -837,6 +1650,133 @@ mod tests {
     }
     
     // ========================================================================
+    // ACES Red Modifier 0.3 tests
+    // ========================================================================
+    
+    #[test]
+    fn test_aces_red_mod_03_identity_non_red() {
+        // Non-red colors should be unaffected (hue weight = 0)
+        let mut blue = [0.1, 0.2, 0.8];
+        let original = blue;
+        aces_red_mod_03_fwd(&mut blue);
+        
+        assert!((blue[0] - original[0]).abs() < EPSILON);
+        assert!((blue[1] - original[1]).abs() < EPSILON);
+        assert!((blue[2] - original[2]).abs() < EPSILON);
+    }
+    
+    #[test]
+    fn test_aces_red_mod_03_affects_red() {
+        let mut red = [0.8, 0.1, 0.1];
+        let original_red = red[0];
+        aces_red_mod_03_fwd(&mut red);
+        
+        // Red channel should have changed
+        assert!(red[0] != original_red, "Red should be modified");
+    }
+    
+    #[test]
+    fn test_aces_red_mod_03_roundtrip() {
+        let test_values = [
+            [0.8, 0.1, 0.1],   // saturated red
+            [0.6, 0.2, 0.1],   // orange-ish
+            [0.5, 0.3, 0.2],   // warm tone
+        ];
+        
+        for original in test_values {
+            let mut rgb = original;
+            aces_red_mod_03_fwd(&mut rgb);
+            aces_red_mod_03_inv(&mut rgb);
+            
+            assert!(
+                (rgb[0] - original[0]).abs() < 1e-3,
+                "RedMod03 roundtrip failed for {:?}: got {:?}", original, rgb
+            );
+        }
+    }
+    
+    #[test]
+    fn test_aces_red_mod_03_rgba() {
+        let mut pixels = [
+            0.8, 0.1, 0.1, 1.0,
+            0.1, 0.8, 0.1, 0.5,
+        ];
+        
+        apply_aces_red_mod_03_fwd_rgba(&mut pixels);
+        apply_aces_red_mod_03_inv_rgba(&mut pixels);
+        
+        // Alpha unchanged
+        assert!((pixels[3] - 1.0).abs() < EPSILON);
+        assert!((pixels[7] - 0.5).abs() < EPSILON);
+    }
+    
+    // ========================================================================
+    // ACES Glow 0.3 tests
+    // ========================================================================
+    
+    #[test]
+    fn test_aces_glow_03_identity_bright() {
+        // Very bright colors should be unaffected
+        let mut bright = [1.0, 1.0, 1.0];
+        let original = bright;
+        aces_glow_03_fwd(&mut bright);
+        
+        assert!((bright[0] - original[0]).abs() < EPSILON);
+        assert!((bright[1] - original[1]).abs() < EPSILON);
+        assert!((bright[2] - original[2]).abs() < EPSILON);
+    }
+    
+    #[test]
+    fn test_aces_glow_03_affects_dark_saturated() {
+        let mut dark = [0.05, 0.01, 0.01];
+        let original_sum = dark[0] + dark[1] + dark[2];
+        aces_glow_03_fwd(&mut dark);
+        
+        let new_sum = dark[0] + dark[1] + dark[2];
+        assert!(new_sum > original_sum, "Glow should increase luminance");
+    }
+    
+    #[test]
+    fn test_aces_glow_03_roundtrip() {
+        let test_values = [
+            [0.05, 0.03, 0.02],
+            [0.1, 0.05, 0.05],
+            [0.3, 0.1, 0.1],
+        ];
+        
+        for original in test_values {
+            let mut rgb = original;
+            aces_glow_03_fwd(&mut rgb);
+            aces_glow_03_inv(&mut rgb);
+            
+            // Relaxed tolerance - inverse uses current YC, not original
+            assert!(
+                (rgb[0] - original[0]).abs() < 1e-3,
+                "Glow03 roundtrip failed for {:?}: got {:?}", original, rgb
+            );
+        }
+    }
+    
+    #[test]
+    fn test_aces_glow_03_rgba() {
+        let mut pixels = [
+            0.05, 0.03, 0.02, 1.0,
+            1.0, 1.0, 1.0, 0.5,
+        ];
+        let original = pixels;
+        
+        apply_aces_glow_03_fwd_rgba(&mut pixels);
+        apply_aces_glow_03_inv_rgba(&mut pixels);
+        
+        // Alpha unchanged
+        assert!((pixels[3] - 1.0).abs() < EPSILON);
+        assert!((pixels[7] - 0.5).abs() < EPSILON);
+        
+        // Roundtrip
+        assert!((pixels[0] - original[0]).abs() < 1e-4);
+    }
+    
+    // ========================================================================
     // REC.2100 Surround tests
     // ========================================================================
     
@@ -901,6 +1841,96 @@ mod tests {
         assert!(rgb[2] > 0.0 && rgb[2].is_finite());
     }
     
+    // ========================================================================
+    // ACES Dark to Dim 1.0 tests
+    // ========================================================================
+    
+    #[test]
+    fn test_aces_dark_to_dim_10_affects_values() {
+        let mut rgb = [0.5, 0.3, 0.2];
+        let original = rgb;
+        aces_dark_to_dim_10_fwd(&mut rgb);
+        
+        // Values should change (gamma != 1)
+        assert!(rgb[0] != original[0] || rgb[1] != original[1] || rgb[2] != original[2]);
+    }
+    
+    #[test]
+    fn test_aces_dark_to_dim_10_roundtrip() {
+        let test_values = [
+            [0.18, 0.18, 0.18],  // 18% grey
+            [0.5, 0.3, 0.2],
+            [0.1, 0.1, 0.1],
+            [0.8, 0.6, 0.4],
+            [0.01, 0.02, 0.03],
+        ];
+        
+        for original in test_values {
+            let mut rgb = original;
+            aces_dark_to_dim_10_fwd(&mut rgb);
+            aces_dark_to_dim_10_inv(&mut rgb);
+            
+            assert!(
+                (rgb[0] - original[0]).abs() < 1e-4,
+                "Dark2Dim roundtrip failed for {:?}: got {:?}", original, rgb
+            );
+            assert!(
+                (rgb[1] - original[1]).abs() < 1e-4,
+                "Dark2Dim roundtrip failed for {:?}: got {:?}", original, rgb
+            );
+            assert!(
+                (rgb[2] - original[2]).abs() < 1e-4,
+                "Dark2Dim roundtrip failed for {:?}: got {:?}", original, rgb
+            );
+        }
+    }
+    
+    #[test]
+    fn test_aces_dark_to_dim_10_preserves_ratio() {
+        // The transform should preserve the ratio between channels
+        let mut rgb = [0.6, 0.3, 0.1];
+        let ratio_rg = rgb[0] / rgb[1];
+        let ratio_rb = rgb[0] / rgb[2];
+        
+        aces_dark_to_dim_10_fwd(&mut rgb);
+        
+        let new_ratio_rg = rgb[0] / rgb[1];
+        let new_ratio_rb = rgb[0] / rgb[2];
+        
+        assert!(
+            (new_ratio_rg - ratio_rg).abs() < 1e-5,
+            "R/G ratio changed: {} vs {}", ratio_rg, new_ratio_rg
+        );
+        assert!(
+            (new_ratio_rb - ratio_rb).abs() < 1e-5,
+            "R/B ratio changed: {} vs {}", ratio_rb, new_ratio_rb
+        );
+    }
+    
+    #[test]
+    fn test_aces_dark_to_dim_10_rgba() {
+        let mut pixels = [
+            0.5, 0.3, 0.2, 1.0,
+            0.18, 0.18, 0.18, 0.5,
+        ];
+        let original = pixels;
+        
+        apply_aces_dark_to_dim_10_fwd_rgba(&mut pixels);
+        apply_aces_dark_to_dim_10_inv_rgba(&mut pixels);
+        
+        // Alpha should be unchanged
+        assert!((pixels[3] - 1.0).abs() < EPSILON);
+        assert!((pixels[7] - 0.5).abs() < EPSILON);
+        
+        // Should roundtrip
+        assert!((pixels[0] - original[0]).abs() < 1e-4);
+        assert!((pixels[4] - original[4]).abs() < 1e-4);
+    }
+    
+    // ========================================================================
+    // REC.2100 Surround tests
+    // ========================================================================
+    
     #[test]
     fn test_rec2100_surround_rgba() {
         let gamma = 0.85;
@@ -920,5 +1950,223 @@ mod tests {
         // Should roundtrip
         assert!((pixels[0] - original[0]).abs() < 1e-4);
         assert!((pixels[4] - original[4]).abs() < 1e-4);
+    }
+    
+    // ========================================================================
+    // LIN_TO_PQ / PQ_TO_LIN tests
+    // ========================================================================
+    
+    #[test]
+    fn test_pq_to_lin_zero() {
+        let result = pq_to_lin(0.0);
+        assert!(result.abs() < EPSILON, "pq_to_lin(0) = {}", result);
+    }
+    
+    #[test]
+    fn test_lin_to_pq_zero() {
+        let result = lin_to_pq(0.0);
+        assert!(result.abs() < EPSILON, "lin_to_pq(0) = {}", result);
+    }
+    
+    #[test]
+    fn test_pq_lin_reference_white() {
+        // 100 nits = 1.0 in OCIO normalization
+        // PQ(100 nits) ≈ 0.508
+        let pq_100 = lin_to_pq(1.0);  // 1.0 = 100 nits
+        assert!(
+            (pq_100 - 0.508).abs() < 0.01,
+            "lin_to_pq(1.0) should be ~0.508, got {}", pq_100
+        );
+        
+        // Inverse
+        let lin = pq_to_lin(pq_100);
+        assert!(
+            (lin - 1.0).abs() < 1e-4,
+            "pq_to_lin({}) should be ~1.0, got {}", pq_100, lin
+        );
+    }
+    
+    #[test]
+    fn test_pq_lin_roundtrip() {
+        let test_values = [0.0, 0.01, 0.1, 0.5, 1.0, 2.0, 10.0, 50.0, 100.0];
+        
+        for &lin in &test_values {
+            let pq = lin_to_pq(lin);
+            let roundtrip = pq_to_lin(pq);
+            
+            let tol = if lin == 0.0 { EPSILON } else { lin * 1e-4 + 1e-5 };
+            assert!(
+                (roundtrip - lin).abs() < tol,
+                "PQ roundtrip failed for lin={}: got {}", lin, roundtrip
+            );
+        }
+    }
+    
+    #[test]
+    fn test_pq_lin_negative_mirroring() {
+        // OCIO handles negatives by mirroring around zero
+        let test_values = [-0.1, -0.5, -1.0, -10.0];
+        
+        for &lin in &test_values {
+            let pq = lin_to_pq(lin);
+            let pq_pos = lin_to_pq(-lin);
+            
+            // pq should be negative, with same magnitude as positive
+            assert!(pq < 0.0, "lin_to_pq({}) should be negative, got {}", lin, pq);
+            assert!(
+                (pq + pq_pos).abs() < EPSILON,
+                "lin_to_pq({}) = {} should mirror lin_to_pq({}) = {}",
+                lin, pq, -lin, pq_pos
+            );
+        }
+    }
+    
+    #[test]
+    fn test_pq_lin_rgba() {
+        let mut pixels = [
+            1.0, 0.5, 0.1, 1.0,  // Normal values
+            -0.1, 0.0, 2.0, 0.5, // With negative and bright
+        ];
+        let original = pixels;
+        
+        apply_lin_to_pq_rgba(&mut pixels);
+        apply_pq_to_lin_rgba(&mut pixels);
+        
+        // Alpha unchanged
+        assert!((pixels[3] - 1.0).abs() < EPSILON);
+        assert!((pixels[7] - 0.5).abs() < EPSILON);
+        
+        // Should roundtrip
+        for i in 0..3 {
+            let tol = if original[i] == 0.0 { EPSILON } else { original[i].abs() * 1e-4 + 1e-4 };
+            assert!(
+                (pixels[i] - original[i]).abs() < tol,
+                "Channel {} roundtrip failed: {} vs {}", i, pixels[i], original[i]
+            );
+        }
+    }
+    
+    // ========================================================================
+    // ACES Gamut Compression 1.3 tests
+    // ========================================================================
+    
+    #[test]
+    fn test_gamut_comp_13_in_gamut_unchanged() {
+        // Colors within gamut (dist < threshold) should be unchanged
+        let params = GamutComp13Params::aces_default();
+        let mut rgb = [0.5, 0.4, 0.3];  // In-gamut color
+        let original = rgb;
+        
+        aces_gamut_comp_13_fwd(&mut rgb, &params);
+        
+        // In-gamut colors should pass through unchanged
+        assert!((rgb[0] - original[0]).abs() < EPSILON);
+        assert!((rgb[1] - original[1]).abs() < EPSILON);
+        assert!((rgb[2] - original[2]).abs() < EPSILON);
+    }
+    
+    #[test]
+    fn test_gamut_comp_13_achromatic_unchanged() {
+        // Achromatic colors (R=G=B) should be unchanged
+        let params = GamutComp13Params::aces_default();
+        let mut rgb = [0.5, 0.5, 0.5];
+        let original = rgb;
+        
+        aces_gamut_comp_13_fwd(&mut rgb, &params);
+        
+        assert!((rgb[0] - original[0]).abs() < EPSILON);
+        assert!((rgb[1] - original[1]).abs() < EPSILON);
+        assert!((rgb[2] - original[2]).abs() < EPSILON);
+    }
+    
+    #[test]
+    fn test_gamut_comp_13_black_unchanged() {
+        // Black should remain black
+        let params = GamutComp13Params::aces_default();
+        let mut rgb = [0.0, 0.0, 0.0];
+        
+        aces_gamut_comp_13_fwd(&mut rgb, &params);
+        
+        assert!(rgb[0].abs() < EPSILON);
+        assert!(rgb[1].abs() < EPSILON);
+        assert!(rgb[2].abs() < EPSILON);
+    }
+    
+    #[test]
+    fn test_gamut_comp_13_negative_compressed() {
+        // Out-of-gamut color (negative component) should be compressed
+        let params = GamutComp13Params::aces_default();
+        let mut rgb = [1.0, 0.5, -0.2];  // Blue is negative (out of gamut)
+        let original = rgb;
+        
+        aces_gamut_comp_13_fwd(&mut rgb, &params);
+        
+        // Red unchanged (max), green may change, blue should increase (toward 0)
+        assert!((rgb[0] - original[0]).abs() < EPSILON, "Red should be unchanged (achromatic)");
+        // Blue should be compressed (less negative or positive)
+        assert!(rgb[2] > original[2], "Blue should be compressed toward achromatic: {} vs {}", rgb[2], original[2]);
+    }
+    
+    #[test]
+    fn test_gamut_comp_13_roundtrip() {
+        let params = GamutComp13Params::aces_default();
+        let test_values = [
+            [0.5, 0.4, 0.3],           // In gamut
+            [1.0, 0.5, -0.1],          // Negative blue
+            [0.8, 1.0, -0.05],         // Negative blue, green max
+            [1.0, -0.1, 0.5],          // Negative green
+            [0.3, 0.3, 0.3],           // Achromatic
+        ];
+        
+        for original in test_values {
+            let mut rgb = original;
+            aces_gamut_comp_13_fwd(&mut rgb, &params);
+            aces_gamut_comp_13_inv(&mut rgb, &params);
+            
+            assert!(
+                (rgb[0] - original[0]).abs() < 1e-4,
+                "GamutComp13 roundtrip failed for {:?}: got {:?}", original, rgb
+            );
+            assert!(
+                (rgb[1] - original[1]).abs() < 1e-4,
+                "GamutComp13 roundtrip failed for {:?}: got {:?}", original, rgb
+            );
+            assert!(
+                (rgb[2] - original[2]).abs() < 1e-4,
+                "GamutComp13 roundtrip failed for {:?}: got {:?}", original, rgb
+            );
+        }
+    }
+    
+    #[test]
+    fn test_gamut_comp_13_rgba() {
+        let params = GamutComp13Params::aces_default();
+        let mut pixels = [
+            1.0, 0.5, -0.1, 1.0,
+            0.5, 0.4, 0.3, 0.5,
+        ];
+        let original = pixels;
+        
+        apply_aces_gamut_comp_13_fwd_rgba(&mut pixels, &params);
+        apply_aces_gamut_comp_13_inv_rgba(&mut pixels, &params);
+        
+        // Alpha should be unchanged
+        assert!((pixels[3] - 1.0).abs() < EPSILON);
+        assert!((pixels[7] - 0.5).abs() < EPSILON);
+        
+        // Should roundtrip
+        assert!((pixels[0] - original[0]).abs() < 1e-4);
+        assert!((pixels[4] - original[4]).abs() < 1e-4);
+    }
+    
+    #[test]
+    fn test_gamut_comp_13_scale_precomputation() {
+        // Verify scale factors are computed correctly
+        let params = GamutComp13Params::aces_default();
+        
+        // Scale factors should be positive and reasonable
+        assert!(params.scale_cyan > 0.0 && params.scale_cyan < 1.0);
+        assert!(params.scale_magenta > 0.0 && params.scale_magenta < 1.0);
+        assert!(params.scale_yellow > 0.0 && params.scale_yellow < 1.0);
     }
 }

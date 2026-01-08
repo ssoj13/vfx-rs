@@ -770,6 +770,44 @@ impl Config {
                 }))
             }
 
+            "LogAffineTransform" => {
+                Ok(Transform::LogAffine(LogAffineTransform {
+                    base: yaml_f64(yaml, "base").unwrap_or(2.0),
+                    log_side_slope: parse_rgb(yaml_f64_list(yaml, "logSideSlope"), 1.0),
+                    log_side_offset: parse_rgb(yaml_f64_list(yaml, "logSideOffset"), 0.0),
+                    lin_side_slope: parse_rgb(yaml_f64_list(yaml, "linSideSlope"), 1.0),
+                    lin_side_offset: parse_rgb(yaml_f64_list(yaml, "linSideOffset"), 0.0),
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
+
+            "LogCameraTransform" => {
+                Ok(Transform::LogCamera(LogCameraTransform {
+                    base: yaml_f64(yaml, "base").unwrap_or(2.0),
+                    log_side_slope: parse_rgb(yaml_f64_list(yaml, "logSideSlope"), 1.0),
+                    log_side_offset: parse_rgb(yaml_f64_list(yaml, "logSideOffset"), 0.0),
+                    lin_side_slope: parse_rgb(yaml_f64_list(yaml, "linSideSlope"), 1.0),
+                    lin_side_offset: parse_rgb(yaml_f64_list(yaml, "linSideOffset"), 0.0),
+                    lin_side_break: parse_rgb(yaml_f64_list(yaml, "linSideBreak"), 0.0),
+                    linear_slope: yaml_f64_list(yaml, "linearSlope")
+                        .get(0..3)
+                        .map(|v| [v[0], v[1], v[2]]),
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
+
+            "AllocationTransform" => {
+                let allocation = match yaml_str(yaml, "allocation") {
+                    Some("lg2") | Some("log2") | Some("LG2") | Some("LOG2") => AllocationType::Log2,
+                    _ => AllocationType::Uniform,
+                };
+                Ok(Transform::Allocation(AllocationTransform {
+                    allocation,
+                    vars: yaml_f64_list(yaml, "vars"),
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
+
             _ => Err(OcioError::Yaml(format!("unknown transform type: {}", tag))),
         }
     }

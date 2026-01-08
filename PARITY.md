@@ -159,23 +159,32 @@ Per-channel exponent:
 - [x] 6 tests
 - [x] Файл: `crates/vfx-lut/src/hdl.rs`
 
-### 2.3 Iridas ITX (MISSING)
+### 2.3 Iridas ITX (DONE)
 **Reference:** `_ref/OpenColorIO/src/OpenColorIO/fileformats/FileFormatIridasItx.cpp`
 
-- [ ] Parse ITX format
-- [ ] Файл: `crates/vfx-lut/src/iridas_itx.rs`
+- [x] Parse ITX format (LUT_3D_SIZE header)
+- [x] Red-fastest order (same as internal)
+- [x] Read/write support
+- [x] 5 tests
+- [x] Файл: `crates/vfx-lut/src/iridas_itx.rs`
 
-### 2.4 Iridas Look (MISSING)
+### 2.4 Iridas Look (DONE)
 **Reference:** `_ref/OpenColorIO/src/OpenColorIO/fileformats/FileFormatIridasLook.cpp`
 
-- [ ] Parse .look format
-- [ ] Файл: `crates/vfx-lut/src/iridas_look.rs`
+- [x] Parse .look XML format
+- [x] Hex-encoded 32-bit LE floats
+- [x] Size and data extraction from XML
+- [x] 4 tests
+- [x] Файл: `crates/vfx-lut/src/iridas_look.rs`
 
-### 2.5 Pandora (MISSING)
+### 2.5 Pandora (DONE)
 **Reference:** `_ref/OpenColorIO/src/OpenColorIO/fileformats/FileFormatPandora.cpp`
 
-- [ ] Parse .mga format
-- [ ] Файл: `crates/vfx-lut/src/pandora.rs`
+- [x] Parse .mga/.m3d format
+- [x] Blue-fastest to red-fastest conversion
+- [x] Integer scaling by out max value
+- [x] 3 tests
+- [x] Файл: `crates/vfx-lut/src/pandora.rs`
 
 ### 2.6 SPI Matrix (DONE)
 **Reference:** `_ref/OpenColorIO/src/OpenColorIO/fileformats/FileFormatSpiMtx.cpp`
@@ -198,11 +207,15 @@ Per-channel exponent:
 - [x] 5 tests
 - [x] Файл: `crates/vfx-lut/src/truelight.rs`
 
-### 2.8 VF Format (MISSING)
+### 2.8 VF Format (DONE)
 **Reference:** `_ref/OpenColorIO/src/OpenColorIO/fileformats/FileFormatVF.cpp`
 
-- [ ] Parse .vf format
-- [ ] Файл: `crates/vfx-lut/src/vf.rs`
+- [x] Parse .vf format (#Inventor V2.1 ascii header)
+- [x] grid_size uniform support
+- [x] Optional global_transform 4x4 matrix (unscaled)
+- [x] VfFile struct with matrix + lut
+- [x] 4 tests
+- [x] Файл: `crates/vfx-lut/src/nuke_vf.rs`
 
 ---
 
@@ -230,37 +243,37 @@ Per-channel exponent:
 
 ## 4. OCIO Transforms (config parsing)
 
-### 4.1 GradingPrimaryTransform (PARTIAL)
+### 4.1 GradingPrimaryTransform (DONE)
 - [x] Parsing from YAML
-- [ ] Evaluation через GradingPrimary op
+- [x] Evaluation через GradingPrimary op
 - [ ] Dynamic properties
 
-### 4.2 GradingToneTransform (MISSING)
-- [ ] YAML parsing
-- [ ] Link to GradingTone op
+### 4.2 GradingToneTransform (DONE)
+- [x] YAML parsing
+- [x] Link to GradingTone op
 - [ ] Dynamic properties
 
-### 4.3 GradingRGBCurveTransform (MISSING)
-- [ ] YAML parsing
-- [ ] B-spline curve data
-- [ ] Link to GradingRGBCurve op
+### 4.3 GradingRGBCurveTransform (DONE)
+- [x] YAML parsing
+- [x] B-spline curve data
+- [x] Link to GradingRGBCurve op
 
-### 4.4 AllocationTransform (MISSING)
-- [ ] YAML parsing
-- [ ] Link to AllocationOp
+### 4.4 AllocationTransform (DONE)
+- [x] YAML parsing
+- [x] Link to AllocationOp
 
-### 4.5 LogAffineTransform (MISSING)
-- [ ] YAML parsing
-- [ ] Parameters: base, logSlope, logOffset, linSlope, linOffset
+### 4.5 LogAffineTransform (DONE)
+- [x] YAML parsing
+- [x] Parameters: base, logSlope, logOffset, linSlope, linOffset
 
-### 4.6 LogCameraTransform (MISSING)
-- [ ] YAML parsing
-- [ ] Parameters: linBreak, linearSlope, base
+### 4.6 LogCameraTransform (DONE)
+- [x] YAML parsing
+- [x] Parameters: linBreak, linearSlope, base
 
-### 4.7 FixedFunctionTransform (MISSING)
-- [ ] YAML parsing
-- [ ] Style enum mapping
-- [ ] Parameters array
+### 4.7 FixedFunctionTransform (DONE)
+- [x] YAML parsing
+- [x] Style enum mapping
+- [x] Parameters array
 
 ### 4.8 GroupTransform (MISSING)
 - [ ] Container for multiple transforms
@@ -323,13 +336,13 @@ Per-channel exponent:
 | Category | Total | Done | Missing |
 |----------|-------|------|---------|
 | Ops | 8 | 7 | 1 |
-| LUT Formats | 8 | 4 | 4 |
+| LUT Formats | 8 | 8 | 0 |
 | Transfer Functions | 3 | 0 | 3 |
-| OCIO Transforms | 9 | 1 | 8 |
+| OCIO Transforms | 9 | 7 | 2 |
 | GPU Compute | 2 | 0 | 2 |
 | Primaries | 2 | 0 | 2 |
 | FixedFunction styles | 20 | 8 | 12 |
-| **TOTAL** | **52** | **20** | **32** |
+| **TOTAL** | **52** | **30** | **22** |
 
 ---
 
@@ -350,17 +363,23 @@ Per-channel exponent:
 9. [x] ACES_GLOW_10
 10. [x] REC2100_SURROUND
 
-### Phase C - LUT Formats (MEDIUM)
+### Phase C - LUT Formats (DONE)
 11. [x] Discreet 1DL
 12. [x] SPI Matrix
 13. [x] HDL (Houdini)
 14. [x] Truelight
+15. [x] Iridas ITX
+16. [x] Iridas Look
+17. [x] Pandora MGA
+18. [x] Nuke VF
 
 ### Phase D - OCIO Transforms (MEDIUM)
-15. [ ] GradingToneTransform parsing
-16. [ ] GradingRGBCurveTransform parsing
-17. [ ] FixedFunctionTransform parsing
-18. [ ] AllocationTransform parsing
+15. [x] GradingToneTransform parsing
+16. [x] GradingRGBCurveTransform parsing
+17. [x] FixedFunctionTransform parsing
+18. [x] AllocationTransform parsing
+19. [x] LogAffineTransform parsing
+20. [x] LogCameraTransform parsing
 
 ### Phase E - GPU (LOW for now)
 19. [ ] wgpu color matrix shader
@@ -370,4 +389,4 @@ Per-channel exponent:
 
 ## Current Task
 
-**Next:** Phase C - LUT Formats (Discreet 1DL, SPI Matrix, HDL)
+**Next:** Phase E - GPU (wgpu shaders) or remaining FixedFunction styles
