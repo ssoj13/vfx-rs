@@ -11,7 +11,23 @@ use vfx_io::{ImageData, LayeredImage};
 use vfx_ocio::Config;
 
 use crate::messages::{Generation, ViewerEvent, ViewerMsg};
-use crate::state::ChannelMode;
+use crate::state::{ChannelMode, DEFAULT_EXPOSURE, DEFAULT_VIEWPORT};
+
+// =============================================================================
+// Constants
+// =============================================================================
+
+/// Margin for fit-to-window (0.95 = 5% padding)
+const FIT_MARGIN: f32 = 0.95;
+
+/// Zoom limits
+const ZOOM_MIN: f32 = 0.1;
+const ZOOM_MAX: f32 = 100.0;
+
+/// Rec.709 luminance coefficients
+const LUMA_R: f32 = 0.2126;
+const LUMA_G: f32 = 0.7152;
+const LUMA_B: f32 = 0.0722;
 
 /// Worker thread handler.
 pub struct ViewerHandler {
@@ -53,12 +69,12 @@ impl ViewerHandler {
             display: String::new(),
             view: String::new(),
             input_colorspace: String::new(),
-            exposure: 0.0,
+            exposure: DEFAULT_EXPOSURE,
             channel_mode: ChannelMode::Color,
             layer: String::new(),
             zoom: 1.0,
             pan: [0.0, 0.0],
-            viewport: [1280.0, 720.0],
+            viewport: DEFAULT_VIEWPORT,
             verbose,
         }
     }
@@ -96,6 +112,14 @@ impl ViewerHandler {
 
     fn send(&self, event: ViewerEvent) {
         let _ = self.tx.send(event);
+    }
+
+    /// Sends current view state (zoom/pan) to UI.
+    fn sync_view_state(&self) {
+        self.send(ViewerEvent::StateSync {
+            zoom: self.zoom,
+            pan: self.pan,
+        });
     }
 
     fn log(&self, msg: &str) {
@@ -280,10 +304,10 @@ impl ViewerHandler {
         }
 
         // Set input colorspace from metadata if not already set
-        if let Some(ref cs) = colorspace {
-            if self.input_colorspace.is_empty() {
-                self.input_colorspace = cs.clone();
-            }
+        if let Some(ref cs) = colorspace
+            && self.input_colorspace.is_empty()
+        {
+            self.input_colorspace.clone_from(cs);
         }
 
         self.send(ViewerEvent::ImageLoaded {
@@ -379,7 +403,7 @@ impl ViewerHandler {
                     let g = if channels > 1 { src[i * channels + 1] } else { r };
                     let b = if channels > 2 { src[i * channels + 2] } else { r };
                     // Rec.709 luminance
-                    let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    let luma = LUMA_R * r + LUMA_G * g + LUMA_B * b;
                     out[i * 3] = luma;
                     out[i * 3 + 1] = luma;
                     out[i * 3 + 2] = luma;
@@ -398,8 +422,8 @@ impl ViewerHandler {
 
         // Apply exposure (simple 2^EV multiplier)
         if self.exposure.abs() > 0.001 {
-            let mult = 2.0_f32.powf(self.exposure);
-            for p in pixels.iter_mut() {
+            let mult = self.exposure.exp2();
+            for p in &mut pixels {
                 *p *= mult;
             }
         }
@@ -470,39 +494,43 @@ impl ViewerHandler {
             .collect()
     }
 
-    fn zoom(&mut self, factor: f32, _center: [f32; 2]) {
-        self.zoom = (self.zoom * (1.0 + factor)).clamp(0.1, 100.0);
-        self.send(ViewerEvent::StateSync {
-            zoom: self.zoom,
-            pan: self.pan,
-        });
+    fn zoom(&mut self, factor: f32, center: [f32; 2]) {
+        let old_zoom = self.zoom;
+        let new_zoom = (old_zoom * (1.0 + factor)).clamp(ZOOM_MIN, ZOOM_MAX);
+        
+        // Zoom-to-point: adjust pan so point under cursor stays fixed
+        // center is offset from viewport center in screen pixels
+        if center[0].abs() > 0.001 || center[1].abs() > 0.001 {
+            // Convert screen offset to pan adjustment
+            // Formula: new_pan = old_pan + center * (1/new_zoom - 1/old_zoom)
+            let scale_diff = 1.0 / new_zoom - 1.0 / old_zoom;
+            self.pan[0] += center[0] * scale_diff;
+            self.pan[1] += center[1] * scale_diff;
+        }
+        
+        self.zoom = new_zoom;
+        self.sync_view_state();
     }
 
     fn pan(&mut self, delta: [f32; 2]) {
         self.pan[0] += delta[0] / self.zoom;
         self.pan[1] += delta[1] / self.zoom;
-        self.send(ViewerEvent::StateSync {
-            zoom: self.zoom,
-            pan: self.pan,
-        });
+        self.sync_view_state();
     }
 
     fn fit_to_window(&mut self) {
-        if let Some(img) = &self.image {
-            if let Some(layer) = img.layers.first() {
-                let img_w = layer.width as f32;
-                let img_h = layer.height as f32;
-                let vp_w = self.viewport[0];
-                let vp_h = self.viewport[1];
-                
-                if img_w > 0.0 && img_h > 0.0 {
-                    self.zoom = (vp_w / img_w).min(vp_h / img_h) * 0.95;
-                    self.pan = [0.0, 0.0];
-                    self.send(ViewerEvent::StateSync {
-                        zoom: self.zoom,
-                        pan: self.pan,
-                    });
-                }
+        if let Some(img) = &self.image
+            && let Some(layer) = img.layers.first()
+        {
+            let img_w = layer.width as f32;
+            let img_h = layer.height as f32;
+            let vp_w = self.viewport[0];
+            let vp_h = self.viewport[1];
+            
+            if img_w > 0.0 && img_h > 0.0 {
+                self.zoom = (vp_w / img_w).min(vp_h / img_h) * FIT_MARGIN;
+                self.pan = [0.0, 0.0];
+                self.sync_view_state();
             }
         }
     }
@@ -510,9 +538,6 @@ impl ViewerHandler {
     fn home(&mut self) {
         self.zoom = 1.0;
         self.pan = [0.0, 0.0];
-        self.send(ViewerEvent::StateSync {
-            zoom: self.zoom,
-            pan: self.pan,
-        });
+        self.sync_view_state();
     }
 }

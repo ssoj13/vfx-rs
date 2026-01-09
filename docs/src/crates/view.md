@@ -11,8 +11,8 @@ Interactive image viewer designed for VFX workflows. Displays images with proper
 - Full OCIO display pipeline
 - Multi-layer EXR with layer selection
 - Channel isolation (R/G/B/A/Luminance)
-- Exposure control
-- Pan/zoom navigation
+- Exposure control with Ctrl+click reset
+- Pan/zoom navigation (zoom to cursor)
 - Keyboard shortcuts
 - Persistent settings
 
@@ -35,8 +35,7 @@ let config = ViewerConfig {
     ocio: Some("/path/to/config.ocio".into()),
     display: Some("sRGB".into()),
     view: Some("ACES 1.0 SDR".into()),
-    layer: Some("beauty".into()),
-    exposure: 0.0,
+    colorspace: Some("ACEScg".into()),
     verbose: 1,
 };
 ```
@@ -52,9 +51,9 @@ The viewer resolves OCIO config in this order:
 ### Display Pipeline
 
 ```
-Input Image → Color Space → Display Transform → View → Screen
-                   ↓
-              (from image metadata or config file rules)
+Input Image → Source CS → RRT (View Transform) → ODT (Display) → Screen
+                 ↓
+            (from metadata or --colorspace)
 ```
 
 ## Keyboard Shortcuts
@@ -64,11 +63,11 @@ Input Image → Color Space → Display Transform → View → Screen
 | Key | Action |
 |-----|--------|
 | `F` | Fit image to window |
-| `H` | Home (1:1 zoom, centered) |
+| `H` / `0` | Home (1:1 zoom, centered) |
 | `+` / `=` | Zoom in |
 | `-` | Zoom out |
 | Mouse drag | Pan |
-| Scroll | Zoom |
+| Scroll | Zoom at cursor |
 
 ### Channels
 
@@ -81,20 +80,33 @@ Input Image → Color Space → Display Transform → View → Screen
 | `A` | Alpha channel |
 | `L` | Luminance |
 
-### Exposure
+### File Operations
 
 | Key | Action |
 |-----|--------|
-| `[` | Decrease exposure |
-| `]` | Increase exposure |
-| `0` | Reset exposure |
+| `O` | Open file dialog |
+| Double-click | Open file (no image) / Fit (with image) |
+| Drag & drop | Open dropped file |
 
 ### General
 
 | Key | Action |
 |-----|--------|
-| `Esc` / `Q` | Exit |
-| `Space` | Toggle UI overlay |
+| `Esc` | Exit |
+| Ctrl+click on EV slider | Reset exposure to 0 |
+
+## UI Labels
+
+Controls are labeled with short names and detailed tooltips:
+
+| Label | Full Name | Description |
+|-------|-----------|-------------|
+| **Src** | Source Colorspace | Input image colorspace |
+| **RRT** | Reference Rendering Transform | View/tone-mapping transform |
+| **ODT** | Output Device Transform | Display/monitor type |
+| **EV** | Exposure Value | Brightness adjustment in stops |
+| **Ch** | Channel | Display channel mode |
+| **Layer** | Layer | EXR layer selection |
 
 ## Channel Modes
 
@@ -141,49 +153,23 @@ use vfx_view::ViewerPersistence;
 // - Exposure
 ```
 
-## ViewerState
-
-Runtime state:
-
-```rust
-use vfx_view::ViewerState;
-
-// Access current state
-let state = app.state();
-println!("Zoom: {}", state.zoom);
-println!("Exposure: {}", state.exposure);
-println!("Channel: {:?}", state.channel_mode);
-```
-
-## CLI Integration
-
-The viewer is integrated into `vfx` CLI:
-
-```bash
-# View image
-vfx view image.exr
-
-# With options
-vfx view image.exr --display sRGB --view "ACES 1.0 SDR"
-
-# Specific layer
-vfx view render.exr --layer diffuse
-```
-
 ## Architecture
 
 ```
-ViewerApp (main application)
+ViewerApp (eframe App)
     │
-    ├── ViewerState (current view parameters)
+    ├── ViewerState (runtime parameters)
+    │       zoom, pan, exposure, channel_mode...
     │
-    ├── Handler (input handling)
+    ├── tx/rx channels (mpsc)
+    │       ViewerMsg → Worker
+    │       ViewerEvent ← Worker
     │
-    └── Renderer (GPU display)
+    └── Worker Thread (ViewerHandler)
             │
-            ├── Image texture
-            ├── OCIO LUT texture
-            └── Display shader
+            ├── Image loading (vfx-io)
+            ├── OCIO processing (vfx-ocio)
+            └── Texture generation
 ```
 
 ## GPU Rendering
@@ -193,7 +179,7 @@ Uses `egui` with `wgpu` backend:
 - Image displayed as GPU texture
 - OCIO transforms baked to 3D LUT
 - Display shader applies LUT + exposure
-- 60 FPS pan/zoom
+- Conditional repaint (saves CPU when idle)
 
 ## Supported Formats
 
@@ -221,6 +207,7 @@ match exit_code {
 - `egui` / `eframe` - GUI framework
 - `wgpu` - GPU rendering
 - `dirs` - Config paths
+- `rfd` - File dialogs
 
 ## Feature Flag
 

@@ -5,6 +5,12 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Default exposure value (EV stops).
+pub const DEFAULT_EXPOSURE: f32 = 0.0;
+
+/// Default viewport size.
+pub const DEFAULT_VIEWPORT: [f32; 2] = [1280.0, 720.0];
+
 /// Channel display mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ChannelMode {
@@ -85,7 +91,7 @@ impl Default for ViewerPersistence {
             ocio_path: None,
             display: None,
             view: None,
-            exposure: 0.0,
+            exposure: DEFAULT_EXPOSURE,
             channel_mode: ChannelMode::Color,
         }
     }
@@ -149,13 +155,13 @@ impl Default for ViewerState {
             view: String::new(),
             colorspaces: Vec::new(),
             input_colorspace: String::new(),
-            exposure: 0.0,
+            exposure: DEFAULT_EXPOSURE,
             channel_mode: ChannelMode::Color,
             layers: Vec::new(),
             layer: String::new(),
             zoom: 1.0,
             pan: [0.0, 0.0],
-            viewport_size: [1280.0, 720.0],
+            viewport_size: DEFAULT_VIEWPORT,
             image_dims: None,
             image_path: None,
         }

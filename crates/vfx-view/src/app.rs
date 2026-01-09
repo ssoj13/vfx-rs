@@ -10,7 +10,7 @@ use egui::{Color32, ColorImage, TextureHandle, TextureOptions, Vec2};
 
 use crate::handler::ViewerHandler;
 use crate::messages::{Generation, ViewerEvent, ViewerMsg};
-use crate::state::{ChannelMode, ViewerPersistence, ViewerState};
+use crate::state::{ChannelMode, ViewerPersistence, ViewerState, DEFAULT_EXPOSURE};
 
 /// Main viewer application.
 pub struct ViewerApp {
@@ -18,8 +18,8 @@ pub struct ViewerApp {
     tx: Sender<ViewerMsg>,
     /// Receiver for results from worker thread.
     rx: Receiver<ViewerEvent>,
-    /// Worker thread handle.
-    _worker: JoinHandle<()>,
+    /// Worker thread handle (Option for Drop).
+    worker: Option<JoinHandle<()>>,
     
     /// Current display texture.
     texture: Option<TextureHandle>,
@@ -88,7 +88,7 @@ impl ViewerApp {
         let app = Self {
             tx: tx_to_worker,
             rx: rx_from_worker,
-            _worker: worker,
+            worker: Some(worker),
             texture: None,
             error: None,
             state,
@@ -140,9 +140,11 @@ impl ViewerApp {
         self.send(msg);
     }
 
-    /// Process all pending events from worker.
-    fn process_events(&mut self, ctx: &egui::Context) {
+    /// Process all pending events from worker. Returns true if any events were processed.
+    fn process_events(&mut self, ctx: &egui::Context) -> bool {
+        let mut had_events = false;
         while let Ok(event) = self.rx.try_recv() {
+            had_events = true;
             match event {
                 ViewerEvent::ImageLoaded { dims, layers, colorspace, path } => {
                     self.state.image_dims = Some(dims);
@@ -152,10 +154,10 @@ impl ViewerApp {
                     // Update window title
                     let title = format!("vfx view - {}", path.file_name().and_then(|n| n.to_str()).unwrap_or("Image"));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
-                    if let Some(cs) = colorspace {
-                        if self.cli_colorspace.is_none() {
-                            self.state.input_colorspace = cs;
-                        }
+                    if let Some(cs) = colorspace
+                        && self.cli_colorspace.is_none()
+                    {
+                        self.state.input_colorspace = cs;
                     }
                     self.error = None;
                 }
@@ -203,15 +205,22 @@ impl ViewerApp {
                 }
             }
         }
+        had_events
     }
 
-    /// Handle keyboard input.
+    /// Handle keyboard input. Returns true if should exit.
     fn handle_input(&mut self, ctx: &egui::Context) -> bool {
         let mut exit = false;
+        let mut open_file = false;
 
         ctx.input(|i| {
             if i.key_pressed(egui::Key::Escape) {
                 exit = true;
+            }
+
+            // File operations
+            if i.key_pressed(egui::Key::O) && !i.modifiers.ctrl {
+                open_file = true;
             }
 
             // View controls
@@ -256,23 +265,36 @@ impl ViewerApp {
                 self.send_regen(ViewerMsg::SetChannelMode(ChannelMode::Luminance));
             }
 
-            // Scroll zoom
+            // Scroll zoom - use mouse position for zoom-to-cursor
             if i.raw_scroll_delta.y != 0.0 {
+                // Get mouse position relative to viewport center
+                let mouse_pos = i.pointer.hover_pos().unwrap_or_default();
+                let vp_center = egui::pos2(
+                    self.state.viewport_size[0] / 2.0,
+                    self.state.viewport_size[1] / 2.0,
+                );
+                // Offset from center in screen pixels
+                let center = [
+                    mouse_pos.x - vp_center.x,
+                    mouse_pos.y - vp_center.y,
+                ];
                 self.send(ViewerMsg::Zoom {
                     factor: i.raw_scroll_delta.y * 0.002,
-                    center: [0.0, 0.0],
+                    center,
                 });
             }
         });
+
+        // Handle actions outside input closure
+        if open_file {
+            self.open_file_dialog();
+        }
 
         exit
     }
 
     /// Draw top control panel.
     fn draw_controls(&mut self, ctx: &egui::Context) {
-        // Default values for Ctrl+click reset
-        const DEFAULT_EXPOSURE: f32 = 0.0;
-
         egui::TopBottomPanel::top("controls").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 // Src: Input colorspace (what colorspace the file is in)
@@ -419,7 +441,7 @@ impl ViewerApp {
                 // Image dimensions
                 if let Some((w, h)) = self.state.image_dims {
                     ui.separator();
-                    ui.label(format!("{}x{}", w, h));
+                    ui.label(format!("{w}x{h}"));
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -438,7 +460,7 @@ impl ViewerApp {
     fn draw_hints(&self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("hints").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label("F: Fit | H: Home | +/-: Zoom | R/G/B/A: Channels | C: Color | L: Luma | Esc: Exit");
+                ui.label("O: Open | F: Fit | H: Home | +/-: Zoom | R/G/B/A/C/L: Channels | Esc: Exit");
             });
         });
     }
@@ -525,10 +547,10 @@ impl ViewerApp {
     /// Check for dropped files.
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
         ctx.input(|i| {
-            if !i.raw.dropped_files.is_empty() {
-                if let Some(path) = i.raw.dropped_files.first().and_then(|f| f.path.clone()) {
-                    self.send(ViewerMsg::LoadImage(path));
-                }
+            if !i.raw.dropped_files.is_empty()
+                && let Some(path) = i.raw.dropped_files.first().and_then(|f| f.path.clone())
+            {
+                self.send(ViewerMsg::LoadImage(path));
             }
         });
     }
@@ -536,8 +558,8 @@ impl ViewerApp {
 
 impl eframe::App for ViewerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Process worker events
-        self.process_events(ctx);
+        // Process worker events - request repaint if any events received
+        let had_events = self.process_events(ctx);
 
         // Handle dropped files
         self.handle_dropped_files(ctx);
@@ -554,12 +576,26 @@ impl eframe::App for ViewerApp {
         self.draw_hints(ctx);
         self.draw_canvas(ctx);
 
-        // Always request repaint for smooth interaction
-        ctx.request_repaint();
+        // Only repaint when needed (events pending or dragging)
+        if had_events {
+            ctx.request_repaint();
+        }
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         let persistence = self.state.to_persistence();
         eframe::set_value(storage, "vfx_viewer_state", &persistence);
+    }
+}
+
+impl Drop for ViewerApp {
+    fn drop(&mut self) {
+        // Signal worker to stop
+        let _ = self.tx.send(ViewerMsg::Close);
+        
+        // Wait for worker thread to finish
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
