@@ -211,6 +211,33 @@ enum GpuOp {
     Lut1D { texture_idx: usize },
     /// 3D LUT (texture index).
     Lut3D { texture_idx: usize },
+    /// LogAffine transform (OCIO v2).
+    LogAffine {
+        base: f32,
+        log_side_slope: [f32; 3],
+        log_side_offset: [f32; 3],
+        lin_side_slope: [f32; 3],
+        lin_side_offset: [f32; 3],
+        forward: bool,
+    },
+    /// LogCamera transform (ARRI LogC, Sony S-Log3).
+    LogCamera {
+        base: f32,
+        log_side_slope: [f32; 3],
+        log_side_offset: [f32; 3],
+        lin_side_slope: [f32; 3],
+        lin_side_offset: [f32; 3],
+        lin_side_break: [f32; 3],
+        linear_slope: [f32; 3],
+        forward: bool,
+    },
+    /// ExponentWithLinear (sRGB/Rec.709 style).
+    ExponentWithLinear {
+        gamma: [f32; 4],
+        offset: [f32; 4],
+        negative_style: NegativeStyle,
+        forward: bool,
+    },
 }
 
 impl GpuProcessor {
@@ -280,6 +307,52 @@ impl GpuProcessor {
             ProcessorOp::GradingPrimary { .. } => None,
             ProcessorOp::GradingRgbCurve { .. } => None,
             ProcessorOp::GradingTone { .. } => None,
+            // New transforms with full GPU support
+            ProcessorOp::LogAffine {
+                base,
+                log_side_slope,
+                log_side_offset,
+                lin_side_slope,
+                lin_side_offset,
+                forward,
+            } => Some(GpuOp::LogAffine {
+                base: *base,
+                log_side_slope: *log_side_slope,
+                log_side_offset: *log_side_offset,
+                lin_side_slope: *lin_side_slope,
+                lin_side_offset: *lin_side_offset,
+                forward: *forward,
+            }),
+            ProcessorOp::LogCamera {
+                base,
+                log_side_slope,
+                log_side_offset,
+                lin_side_slope,
+                lin_side_offset,
+                lin_side_break,
+                linear_slope,
+                forward,
+            } => Some(GpuOp::LogCamera {
+                base: *base,
+                log_side_slope: *log_side_slope,
+                log_side_offset: *log_side_offset,
+                lin_side_slope: *lin_side_slope,
+                lin_side_offset: *lin_side_offset,
+                lin_side_break: *lin_side_break,
+                linear_slope: *linear_slope,
+                forward: *forward,
+            }),
+            ProcessorOp::ExponentWithLinear {
+                gamma,
+                offset,
+                negative_style,
+                forward,
+            } => Some(GpuOp::ExponentWithLinear {
+                gamma: *gamma,
+                offset: *offset,
+                negative_style: *negative_style,
+                forward: *forward,
+            }),
         }
     }
 
@@ -483,6 +556,163 @@ impl GpuProcessor {
             }
             GpuOp::Lut1D { .. } | GpuOp::Lut3D { .. } => {
                 writeln!(code, "    // LUT ops require texture upload").unwrap();
+            }
+            GpuOp::LogAffine {
+                base,
+                log_side_slope,
+                log_side_offset,
+                lin_side_slope,
+                lin_side_offset,
+                forward,
+            } => {
+                let log_base = base.ln();
+                if *forward {
+                    // Lin -> Log: out = log_side_slope * log(lin_side_slope * x + lin_side_offset, base) + log_side_offset
+                    writeln!(code, "    color.rgb = vec3({:.8}, {:.8}, {:.8}) * color.rgb + vec3({:.8}, {:.8}, {:.8});",
+                        lin_side_slope[0], lin_side_slope[1], lin_side_slope[2],
+                        lin_side_offset[0], lin_side_offset[1], lin_side_offset[2]).unwrap();
+                    writeln!(code, "    color.rgb = max(color.rgb, vec3(1e-10));").unwrap();
+                    writeln!(code, "    color.rgb = vec3({:.8}, {:.8}, {:.8}) * (log(color.rgb) / {:.8}) + vec3({:.8}, {:.8}, {:.8});",
+                        log_side_slope[0], log_side_slope[1], log_side_slope[2],
+                        log_base,
+                        log_side_offset[0], log_side_offset[1], log_side_offset[2]).unwrap();
+                } else {
+                    // Log -> Lin: x = (base^((y - log_side_offset) / log_side_slope) - lin_side_offset) / lin_side_slope
+                    writeln!(code, "    color.rgb = (color.rgb - vec3({:.8}, {:.8}, {:.8})) / vec3({:.8}, {:.8}, {:.8});",
+                        log_side_offset[0], log_side_offset[1], log_side_offset[2],
+                        log_side_slope[0], log_side_slope[1], log_side_slope[2]).unwrap();
+                    writeln!(code, "    color.rgb = exp(color.rgb * {:.8});", log_base).unwrap();
+                    writeln!(code, "    color.rgb = (color.rgb - vec3({:.8}, {:.8}, {:.8})) / vec3({:.8}, {:.8}, {:.8});",
+                        lin_side_offset[0], lin_side_offset[1], lin_side_offset[2],
+                        lin_side_slope[0], lin_side_slope[1], lin_side_slope[2]).unwrap();
+                }
+            }
+            GpuOp::LogCamera {
+                base,
+                log_side_slope,
+                log_side_offset,
+                lin_side_slope,
+                lin_side_offset,
+                lin_side_break,
+                linear_slope,
+                forward,
+            } => {
+                let log_base = base.ln();
+                if *forward {
+                    // Piecewise: linear below break, log above
+                    // above break: out = log_side_slope * log(lin_side_slope * x + lin_side_offset, base) + log_side_offset
+                    // below break: out = linear_slope * x
+                    writeln!(code, "    {{ // LogCamera forward").unwrap();
+                    writeln!(code, "        vec3 brk = vec3({:.8}, {:.8}, {:.8});",
+                        lin_side_break[0], lin_side_break[1], lin_side_break[2]).unwrap();
+                    writeln!(code, "        vec3 lin_slope = vec3({:.8}, {:.8}, {:.8});",
+                        linear_slope[0], linear_slope[1], linear_slope[2]).unwrap();
+                    writeln!(code, "        vec3 t = vec3({:.8}, {:.8}, {:.8}) * color.rgb + vec3({:.8}, {:.8}, {:.8});",
+                        lin_side_slope[0], lin_side_slope[1], lin_side_slope[2],
+                        lin_side_offset[0], lin_side_offset[1], lin_side_offset[2]).unwrap();
+                    writeln!(code, "        vec3 log_val = vec3({:.8}, {:.8}, {:.8}) * (log(max(t, vec3(1e-10))) / {:.8}) + vec3({:.8}, {:.8}, {:.8});",
+                        log_side_slope[0], log_side_slope[1], log_side_slope[2],
+                        log_base,
+                        log_side_offset[0], log_side_offset[1], log_side_offset[2]).unwrap();
+                    writeln!(code, "        vec3 lin_val = lin_slope * color.rgb;").unwrap();
+                    writeln!(code, "        color.rgb = mix(lin_val, log_val, step(brk, color.rgb));").unwrap();
+                    writeln!(code, "    }}").unwrap();
+                } else {
+                    // Inverse: piecewise linear below, exp above
+                    writeln!(code, "    {{ // LogCamera inverse").unwrap();
+                    writeln!(code, "        vec3 brk = vec3({:.8}, {:.8}, {:.8});",
+                        lin_side_break[0], lin_side_break[1], lin_side_break[2]).unwrap();
+                    writeln!(code, "        vec3 lin_slope = vec3({:.8}, {:.8}, {:.8});",
+                        linear_slope[0], linear_slope[1], linear_slope[2]).unwrap();
+                    writeln!(code, "        vec3 log_brk = lin_slope * brk;").unwrap(); // break in log space
+                    writeln!(code, "        vec3 t = (color.rgb - vec3({:.8}, {:.8}, {:.8})) / vec3({:.8}, {:.8}, {:.8});",
+                        log_side_offset[0], log_side_offset[1], log_side_offset[2],
+                        log_side_slope[0], log_side_slope[1], log_side_slope[2]).unwrap();
+                    writeln!(code, "        vec3 exp_val = (exp(t * {:.8}) - vec3({:.8}, {:.8}, {:.8})) / vec3({:.8}, {:.8}, {:.8});",
+                        log_base,
+                        lin_side_offset[0], lin_side_offset[1], lin_side_offset[2],
+                        lin_side_slope[0], lin_side_slope[1], lin_side_slope[2]).unwrap();
+                    writeln!(code, "        vec3 lin_val = color.rgb / lin_slope;").unwrap();
+                    writeln!(code, "        color.rgb = mix(lin_val, exp_val, step(log_brk, color.rgb));").unwrap();
+                    writeln!(code, "    }}").unwrap();
+                }
+            }
+            GpuOp::ExponentWithLinear {
+                gamma,
+                offset,
+                negative_style,
+                forward,
+            } => {
+                // sRGB-style: out = (x+offset)^gamma for x >= break, linear below
+                // break point = offset / (gamma - 1)
+                // linear_slope = gamma * (break + offset)^(gamma-1)
+                let brk: [f32; 3] = std::array::from_fn(|i| {
+                    if gamma[i] > 1.0 { offset[i] / (gamma[i] - 1.0) } else { 0.0 }
+                });
+                let lin_slope: [f32; 3] = std::array::from_fn(|i| {
+                    gamma[i] * (brk[i] + offset[i]).powf(gamma[i] - 1.0)
+                });
+
+                if *forward {
+                    writeln!(code, "    {{ // ExponentWithLinear forward").unwrap();
+                    writeln!(code, "        vec3 brk = vec3({:.8}, {:.8}, {:.8});", brk[0], brk[1], brk[2]).unwrap();
+                    writeln!(code, "        vec3 g = vec3({:.8}, {:.8}, {:.8});", gamma[0], gamma[1], gamma[2]).unwrap();
+                    writeln!(code, "        vec3 off = vec3({:.8}, {:.8}, {:.8});", offset[0], offset[1], offset[2]).unwrap();
+                    writeln!(code, "        vec3 lin_s = vec3({:.8}, {:.8}, {:.8});", lin_slope[0], lin_slope[1], lin_slope[2]).unwrap();
+                    match negative_style {
+                        NegativeStyle::Clamp => {
+                            writeln!(code, "        vec3 c = max(color.rgb, vec3(0.0));").unwrap();
+                            writeln!(code, "        vec3 pow_val = pow(c + off, g);").unwrap();
+                            writeln!(code, "        vec3 lin_val = lin_s * c;").unwrap();
+                            writeln!(code, "        color.rgb = mix(lin_val, pow_val, step(brk, c));").unwrap();
+                        }
+                        NegativeStyle::Mirror => {
+                            writeln!(code, "        vec3 ac = abs(color.rgb);").unwrap();
+                            writeln!(code, "        vec3 pow_val = pow(ac + off, g);").unwrap();
+                            writeln!(code, "        vec3 lin_val = lin_s * ac;").unwrap();
+                            writeln!(code, "        color.rgb = sign(color.rgb) * mix(lin_val, pow_val, step(brk, ac));").unwrap();
+                        }
+                        NegativeStyle::PassThru => {
+                            writeln!(code, "        vec3 c = max(color.rgb, vec3(0.0));").unwrap();
+                            writeln!(code, "        vec3 pow_val = pow(c + off, g);").unwrap();
+                            writeln!(code, "        vec3 lin_val = lin_s * c;").unwrap();
+                            writeln!(code, "        vec3 pos = mix(lin_val, pow_val, step(brk, c));").unwrap();
+                            writeln!(code, "        color.rgb = mix(color.rgb, pos, step(vec3(0.0), color.rgb));").unwrap();
+                        }
+                    }
+                    writeln!(code, "    }}").unwrap();
+                } else {
+                    // Inverse: out = x^(1/gamma) - offset
+                    let inv_gamma: [f32; 3] = std::array::from_fn(|i| 1.0 / gamma[i]);
+                    let out_brk: [f32; 3] = std::array::from_fn(|i| lin_slope[i] * brk[i]);
+                    writeln!(code, "    {{ // ExponentWithLinear inverse").unwrap();
+                    writeln!(code, "        vec3 brk = vec3({:.8}, {:.8}, {:.8});", out_brk[0], out_brk[1], out_brk[2]).unwrap();
+                    writeln!(code, "        vec3 inv_g = vec3({:.8}, {:.8}, {:.8});", inv_gamma[0], inv_gamma[1], inv_gamma[2]).unwrap();
+                    writeln!(code, "        vec3 off = vec3({:.8}, {:.8}, {:.8});", offset[0], offset[1], offset[2]).unwrap();
+                    writeln!(code, "        vec3 lin_s = vec3({:.8}, {:.8}, {:.8});", lin_slope[0], lin_slope[1], lin_slope[2]).unwrap();
+                    match negative_style {
+                        NegativeStyle::Clamp => {
+                            writeln!(code, "        vec3 c = max(color.rgb, vec3(0.0));").unwrap();
+                            writeln!(code, "        vec3 pow_val = pow(c, inv_g) - off;").unwrap();
+                            writeln!(code, "        vec3 lin_val = c / lin_s;").unwrap();
+                            writeln!(code, "        color.rgb = mix(lin_val, pow_val, step(brk, c));").unwrap();
+                        }
+                        NegativeStyle::Mirror => {
+                            writeln!(code, "        vec3 ac = abs(color.rgb);").unwrap();
+                            writeln!(code, "        vec3 pow_val = pow(ac, inv_g) - off;").unwrap();
+                            writeln!(code, "        vec3 lin_val = ac / lin_s;").unwrap();
+                            writeln!(code, "        color.rgb = sign(color.rgb) * mix(lin_val, pow_val, step(brk, ac));").unwrap();
+                        }
+                        NegativeStyle::PassThru => {
+                            writeln!(code, "        vec3 c = max(color.rgb, vec3(0.0));").unwrap();
+                            writeln!(code, "        vec3 pow_val = pow(c, inv_g) - off;").unwrap();
+                            writeln!(code, "        vec3 lin_val = c / lin_s;").unwrap();
+                            writeln!(code, "        vec3 pos = mix(lin_val, pow_val, step(brk, c));").unwrap();
+                            writeln!(code, "        color.rgb = mix(color.rgb, pos, step(vec3(0.0), color.rgb));").unwrap();
+                        }
+                    }
+                    writeln!(code, "    }}").unwrap();
+                }
             }
         }
     }

@@ -707,6 +707,33 @@ pub enum ProcessorOp {
         highlight_start: f32,
         highlight_pivot: f32,
     },
+    /// LogAffine transform (OCIO v2).
+    LogAffine {
+        base: f32,
+        log_side_slope: [f32; 3],
+        log_side_offset: [f32; 3],
+        lin_side_slope: [f32; 3],
+        lin_side_offset: [f32; 3],
+        forward: bool,
+    },
+    /// LogCamera transform (ARRI LogC, Sony S-Log3, etc).
+    LogCamera {
+        base: f32,
+        log_side_slope: [f32; 3],
+        log_side_offset: [f32; 3],
+        lin_side_slope: [f32; 3],
+        lin_side_offset: [f32; 3],
+        lin_side_break: [f32; 3],
+        linear_slope: [f32; 3],
+        forward: bool,
+    },
+    /// Exponent with linear segment (sRGB, Rec.709 style).
+    ExponentWithLinear {
+        gamma: [f32; 4],
+        offset: [f32; 4],
+        negative_style: NegativeStyle,
+        forward: bool,
+    },
 }
 
 impl ProcessorOp {
@@ -1317,6 +1344,113 @@ impl Processor {
                     highlight_start: gt.highlight_start as f32,
                     highlight_pivot: gt.highlight_pivot as f32,
                 });
+            }
+
+            Transform::LogAffine(la) => {
+                let dir = if direction == TransformDirection::Inverse {
+                    la.direction.inverse()
+                } else {
+                    la.direction
+                };
+
+                self.ops.push(ProcessorOp::LogAffine {
+                    base: la.base as f32,
+                    log_side_slope: la.log_side_slope.map(|v| v as f32),
+                    log_side_offset: la.log_side_offset.map(|v| v as f32),
+                    lin_side_slope: la.lin_side_slope.map(|v| v as f32),
+                    lin_side_offset: la.lin_side_offset.map(|v| v as f32),
+                    forward: dir == TransformDirection::Forward,
+                });
+            }
+
+            Transform::LogCamera(lc) => {
+                let dir = if direction == TransformDirection::Inverse {
+                    lc.direction.inverse()
+                } else {
+                    lc.direction
+                };
+
+                // Calculate linear slope for continuity at break point
+                // linear_slope = log_side_slope * lin_side_slope / (ln(base) * (lin_side_break * lin_side_slope + lin_side_offset))
+                let linear_slope: [f32; 3] = lc.linear_slope.map(|arr| arr.map(|v| v as f32)).unwrap_or_else(|| {
+                    let ln_base = (lc.base as f64).ln();
+                    [
+                        ((lc.log_side_slope[0] * lc.lin_side_slope[0]) / 
+                            (ln_base * (lc.lin_side_break[0] * lc.lin_side_slope[0] + lc.lin_side_offset[0]))) as f32,
+                        ((lc.log_side_slope[1] * lc.lin_side_slope[1]) / 
+                            (ln_base * (lc.lin_side_break[1] * lc.lin_side_slope[1] + lc.lin_side_offset[1]))) as f32,
+                        ((lc.log_side_slope[2] * lc.lin_side_slope[2]) / 
+                            (ln_base * (lc.lin_side_break[2] * lc.lin_side_slope[2] + lc.lin_side_offset[2]))) as f32,
+                    ]
+                });
+
+                self.ops.push(ProcessorOp::LogCamera {
+                    base: lc.base as f32,
+                    log_side_slope: lc.log_side_slope.map(|v| v as f32),
+                    log_side_offset: lc.log_side_offset.map(|v| v as f32),
+                    lin_side_slope: lc.lin_side_slope.map(|v| v as f32),
+                    lin_side_offset: lc.lin_side_offset.map(|v| v as f32),
+                    lin_side_break: lc.lin_side_break.map(|v| v as f32),
+                    linear_slope,
+                    forward: dir == TransformDirection::Forward,
+                });
+            }
+
+            Transform::ExponentWithLinear(ewl) => {
+                let dir = if direction == TransformDirection::Inverse {
+                    ewl.direction.inverse()
+                } else {
+                    ewl.direction
+                };
+
+                self.ops.push(ProcessorOp::ExponentWithLinear {
+                    gamma: ewl.gamma.map(|v| v as f32),
+                    offset: ewl.offset.map(|v| v as f32),
+                    negative_style: ewl.negative_style,
+                    forward: dir == TransformDirection::Forward,
+                });
+            }
+
+            Transform::Lut1D(lut) => {
+                let dir = if direction == TransformDirection::Inverse {
+                    lut.direction.inverse()
+                } else {
+                    lut.direction
+                };
+                let forward = dir == TransformDirection::Forward;
+                
+                // Convert inline LUT to vfx_lut format
+                let vfx_lut = vfx_lut::Lut1D {
+                    r: lut.red.clone(),
+                    g: lut.green.clone(),
+                    b: lut.blue.clone(),
+                    domain_min: lut.input_min,
+                    domain_max: lut.input_max,
+                };
+                self.compile_lut1d(&vfx_lut, forward);
+            }
+
+            Transform::Lut3D(lut) => {
+                let dir = if direction == TransformDirection::Inverse {
+                    lut.direction.inverse()
+                } else {
+                    lut.direction
+                };
+                let forward = dir == TransformDirection::Forward;
+                
+                // Convert inline LUT to vfx_lut format
+                let vfx_lut = vfx_lut::Lut3D {
+                    size: lut.size,
+                    data: lut.data.clone(),
+                    domain_min: lut.domain_min,
+                    domain_max: lut.domain_max,
+                    interpolation: match lut.interpolation {
+                        Interpolation::Nearest => vfx_lut::Interpolation::Nearest,
+                        Interpolation::Linear => vfx_lut::Interpolation::Linear,
+                        Interpolation::Tetrahedral | Interpolation::Best => vfx_lut::Interpolation::Tetrahedral,
+                    },
+                };
+                self.compile_lut3d(&vfx_lut, lut.interpolation, forward);
             }
 
             _ => {
@@ -2018,6 +2152,130 @@ impl Processor {
                                 pixel[ch] = c0 + (c1 - c0) * fb;
                             }
                         }
+                    }
+                }
+
+                ProcessorOp::LogAffine { base, log_side_slope, log_side_offset, lin_side_slope, lin_side_offset, forward } => {
+                    // LogAffine formula:
+                    // Forward: out = log_side_slope * log(lin_side_slope * x + lin_side_offset, base) + log_side_offset
+                    // Inverse: out = (pow(base, (x - log_side_offset) / log_side_slope) - lin_side_offset) / lin_side_slope
+                    let log_base = base.ln();
+                    
+                    for (i, v) in pixel.iter_mut().enumerate() {
+                        let ch = i.min(2);
+                        if *forward {
+                            let lin = lin_side_slope[ch] * *v + lin_side_offset[ch];
+                            if lin > 0.0 {
+                                *v = log_side_slope[ch] * lin.ln() / log_base + log_side_offset[ch];
+                            } else {
+                                *v = log_side_offset[ch]; // Clamp to minimum
+                            }
+                        } else {
+                            let exp_arg = (*v - log_side_offset[ch]) / log_side_slope[ch];
+                            let lin = base.powf(exp_arg) - lin_side_offset[ch];
+                            *v = lin / lin_side_slope[ch];
+                        }
+                    }
+                }
+
+                ProcessorOp::LogCamera { base, log_side_slope, log_side_offset, lin_side_slope, lin_side_offset, lin_side_break, linear_slope, forward } => {
+                    // LogCamera formula (piecewise):
+                    // Forward: if x >= lin_side_break:
+                    //            out = log_side_slope * log(lin_side_slope * x + lin_side_offset, base) + log_side_offset
+                    //          else:
+                    //            out = linear_slope * x + linear_offset (calculated from continuity)
+                    let log_base = base.ln();
+                    
+                    for (i, v) in pixel.iter_mut().enumerate() {
+                        let ch = i.min(2);
+                        if *forward {
+                            if *v >= lin_side_break[ch] {
+                                // Log region
+                                let lin = lin_side_slope[ch] * *v + lin_side_offset[ch];
+                                if lin > 0.0 {
+                                    *v = log_side_slope[ch] * lin.ln() / log_base + log_side_offset[ch];
+                                }
+                            } else {
+                                // Linear region
+                                // Calculate linear offset from continuity at break point
+                                let break_lin = lin_side_slope[ch] * lin_side_break[ch] + lin_side_offset[ch];
+                                let break_log = if break_lin > 0.0 {
+                                    log_side_slope[ch] * break_lin.ln() / log_base + log_side_offset[ch]
+                                } else {
+                                    log_side_offset[ch]
+                                };
+                                let linear_offset = break_log - linear_slope[ch] * lin_side_break[ch];
+                                *v = linear_slope[ch] * *v + linear_offset;
+                            }
+                        } else {
+                            // Inverse: determine which region based on output
+                            let break_lin = lin_side_slope[ch] * lin_side_break[ch] + lin_side_offset[ch];
+                            let break_log = if break_lin > 0.0 {
+                                log_side_slope[ch] * break_lin.ln() / log_base + log_side_offset[ch]
+                            } else {
+                                log_side_offset[ch]
+                            };
+                            
+                            if *v >= break_log {
+                                // Inverse log region
+                                let exp_arg = (*v - log_side_offset[ch]) / log_side_slope[ch];
+                                let lin = base.powf(exp_arg) - lin_side_offset[ch];
+                                *v = lin / lin_side_slope[ch];
+                            } else {
+                                // Inverse linear region
+                                let linear_offset = break_log - linear_slope[ch] * lin_side_break[ch];
+                                *v = (*v - linear_offset) / linear_slope[ch];
+                            }
+                        }
+                    }
+                }
+
+                ProcessorOp::ExponentWithLinear { gamma, offset, negative_style, forward } => {
+                    // ExponentWithLinear (sRGB/Rec.709 style):
+                    // Forward: if x >= break: out = (x + offset)^gamma - offset^gamma
+                    //          else: out = linear_slope * x
+                    // The break point and linear slope are derived from continuity
+                    
+                    for (i, v) in pixel.iter_mut().enumerate() {
+                        let g = gamma[i];
+                        let off = offset[i];
+                        
+                        // Handle negatives based on style
+                        let (sign, abs_v) = if *v < 0.0 {
+                            match negative_style {
+                                NegativeStyle::Clamp => { *v = 0.0; continue; }
+                                NegativeStyle::Mirror => (-1.0, -(*v)),
+                                NegativeStyle::PassThru => { continue; }
+                            }
+                        } else {
+                            (1.0, *v)
+                        };
+                        
+                        // Calculate break point where derivative matches
+                        // d/dx[(x + off)^g] = g * (x + off)^(g-1)
+                        // At break: linear_slope = g * (break + off)^(g-1)
+                        // For continuity: break * linear_slope = (break + off)^g - off^g
+                        let break_point = off * (g - 1.0) / (1.0 - g * off.powf(g - 1.0)).max(1e-10);
+                        let break_point = break_point.max(0.0);
+                        let linear_slope = g * (break_point + off).powf(g - 1.0);
+                        
+                        let result = if *forward {
+                            if abs_v >= break_point {
+                                (abs_v + off).powf(g) - off.powf(g)
+                            } else {
+                                abs_v * linear_slope
+                            }
+                        } else {
+                            // Inverse
+                            let break_out = (break_point + off).powf(g) - off.powf(g);
+                            if abs_v >= break_out {
+                                (abs_v + off.powf(g)).powf(1.0 / g) - off
+                            } else {
+                                abs_v / linear_slope
+                            }
+                        };
+                        
+                        *v = sign * result;
                     }
                 }
             }
