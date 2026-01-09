@@ -172,20 +172,20 @@ OIIO supports these via plugins, we can add if needed:
 
 ## 7. Implementation Priority
 
-### Phase 1: Complete ImageBufAlgo (CURRENT)
-1. [ ] Add `bluenoise_image()`
-2. [ ] Add `copy()` 
-3. [ ] Add `text_size()`
-4. [ ] Add `scale()`
-5. [ ] Add `nonzero_region()`
-6. [ ] Add `computePixelHashSHA1()` (or `pixel_hash_sha256()` for modern hash)
-7. [ ] Add `compare_Yee()` (perceptual comparison)
-8. [ ] Add `fixNonFinite()` (as `fix_non_finite()`)
+### Phase 1: Complete ImageBufAlgo (DONE)
+1. [x] Add `bluenoise_image()` - Blue noise texture generation
+2. [x] Add `copy()` - Copy with type conversion
+3. [x] Add `text_size()` - Text bounding box (requires `text` feature)
+4. [x] Add `scale()` - Scale image by factor
+5. [x] Add `nonzero_region()` - Find ROI of non-zero pixels
+6. [x] Add `pixel_hash()` - FNV-1a hash of pixel data
+7. [x] Add `compare_yee()` - Perceptual comparison (Yee algorithm)
+8. [x] Add `fix_non_finite()` - Replace NaN/Inf with valid values
 
-### Phase 2: Formats
-1. [ ] PSD read/write (layers, masks, blend modes)
-2. [ ] DDS read/write (DXT1/3/5, BC1-7)
-3. [ ] KTX2 read/write (ASTC, ETC2, BC)
+### Phase 2: Formats (DONE)
+1. [x] PSD read (layers, masks) - `psd` feature
+2. [x] DDS read (BC1-BC7 decompression) - `dds` feature
+3. [x] KTX2 read (uncompressed, f16/f32) - `ktx` feature
 
 ### Phase 3: OCIO Enhancement
 1. [ ] Complete config enumeration API
