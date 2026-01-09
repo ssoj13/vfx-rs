@@ -53,8 +53,8 @@ pub mod fillholes;
 pub mod text;
 
 // Re-export commonly used functions
-pub use patterns::{zero, fill, checker, noise};
-pub use channels::{channels, channel_append, channel_sum, extract_channel, flatten, get_alpha};
+pub use patterns::{zero, fill, checker, noise, bluenoise_image};
+pub use channels::{channels, channel_append, channel_sum, extract_channel, flatten, get_alpha, copy, copy_into};
 pub use geometry::{
     crop, cut, flip, flop, transpose,
     rotate90, rotate180, rotate270,
@@ -63,7 +63,7 @@ pub use geometry::{
     reorient, reorient_auto,
     ResizeFilter,
 };
-pub use arithmetic::{add, sub, mul, div, abs, absdiff, pow, clamp, invert, over, max, min, mad, normalize, normalize_into};
+pub use arithmetic::{add, sub, mul, div, abs, absdiff, pow, clamp, invert, over, max, min, mad, normalize, normalize_into, scale, scale_into};
 
 // Color operations
 pub use color::{
@@ -90,11 +90,15 @@ pub use composite::{
 pub use stats::{
     compute_pixel_stats, PixelStats,
     compare, compare_relative, CompareResults,
+    compare_yee, // Perceptual comparison
     is_constant_color, is_constant_channel, is_monochrome,
     histogram, Histogram,
     maxchan, minchan,
     color_range_check, RangeCheckResult,
     color_count, unique_color_count,
+    nonzero_region,
+    fix_non_finite, fix_non_finite_into, NonFiniteMode,
+    pixel_hash,
 };
 
 // OCIO color conversion operations
@@ -172,6 +176,7 @@ pub use fillholes::{
 #[cfg(feature = "text")]
 pub use text::{
     render_text, render_text_into,
+    text_size,
     TextStyle, TextAlign,
 };
 

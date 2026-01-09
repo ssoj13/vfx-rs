@@ -29,6 +29,9 @@ avif = ["dep:image"]
 # JPEG2000 (requires OpenJPEG system library)
 jp2 = ["dep:jpeg2k"]
 
+# PSD/PSB format (Adobe Photoshop)
+psd = ["dep:psd"]
+
 # HEIF/HEIC support (requires system libheif >= 1.17)
 # 
 # Windows (vcpkg):
@@ -91,6 +94,9 @@ image = { version = "0.25", optional = true, default-features = false, features 
 
 # JPEG2000 support (requires OpenJPEG)
 jpeg2k = { version = "0.8", optional = true }
+
+# PSD support
+psd = { version = "0.3", optional = true }
 
 # Parallel iteration
 rayon = { version = "1.10", optional = true }

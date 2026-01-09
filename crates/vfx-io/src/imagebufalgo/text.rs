@@ -359,6 +359,63 @@ pub fn render_text_into(
     }
 }
 
+/// Returns the bounding box size of text without rendering.
+///
+/// This matches OIIO's `text_size()` function.
+///
+/// # Arguments
+///
+/// * `text` - Text to measure
+/// * `font_size` - Font size in pixels
+/// * `font` - Optional font name (defaults to system sans-serif)
+///
+/// # Returns
+///
+/// Tuple of (width, height) in pixels.
+///
+/// # Example
+///
+/// ```ignore
+/// use vfx_io::imagebufalgo::text_size;
+///
+/// let (width, height) = text_size("Hello World", 24.0, None);
+/// println!("Text dimensions: {}x{}", width, height);
+/// ```
+pub fn text_size(text: &str, font_size: f32, font: Option<&str>) -> (u32, u32) {
+    let mut font_system = FONT_SYSTEM.lock().unwrap();
+
+    // Set up font attributes
+    let family = match font {
+        Some(name) if !name.is_empty() => Family::Name(name),
+        _ => Family::SansSerif,
+    };
+
+    let attrs = TextAttrs::new().family(family);
+    let metrics = Metrics::new(font_size, font_size * 1.2);
+
+    // Create a buffer for measuring
+    let mut buffer = Buffer::new(&mut font_system, metrics);
+    buffer.set_size(&mut font_system, Some(10000.0), None);
+    buffer.set_text(&mut font_system, text, &attrs, Shaping::Advanced);
+    buffer.shape_until_scroll(&mut font_system, false);
+
+    // Calculate bounds by iterating layout runs
+    let mut max_width = 0.0f32;
+    let mut line_count = 0u32;
+
+    for run in buffer.layout_runs() {
+        max_width = max_width.max(run.line_w);
+        line_count = line_count.max(run.line_i as u32 + 1);
+    }
+    let total_height = line_count as f32 * font_size * 1.2;
+
+    // Account for minimum size
+    let width = (max_width.ceil() as u32).max(1);
+    let height = (total_height.ceil() as u32).max(1);
+
+    (width, height)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

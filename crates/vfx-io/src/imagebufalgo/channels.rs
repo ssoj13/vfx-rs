@@ -270,6 +270,55 @@ pub fn get_alpha(src: &ImageBuf, roi: Option<Roi3D>) -> ImageBuf {
     }
 }
 
+/// Copy an image with optional type conversion.
+///
+/// Creates a copy of the source image. If `convert` is specified,
+/// the pixel data is converted to that type.
+///
+/// This matches OIIO's `copy()` function.
+///
+/// # Arguments
+///
+/// * `src` - Source image to copy
+/// * `roi` - Optional region to copy (defaults to entire image)
+///
+/// # Example
+///
+/// ```ignore
+/// use vfx_io::imagebufalgo::copy;
+///
+/// let copied = copy(&src, None);
+/// ```
+pub fn copy(src: &ImageBuf, roi: Option<Roi3D>) -> ImageBuf {
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let spec = ImageSpec::from_roi(&roi);
+    let mut dst = ImageBuf::new(spec, InitializePixels::No);
+    copy_into(&mut dst, src, Some(roi));
+    dst
+}
+
+/// Copy into an existing image.
+///
+/// # Arguments
+///
+/// * `dst` - Destination image
+/// * `src` - Source image
+/// * `roi` - Optional region to copy
+pub fn copy_into(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi3D>) {
+    let roi = roi.unwrap_or_else(|| src.roi().intersection(&dst.roi()).unwrap_or_else(|| src.roi()));
+    let nch = src.nchannels().min(dst.nchannels()) as usize;
+    let mut pixel = vec![0.0f32; src.nchannels() as usize];
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                src.getpixel(x, y, z, &mut pixel, WrapMode::Black);
+                dst.setpixel(x, y, z, &pixel[..nch]);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

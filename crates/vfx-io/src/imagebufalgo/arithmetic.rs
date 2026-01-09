@@ -777,6 +777,63 @@ pub fn normalize_into(dst: &mut ImageBuf, src: &ImageBuf, in_center: f32, out_ce
     }
 }
 
+/// Scale image A by per-channel scale factors from image B.
+///
+/// This is distinct from `mul()` in that it's specifically designed for
+/// per-channel scaling operations where B provides scale factors.
+///
+/// This matches OIIO's `scale()` function.
+///
+/// # Arguments
+///
+/// * `a` - Source image
+/// * `b` - Scale factor image (must have same or compatible channel count)
+/// * `roi` - Optional region of interest
+///
+/// # Example
+///
+/// ```ignore
+/// use vfx_io::imagebufalgo::scale;
+///
+/// // Scale each channel independently
+/// let scaled = scale(&image, &scale_factors, None);
+/// ```
+pub fn scale(a: &ImageBuf, b: &ImageBuf, roi: Option<Roi3D>) -> ImageBuf {
+    let roi = roi.unwrap_or_else(|| a.roi().intersection(&b.roi()).unwrap_or_else(|| a.roi()));
+    let spec = ImageSpec::from_roi(&roi);
+    let mut dst = ImageBuf::new(spec, InitializePixels::No);
+    scale_into(&mut dst, a, b, Some(roi));
+    dst
+}
+
+/// Scale image into existing buffer.
+pub fn scale_into(dst: &mut ImageBuf, a: &ImageBuf, b: &ImageBuf, roi: Option<Roi3D>) {
+    let roi = roi.unwrap_or_else(|| {
+        a.roi().intersection(&b.roi())
+            .and_then(|r| r.intersection(&dst.roi()))
+            .unwrap_or_else(|| a.roi())
+    });
+    let nch = a.nchannels().min(b.nchannels()).min(dst.nchannels()) as usize;
+    let mut pixel_a = vec![0.0f32; a.nchannels() as usize];
+    let mut pixel_b = vec![0.0f32; b.nchannels() as usize];
+    let mut result = vec![0.0f32; nch];
+
+    for z in roi.zbegin..roi.zend {
+        for y in roi.ybegin..roi.yend {
+            for x in roi.xbegin..roi.xend {
+                a.getpixel(x, y, z, &mut pixel_a, WrapMode::Black);
+                b.getpixel(x, y, z, &mut pixel_b, WrapMode::Black);
+
+                for c in 0..nch {
+                    result[c] = pixel_a[c] * pixel_b[c];
+                }
+
+                dst.setpixel(x, y, z, &result);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

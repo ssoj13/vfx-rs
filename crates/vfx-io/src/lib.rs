@@ -140,6 +140,10 @@ pub mod avif;
 #[cfg(feature = "jp2")]
 pub mod jp2;
 
+/// Adobe Photoshop PSD/PSB format.
+#[cfg(feature = "psd")]
+pub mod psd;
+
 /// ARRI Raw format (.ari) - requires ARRI SDK for decode.
 pub mod arriraw;
 /// RED REDCODE format (.r3d) - requires RED SDK for decode.
