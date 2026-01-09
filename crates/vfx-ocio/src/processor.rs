@@ -589,7 +589,7 @@ pub enum OptimizationLevel {
 #[derive(Debug)]
 pub struct Processor {
     /// Compiled operation list.
-    ops: Vec<Op>,
+    ops: Vec<ProcessorOp>,
     /// Input bit depth hint.
     input_bit_depth: BitDepth,
     /// Output bit depth hint.
@@ -604,7 +604,8 @@ pub use vfx_core::BitDepth;
 
 /// Internal operation type.
 #[derive(Debug, Clone)]
-pub(crate) enum Op {
+#[allow(missing_docs)]
+pub enum ProcessorOp {
     /// 4x4 matrix + offset.
     Matrix {
         matrix: [f32; 16],
@@ -708,11 +709,11 @@ pub(crate) enum Op {
     },
 }
 
-impl Op {
+impl ProcessorOp {
     /// Returns true if this operation is an identity (no-op).
     pub fn is_identity(&self) -> bool {
         match self {
-            Op::Matrix { matrix, offset } => {
+            ProcessorOp::Matrix { matrix, offset } => {
                 // Identity matrix check
                 let identity = [
                     1.0, 0.0, 0.0, 0.0,
@@ -725,27 +726,27 @@ impl Op {
                 let is_zero_offset = offset.iter().all(|v| v.abs() < 1e-6);
                 is_identity_matrix && is_zero_offset
             }
-            Op::Exponent { value, .. } => {
+            ProcessorOp::Exponent { value, .. } => {
                 value.iter().all(|v| (*v - 1.0).abs() < 1e-6)
             }
-            Op::Cdl { slope, offset, power, saturation } => {
+            ProcessorOp::Cdl { slope, offset, power, saturation } => {
                 slope.iter().all(|v| (*v - 1.0).abs() < 1e-6)
                     && offset.iter().all(|v| v.abs() < 1e-6)
                     && power.iter().all(|v| (*v - 1.0).abs() < 1e-6)
                     && (*saturation - 1.0).abs() < 1e-6
             }
-            Op::Range { scale, offset, clamp_min, clamp_max } => {
+            ProcessorOp::Range { scale, offset, clamp_min, clamp_max } => {
                 (*scale - 1.0).abs() < 1e-6
                     && offset.abs() < 1e-6
                     && clamp_min.is_none()
                     && clamp_max.is_none()
             }
-            Op::ExposureContrast { exposure, contrast, gamma, .. } => {
+            ProcessorOp::ExposureContrast { exposure, contrast, gamma, .. } => {
                 exposure.abs() < 1e-6
                     && (*contrast - 1.0).abs() < 1e-6
                     && (*gamma - 1.0).abs() < 1e-6
             }
-            Op::GradingPrimary { lift, gamma, gain, offset, exposure, contrast, saturation, .. } => {
+            ProcessorOp::GradingPrimary { lift, gamma, gain, offset, exposure, contrast, saturation, .. } => {
                 lift.iter().all(|v| v.abs() < 1e-6)
                     && gamma.iter().all(|v| (*v - 1.0).abs() < 1e-6)
                     && gain.iter().all(|v| (*v - 1.0).abs() < 1e-6)
@@ -852,7 +853,7 @@ impl Processor {
         let mut pending_matrix: Option<([f32; 16], [f32; 4])> = None;
 
         for op in self.ops.drain(..) {
-            if let Op::Matrix { matrix, offset } = &op {
+            if let ProcessorOp::Matrix { matrix, offset } = &op {
                 if let Some((prev_m, prev_o)) = pending_matrix.take() {
                     // Combine: new_m * prev_m, new_m * prev_o + new_o
                     let combined_m = Self::mat4_mul(matrix, &prev_m);
@@ -870,7 +871,7 @@ impl Processor {
             } else {
                 // Flush any pending matrix first
                 if let Some((m, o)) = pending_matrix.take() {
-                    result.push(Op::Matrix { matrix: m, offset: o });
+                    result.push(ProcessorOp::Matrix { matrix: m, offset: o });
                 }
                 result.push(op);
             }
@@ -878,7 +879,7 @@ impl Processor {
 
         // Flush final pending matrix
         if let Some((m, o)) = pending_matrix {
-            result.push(Op::Matrix { matrix: m, offset: o });
+            result.push(ProcessorOp::Matrix { matrix: m, offset: o });
         }
 
         self.ops = result;
@@ -947,7 +948,7 @@ impl Processor {
                     (m.matrix.map(|v| v as f32), m.offset.map(|v| v as f32))
                 };
                 
-                self.ops.push(Op::Matrix { matrix, offset });
+                self.ops.push(ProcessorOp::Matrix { matrix, offset });
             }
 
             Transform::Cdl(cdl) => {
@@ -958,7 +959,7 @@ impl Processor {
                 };
 
                 if dir == TransformDirection::Forward {
-                    self.ops.push(Op::Cdl {
+                    self.ops.push(ProcessorOp::Cdl {
                         slope: cdl.slope.map(|v| v as f32),
                         offset: cdl.offset.map(|v| v as f32),
                         power: cdl.power.map(|v| v as f32),
@@ -983,7 +984,7 @@ impl Processor {
                     ];
                     let inv_sat = 1.0 / cdl.saturation as f32;
                     
-                    self.ops.push(Op::Cdl {
+                    self.ops.push(ProcessorOp::Cdl {
                         slope: inv_slope,
                         offset: inv_offset,
                         power: inv_power,
@@ -1010,7 +1011,7 @@ impl Processor {
                     exp.value.map(|v| v as f32)
                 };
 
-                self.ops.push(Op::Exponent {
+                self.ops.push(ProcessorOp::Exponent {
                     value,
                     negative_style: exp.negative_style,
                 });
@@ -1023,7 +1024,7 @@ impl Processor {
                     log.direction
                 };
 
-                self.ops.push(Op::Log {
+                self.ops.push(ProcessorOp::Log {
                     base: log.base as f32,
                     forward: dir == TransformDirection::Forward,
                 });
@@ -1058,7 +1059,7 @@ impl Processor {
                     (1.0, 0.0, None, None)
                 };
 
-                self.ops.push(Op::Range {
+                self.ops.push(ProcessorOp::Range {
                     scale,
                     offset,
                     clamp_min,
@@ -1155,7 +1156,7 @@ impl Processor {
                     _ => TransferStyle::Linear,
                 };
 
-                self.ops.push(Op::Transfer {
+                self.ops.push(ProcessorOp::Transfer {
                     style,
                     forward: dir == TransformDirection::Forward,
                 });
@@ -1175,7 +1176,7 @@ impl Processor {
                     (ec.exposure as f32, ec.contrast as f32, ec.gamma as f32)
                 };
 
-                self.ops.push(Op::ExposureContrast {
+                self.ops.push(ProcessorOp::ExposureContrast {
                     exposure,
                     contrast,
                     gamma,
@@ -1191,7 +1192,7 @@ impl Processor {
                     ff.direction
                 };
 
-                self.ops.push(Op::FixedFunction {
+                self.ops.push(ProcessorOp::FixedFunction {
                     style: ff.style,
                     params: ff.params.iter().map(|&v| v as f32).collect(),
                     forward: dir == TransformDirection::Forward,
@@ -1205,7 +1206,7 @@ impl Processor {
                     alloc.direction
                 };
 
-                self.ops.push(Op::Allocation {
+                self.ops.push(ProcessorOp::Allocation {
                     allocation: alloc.allocation,
                     vars: alloc.vars.iter().map(|&v| v as f32).collect(),
                     forward: dir == TransformDirection::Forward,
@@ -1243,7 +1244,7 @@ impl Processor {
                         )
                     };
 
-                self.ops.push(Op::GradingPrimary {
+                self.ops.push(ProcessorOp::GradingPrimary {
                     lift,
                     gamma,
                     gain,
@@ -1270,7 +1271,7 @@ impl Processor {
                     lut
                 };
 
-                self.ops.push(Op::GradingRgbCurve {
+                self.ops.push(ProcessorOp::GradingRgbCurve {
                     red_lut: bake_curve(&gc.red),
                     green_lut: bake_curve(&gc.green),
                     blue_lut: bake_curve(&gc.blue),
@@ -1305,7 +1306,7 @@ impl Processor {
                         )
                     };
 
-                self.ops.push(Op::GradingTone {
+                self.ops.push(ProcessorOp::GradingTone {
                     shadows,
                     midtones,
                     highlights,
@@ -1326,7 +1327,7 @@ impl Processor {
         Ok(())
     }
 
-    /// Compiles a 1D LUT into Op::Lut1d.
+    /// Compiles a 1D LUT into ProcessorOp::Lut1d.
     fn compile_lut1d(&mut self, lut: &vfx_lut::Lut1D, forward: bool) {
         let size = lut.r.len();
         let channels = if lut.g.is_some() { 3 } else { 1 };
@@ -1353,7 +1354,7 @@ impl Processor {
             invert_lut1d(&data, size, channels)
         };
         
-        self.ops.push(Op::Lut1d {
+        self.ops.push(ProcessorOp::Lut1d {
             lut: lut_data,
             size,
             channels,
@@ -1361,7 +1362,7 @@ impl Processor {
         });
     }
 
-    /// Compiles a 3D LUT into Op::Lut3d.
+    /// Compiles a 3D LUT into ProcessorOp::Lut3d.
     fn compile_lut3d(&mut self, lut: &vfx_lut::Lut3D, interp: Interpolation, forward: bool) {
         // Flatten Vec<[f32; 3]> to Vec<f32>
         let flat_data: Vec<f32> = lut.data.iter()
@@ -1375,7 +1376,7 @@ impl Processor {
             invert_lut3d(&flat_data, lut.size, lut.domain_min, lut.domain_max)
         };
         
-        self.ops.push(Op::Lut3d {
+        self.ops.push(ProcessorOp::Lut3d {
             lut: lut_data,
             size: lut.size,
             interp,
@@ -1412,7 +1413,7 @@ impl Processor {
                         off4[2] = values[11];
                     }
                     
-                    self.ops.push(Op::Matrix {
+                    self.ops.push(ProcessorOp::Matrix {
                         matrix: m16,
                         offset: off4,
                     });
@@ -1433,7 +1434,7 @@ impl Processor {
                     // Use first channel for scalar ops (simplified)
                     let scale = (rp.max_out[0] - rp.min_out[0]) / (rp.max_in[0] - rp.min_in[0]);
                     let offset = rp.min_out[0] - rp.min_in[0] * scale;
-                    self.ops.push(Op::Range {
+                    self.ops.push(ProcessorOp::Range {
                         scale,
                         offset,
                         clamp_min: if rp.clamp { Some(rp.min_out[0]) } else { None },
@@ -1441,7 +1442,7 @@ impl Processor {
                     });
                 }
                 vfx_lut::ProcessNode::Cdl(cdl) => {
-                    self.ops.push(Op::Cdl {
+                    self.ops.push(ProcessorOp::Cdl {
                         slope: cdl.slope,
                         offset: cdl.offset,
                         power: cdl.power,
@@ -1449,13 +1450,13 @@ impl Processor {
                     });
                 }
                 vfx_lut::ProcessNode::Exponent(exp) => {
-                    self.ops.push(Op::Exponent {
+                    self.ops.push(ProcessorOp::Exponent {
                         value: [exp.exponent[0], exp.exponent[1], exp.exponent[2], 1.0],
                         negative_style: NegativeStyle::Clamp,
                     });
                 }
                 vfx_lut::ProcessNode::Log(log) => {
-                    self.ops.push(Op::Log {
+                    self.ops.push(ProcessorOp::Log {
                         base: log.base,
                         forward,
                     });
@@ -1484,14 +1485,14 @@ impl Processor {
     fn apply_one_rgb(&self, pixel: &mut [f32; 3]) {
         for op in &self.ops {
             match op {
-                Op::Matrix { matrix, offset } => {
+                ProcessorOp::Matrix { matrix, offset } => {
                     let [r, g, b] = *pixel;
                     pixel[0] = r * matrix[0] + g * matrix[1] + b * matrix[2] + offset[0];
                     pixel[1] = r * matrix[4] + g * matrix[5] + b * matrix[6] + offset[1];
                     pixel[2] = r * matrix[8] + g * matrix[9] + b * matrix[10] + offset[2];
                 }
 
-                Op::Cdl { slope, offset, power, saturation } => {
+                ProcessorOp::Cdl { slope, offset, power, saturation } => {
                     // Apply SOP
                     pixel[0] = (pixel[0] * slope[0] + offset[0]).max(0.0).powf(power[0]);
                     pixel[1] = (pixel[1] * slope[1] + offset[1]).max(0.0).powf(power[1]);
@@ -1506,7 +1507,7 @@ impl Processor {
                     }
                 }
 
-                Op::Exponent { value, negative_style } => {
+                ProcessorOp::Exponent { value, negative_style } => {
                     for (i, v) in pixel.iter_mut().enumerate() {
                         match negative_style {
                             NegativeStyle::Clamp => {
@@ -1524,7 +1525,7 @@ impl Processor {
                     }
                 }
 
-                Op::Log { base, forward } => {
+                ProcessorOp::Log { base, forward } => {
                     if *forward {
                         // Linear to log
                         for v in pixel.iter_mut() {
@@ -1538,7 +1539,7 @@ impl Processor {
                     }
                 }
 
-                Op::Range { scale, offset, clamp_min, clamp_max } => {
+                ProcessorOp::Range { scale, offset, clamp_min, clamp_max } => {
                     for v in pixel.iter_mut() {
                         *v = *v * scale + offset;
                         if let Some(min) = clamp_min {
@@ -1550,7 +1551,7 @@ impl Processor {
                     }
                 }
 
-                Op::Lut1d { lut, size, channels, domain } => {
+                ProcessorOp::Lut1d { lut, size, channels, domain } => {
                     let scale = (*size - 1) as f32 / (domain[1] - domain[0]);
                     for (i, v) in pixel.iter_mut().enumerate() {
                         let idx = ((*v - domain[0]) * scale).clamp(0.0, (*size - 1) as f32);
@@ -1565,7 +1566,7 @@ impl Processor {
                     }
                 }
 
-                Op::ExposureContrast { exposure, contrast, gamma, pivot, style } => {
+                ProcessorOp::ExposureContrast { exposure, contrast, gamma, pivot, style } => {
                     // Apply exposure (in stops)
                     let exp_mult = 2.0_f32.powf(*exposure);
                     
@@ -1608,7 +1609,7 @@ impl Processor {
                     }
                 }
 
-                Op::FixedFunction { style, params, forward } => {
+                ProcessorOp::FixedFunction { style, params, forward } => {
                     match style {
                         FixedFunctionStyle::RgbToHsv => {
                             if *forward {
@@ -1791,7 +1792,7 @@ impl Processor {
                     }
                 }
 
-                Op::Allocation { allocation, vars, forward } => {
+                ProcessorOp::Allocation { allocation, vars, forward } => {
                     let min_val = vars.first().copied().unwrap_or(0.0);
                     let max_val = vars.get(1).copied().unwrap_or(1.0);
                     
@@ -1827,7 +1828,7 @@ impl Processor {
                     }
                 }
 
-                Op::GradingPrimary { lift, gamma, gain, offset, exposure, contrast, saturation, pivot, clamp_black, clamp_white } => {
+                ProcessorOp::GradingPrimary { lift, gamma, gain, offset, exposure, contrast, saturation, pivot, clamp_black, clamp_white } => {
                     // Apply exposure
                     let exp_mult = 2.0_f32.powf(*exposure);
                     
@@ -1873,7 +1874,7 @@ impl Processor {
                     }
                 }
 
-                Op::GradingRgbCurve { red_lut, green_lut, blue_lut, master_lut } => {
+                ProcessorOp::GradingRgbCurve { red_lut, green_lut, blue_lut, master_lut } => {
                     let lut_size = red_lut.len();
                     let scale = (lut_size - 1) as f32;
                     
@@ -1903,7 +1904,7 @@ impl Processor {
                     }
                 }
 
-                Op::GradingTone { shadows, midtones, highlights, whites, blacks, shadow_start, shadow_pivot, highlight_start, highlight_pivot } => {
+                ProcessorOp::GradingTone { shadows, midtones, highlights, whites, blacks, shadow_start, shadow_pivot, highlight_start, highlight_pivot } => {
                     // Compute tonal weights based on luminance
                     let luma = pixel[0] * 0.2126 + pixel[1] * 0.7152 + pixel[2] * 0.0722;
                     
@@ -1945,13 +1946,13 @@ impl Processor {
                     }
                 }
 
-                Op::Transfer { style, forward } => {
+                ProcessorOp::Transfer { style, forward } => {
                     for v in pixel.iter_mut() {
                         *v = apply_transfer(*v, *style, *forward);
                     }
                 }
 
-                Op::Lut3d { lut, size, interp, domain_min, domain_max } => {
+                ProcessorOp::Lut3d { lut, size, interp, domain_min, domain_max } => {
                     let size_f = (*size - 1) as f32;
                     let to_unit = |v: f32, min: f32, max: f32| {
                         let range = max - min;
@@ -2061,6 +2062,13 @@ impl Processor {
     #[inline]
     pub fn output_bit_depth(&self) -> BitDepth {
         self.output_bit_depth
+    }
+
+    /// Returns the internal operation list.
+    ///
+    /// Used by GPU processor for shader generation.
+    pub fn ops(&self) -> &[ProcessorOp] {
+        &self.ops
     }
 }
 

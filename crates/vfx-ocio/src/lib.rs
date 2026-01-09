@@ -77,6 +77,7 @@ mod display;
 mod look;
 mod role;
 mod context;
+mod gpu;
 
 pub mod builtin;
 pub mod validate;
@@ -100,12 +101,13 @@ pub use transform::{
     GradingPrimaryTransform, GradingRgbCurveTransform, GradingToneTransform,
     Lut1DTransform, Lut3DTransform,
 };
-pub use processor::{Processor, OptimizationLevel, BitDepth as ProcessorBitDepth};
+pub use processor::{Processor, ProcessorOp, OptimizationLevel, BitDepth as ProcessorBitDepth};
 pub use display::{Display, View, ViewTransform, DisplayManager};
 pub use look::{Look, LookManager, parse_looks};
 pub use role::{Roles, names as role_names};
 pub use context::Context;
 pub use validate::{check as validate_config, Issue, Severity, IssueCategory, has_errors, has_warnings};
+pub use gpu::{GpuProcessor, GpuLanguage, GpuShaderCode, GpuTexture, GpuTextureType, GpuInterpolation, GpuUniform, GpuUniformType};
 
 #[cfg(test)]
 mod tests {

@@ -641,6 +641,83 @@ impl ImageCache {
         }
     }
 
+    /// Prefetch hint - queues tiles for loading.
+    ///
+    /// This loads specified tiles into cache proactively.
+    /// Useful when you know which tiles will be needed soon.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Image file path
+    /// * `subimage` - Subimage index  
+    /// * `mip_level` - Mip level
+    /// * `tile_coords` - List of (tile_x, tile_y) coordinates to prefetch
+    pub fn prefetch(
+        &self,
+        path: impl AsRef<Path>,
+        subimage: u32,
+        mip_level: u32,
+        tile_coords: &[(u32, u32)],
+    ) -> IoResult<()> {
+        let path = path.as_ref();
+        for &(tile_x, tile_y) in tile_coords {
+            // Ignore errors - prefetch is best-effort
+            let _ = self.get_tile(path, subimage, mip_level, tile_x, tile_y);
+        }
+        Ok(())
+    }
+
+    /// Prefetch all tiles for a mip level.
+    ///
+    /// Loads entire mip level into cache. Useful for small textures.
+    pub fn prefetch_mip(&self, path: impl AsRef<Path>, subimage: u32, mip_level: u32) -> IoResult<()> {
+        let path = path.as_ref();
+        let info = self.get_image_info(path)?;
+        
+        let mip_w = info.width_at_mip(mip_level);
+        let mip_h = info.height_at_mip(mip_level);
+        let tiles_x = (mip_w + self.tile_size - 1) / self.tile_size;
+        let tiles_y = (mip_h + self.tile_size - 1) / self.tile_size;
+        
+        let coords: Vec<_> = (0..tiles_y)
+            .flat_map(|ty| (0..tiles_x).map(move |tx| (tx, ty)))
+            .collect();
+        
+        self.prefetch(path, subimage, mip_level, &coords)
+    }
+
+    /// Prefetch tiles in a region (pixel coordinates).
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Image file path
+    /// * `x`, `y` - Top-left corner in pixels
+    /// * `width`, `height` - Region size in pixels  
+    /// * `mip_level` - Mip level
+    pub fn prefetch_region(
+        &self,
+        path: impl AsRef<Path>,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        subimage: u32,
+        mip_level: u32,
+    ) -> IoResult<()> {
+        let path = path.as_ref();
+        
+        let tile_x_start = x / self.tile_size;
+        let tile_y_start = y / self.tile_size;
+        let tile_x_end = (x + width + self.tile_size - 1) / self.tile_size;
+        let tile_y_end = (y + height + self.tile_size - 1) / self.tile_size;
+        
+        let coords: Vec<_> = (tile_y_start..tile_y_end)
+            .flat_map(|ty| (tile_x_start..tile_x_end).map(move |tx| (tx, ty)))
+            .collect();
+        
+        self.prefetch(path, subimage, mip_level, &coords)
+    }
+
     /// Invalidates all tiles for a path.
     pub fn invalidate(&self, path: impl AsRef<Path>) {
         let path = path.as_ref().to_path_buf();
