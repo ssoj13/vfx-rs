@@ -838,6 +838,21 @@ impl Processor {
         }
     }
 
+    /// Creates a processor from pre-compiled ops (for caching).
+    pub fn from_ops(ops: Vec<ProcessorOp>) -> Self {
+        Self {
+            ops,
+            input_bit_depth: BitDepth::Unknown,
+            output_bit_depth: BitDepth::Unknown,
+            has_dynamic: false,
+        }
+    }
+
+    /// Returns the compiled operations (for caching).
+    pub fn ops(&self) -> &[ProcessorOp] {
+        &self.ops
+    }
+
     /// Creates a processor from a transform.
     pub fn from_transform(transform: &Transform, direction: TransformDirection) -> OcioResult<Self> {
         Self::from_transform_with_opts(transform, direction, OptimizationLevel::default())
@@ -2322,12 +2337,6 @@ impl Processor {
         self.output_bit_depth
     }
 
-    /// Returns the internal operation list.
-    ///
-    /// Used by GPU processor for shader generation.
-    pub fn ops(&self) -> &[ProcessorOp] {
-        &self.ops
-    }
 }
 
 #[cfg(test)]

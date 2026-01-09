@@ -154,6 +154,12 @@ impl Display {
         self.views.push(view);
     }
 
+    /// Adds a view (builder pattern).
+    pub fn with_view(mut self, view: View) -> Self {
+        self.add_view(view);
+        self
+    }
+
     /// Sets the default view.
     pub fn set_default_view(&mut self, name: impl Into<String>) {
         self.default_view = Some(name.into());

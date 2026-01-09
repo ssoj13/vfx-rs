@@ -70,6 +70,7 @@
 
 mod error;
 mod config;
+mod config_builder;
 mod colorspace;
 mod transform;
 mod processor;
@@ -78,6 +79,10 @@ mod look;
 mod role;
 mod context;
 mod gpu;
+mod baker;
+mod dynamic;
+mod simd;
+mod cache;
 
 pub mod builtin;
 pub mod validate;
@@ -85,6 +90,7 @@ pub mod validate;
 // Re-exports
 pub use error::{OcioError, OcioResult};
 pub use config::{Config, ConfigVersion, FileRule, NamedTransform, SharedView, ViewingRule};
+pub use config_builder::ConfigBuilder;
 pub use colorspace::{ColorSpace, Encoding, Family, BitDepth, AllocationInfo, AllocationType, ColorSpaceBuilder};
 pub use transform::{
     Transform, TransformDirection, Interpolation,
@@ -108,6 +114,9 @@ pub use role::{Roles, names as role_names};
 pub use context::Context;
 pub use validate::{check as validate_config, Issue, Severity, IssueCategory, has_errors, has_warnings};
 pub use gpu::{GpuProcessor, GpuLanguage, GpuShaderCode, GpuTexture, GpuTextureType, GpuInterpolation, GpuUniform, GpuUniformType};
+pub use baker::{Baker, BakedLut1D, BakedLut3D};
+pub use dynamic::{DynamicProcessor, DynamicProcessorBuilder, DynamicPropertyType};
+pub use cache::ProcessorCache;
 
 #[cfg(test)]
 mod tests {

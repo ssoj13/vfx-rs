@@ -2104,6 +2104,52 @@ impl Config {
     pub fn is_v1(&self) -> bool {
         self.version == ConfigVersion::V1
     }
+
+    // ========================================================================
+    // Builder support
+    // ========================================================================
+
+    /// Creates a Config from builder components (internal use).
+    #[doc(hidden)]
+    pub fn from_builder(
+        name: String,
+        _description: String,
+        version: ConfigVersion,
+        search_paths: Vec<PathBuf>,
+        working_dir: PathBuf,
+        colorspaces: Vec<ColorSpace>,
+        roles: Roles,
+        displays: DisplayManager,
+        looks: LookManager,
+        active_displays: Vec<String>,
+        active_views: Vec<String>,
+        shared_views: Vec<SharedView>,
+        viewing_rules: Vec<ViewingRule>,
+        named_transforms: Vec<NamedTransform>,
+        inactive_colorspaces: Vec<String>,
+        file_rules: Vec<FileRule>,
+        context: Context,
+    ) -> Self {
+        Self {
+            name,
+            version,
+            search_paths,
+            working_dir,
+            colorspaces,
+            roles,
+            displays,
+            looks,
+            active_displays,
+            active_views,
+            shared_views,
+            viewing_rules,
+            named_transforms,
+            inactive_colorspaces,
+            file_rules,
+            context,
+            strict_parsing: false,
+        }
+    }
 }
 
 // ============================================================================
