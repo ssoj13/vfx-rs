@@ -270,10 +270,21 @@ impl ViewerApp {
 
     /// Draw top control panel.
     fn draw_controls(&mut self, ctx: &egui::Context) {
+        // Default values for Ctrl+click reset
+        const DEFAULT_EXPOSURE: f32 = 0.0;
+
         egui::TopBottomPanel::top("controls").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                // Input colorspace selector (left side)
-                egui::ComboBox::from_label("Input")
+                // Src: Input colorspace (what colorspace the file is in)
+                ui.label("Src:").on_hover_text(
+                    "Source Colorspace\n\n\
+                    The colorspace your image file is encoded in.\n\
+                    Examples: ACEScg, Linear sRGB, sRGB, Raw...\n\n\
+                    'Auto' tries to detect from file metadata.\n\
+                    Wrong setting = wrong colors!"
+                );
+                egui::ComboBox::from_id_salt("src_cs")
+                    .width(120.0)
                     .selected_text(if self.state.input_colorspace.is_empty() {
                         "Auto"
                     } else {
@@ -289,19 +300,18 @@ impl ViewerApp {
 
                 ui.separator();
 
-                // Display selector (right side)
-                egui::ComboBox::from_label("Display")
-                    .selected_text(&self.state.display)
-                    .show_ui(ui, |ui| {
-                        for display in self.state.displays.clone() {
-                            if ui.selectable_value(&mut self.state.display, display.clone(), &display).changed() {
-                                self.send_regen(ViewerMsg::SetDisplay(display));
-                            }
-                        }
-                    });
-
-                // View selector
-                egui::ComboBox::from_label("View")
+                // RRT: View transform (Reference Rendering Transform)
+                ui.label("RRT:").on_hover_text(
+                    "View Transform (RRT)\n\n\
+                    Converts scene-linear data to display-ready image.\n\
+                    This is the 'look' or 'tone mapping'.\n\n\
+                    Examples:\n\
+                    - ACES 1.0 SDR: Film-like, industry standard\n\
+                    - Filmic: Softer highlights\n\
+                    - Raw: No transform (for technical checks)"
+                );
+                egui::ComboBox::from_id_salt("rrt_view")
+                    .width(140.0)
                     .selected_text(&self.state.view)
                     .show_ui(ui, |ui| {
                         for view in self.state.views.clone() {
@@ -311,16 +321,47 @@ impl ViewerApp {
                         }
                     });
 
+                // ODT: Output Device Transform (display/monitor)
+                ui.label("ODT:").on_hover_text(
+                    "Output Device Transform (ODT)\n\n\
+                    Target display/monitor type.\n\
+                    Adapts image for your screen's capabilities.\n\n\
+                    Examples:\n\
+                    - sRGB: Standard monitors\n\
+                    - Rec.709: TV/broadcast\n\
+                    - P3-D65: Wide gamut (Mac, cinema)\n\
+                    - Rec.2020: HDR displays"
+                );
+                egui::ComboBox::from_id_salt("odt_display")
+                    .width(100.0)
+                    .selected_text(&self.state.display)
+                    .show_ui(ui, |ui| {
+                        for display in self.state.displays.clone() {
+                            if ui.selectable_value(&mut self.state.display, display.clone(), &display).changed() {
+                                self.send_regen(ViewerMsg::SetDisplay(display));
+                            }
+                        }
+                    });
+
                 ui.separator();
 
-                // Exposure slider
-                ui.label("EV:");
-                let old_exp = self.state.exposure;
-                if ui.add(
+                // Exposure slider with Ctrl+click reset
+                ui.label("EV:").on_hover_text(
+                    "Exposure Value\n\n\
+                    Adjusts image brightness in stops.\n\
+                    +1 = 2x brighter, -1 = 2x darker\n\n\
+                    Ctrl+Click to reset to 0"
+                );
+                let exp_slider = ui.add(
                     egui::Slider::new(&mut self.state.exposure, -10.0..=10.0)
                         .step_by(0.1)
                         .fixed_decimals(1)
-                ).changed() && (self.state.exposure - old_exp).abs() > 0.001 {
+                );
+                // Ctrl+click resets to default
+                if exp_slider.clicked() && ui.input(|i| i.modifiers.ctrl) {
+                    self.state.exposure = DEFAULT_EXPOSURE;
+                    self.send_regen(ViewerMsg::SetExposure(DEFAULT_EXPOSURE));
+                } else if exp_slider.changed() {
                     self.send_regen(ViewerMsg::SetExposure(self.state.exposure));
                 }
             });
@@ -329,7 +370,14 @@ impl ViewerApp {
             ui.horizontal(|ui| {
                 // Layer selector (if multiple)
                 if self.state.layers.len() > 1 {
-                    egui::ComboBox::from_label("Layer")
+                    ui.label("Layer:").on_hover_text(
+                        "EXR Layer\n\n\
+                        Multi-layer EXR files contain separate\n\
+                        render passes (diffuse, specular, etc.)\n\n\
+                        Select which layer to view."
+                    );
+                    egui::ComboBox::from_id_salt("layer_sel")
+                        .width(120.0)
                         .selected_text(&self.state.layer)
                         .show_ui(ui, |ui| {
                             for layer in self.state.layers.clone() {
@@ -342,7 +390,17 @@ impl ViewerApp {
                 }
 
                 // Channel mode selector
-                egui::ComboBox::from_label("Channel")
+                ui.label("Ch:").on_hover_text(
+                    "Channel Display\n\n\
+                    View individual color channels:\n\
+                    - Color (C): Full RGB\n\
+                    - Red (R), Green (G), Blue (B): Single channel\n\
+                    - Alpha (A): Transparency mask\n\
+                    - Luma (L): Brightness only\n\n\
+                    Hotkeys: R, G, B, A, C, L"
+                );
+                egui::ComboBox::from_id_salt("channel_sel")
+                    .width(90.0)
                     .selected_text(self.state.channel_mode.label())
                     .show_ui(ui, |ui| {
                         for &mode in ChannelMode::all() {
@@ -367,6 +425,9 @@ impl ViewerApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Refresh").clicked() {
                         self.send(ViewerMsg::Regenerate);
+                    }
+                    if ui.button("Open").clicked() {
+                        self.open_file_dialog();
                     }
                 });
             });
@@ -441,12 +502,19 @@ impl ViewerApp {
                     Color32::WHITE,
                 );
             } else {
-                // No image - show hint and handle double-click to open
-                ui.centered_and_justified(|ui| {
-                    ui.label("Double-click or drag file to open");
-                });
+                // No image - allocate clickable area first, then draw hint text
+                let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click());
+                
+                // Draw centered hint text
+                let painter = ui.painter_at(rect);
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "Double-click or drag file to open",
+                    egui::FontId::default(),
+                    ui.visuals().text_color(),
+                );
 
-                let (_, response) = ui.allocate_exact_size(available, egui::Sense::click());
                 if response.double_clicked() {
                     self.open_file_dialog();
                 }
