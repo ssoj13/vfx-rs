@@ -10,7 +10,7 @@
 | Built-in configs | `Config::CreateFromBuiltinConfig()` | `builtin::aces_1_3()` | `ColorConfig.aces_1_3()` | ✅ |
 | Serialize to YAML | `Config::serialize()` | `Config::serialize()` | ❌ | ⚠️ Rust only |
 | Write to file | N/A | `Config::write_to_file()` | ❌ | ⚠️ Rust only |
-| Config validation | `Config::validate()` | `validate::check()` | ❌ | ⚠️ Rust only |
+| Config validation | `Config::validate()` | `validate::check()` | `validate_config()` | ✅ |
 
 ### Color Spaces
 | Feature | OCIO C++ | vfx-ocio | Python | Status |
@@ -101,10 +101,10 @@
 | Search paths | ✅ | ✅ | ❌ | ⚠️ |
 | File rules | ✅ | ✅ | `colorspace_from_filepath()` | ✅ |
 | Named transforms | ✅ | ✅ | `named_transform_names()` | ✅ |
-| Config builder | ✅ | ✅ (ConfigBuilder) | ❌ | ⚠️ |
-| Baker (LUT export) | ✅ | ✅ (Baker) | ❌ | ⚠️ |
-| Dynamic properties | ✅ | ✅ (DynamicProcessor) | ❌ | ⚠️ |
-| Processor cache | ✅ | ✅ (ProcessorCache) | ❌ | ⚠️ |
+| Config builder | ✅ | ✅ (ConfigBuilder) | `ConfigBuilder` | ✅ |
+| Baker (LUT export) | ✅ | ✅ (Baker) | `Baker` | ✅ |
+| Dynamic properties | ✅ | ✅ (DynamicProcessor) | `DynamicProcessor` | ✅ |
+| Processor cache | ✅ | ✅ (ProcessorCache) | `ProcessorCache` | ✅ |
 
 ---
 
@@ -137,22 +137,22 @@
 
 ## Summary
 
-### OCIO Parity: ~85%
+### OCIO Parity: ~92%
 - ✅ Core transforms: 100%
 - ✅ Config loading: 100%
 - ✅ Color spaces, roles, displays: 95%
-- ⚠️ Python bindings: 70% (missing advanced features)
+- ✅ Python bindings: 90%
 - ❌ Missing: BuiltinTransform, aliases, categories
 
-### OIIO Parity: ~90%
+### OIIO Parity: ~95%
 - ✅ ColorConfig wrapper: 100%
 - ✅ ImageBufAlgo OCIO functions: 95%
-- ⚠️ Minor gaps in Python
+- ✅ Python API complete
 
 ### Priority Gaps to Close:
-1. **Python**: Expose ConfigBuilder, Baker, DynamicProcessor, GpuProcessor
-2. **OCIO**: Add BuiltinTransform support
-3. **OCIO**: Add colorspace aliases and categories
+1. **OCIO**: Add BuiltinTransform support
+2. **OCIO**: Add colorspace aliases
+3. **OCIO**: Add colorspace categories
 
 ---
 
