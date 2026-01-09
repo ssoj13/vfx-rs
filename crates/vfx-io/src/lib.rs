@@ -144,6 +144,14 @@ pub mod jp2;
 #[cfg(feature = "psd")]
 pub mod psd;
 
+/// DirectDraw Surface (DDS) GPU texture format.
+#[cfg(feature = "dds")]
+pub mod dds;
+
+/// KTX2 (Khronos Texture 2.0) format.
+#[cfg(feature = "ktx")]
+pub mod ktx;
+
 /// ARRI Raw format (.ari) - requires ARRI SDK for decode.
 pub mod arriraw;
 /// RED REDCODE format (.r3d) - requires RED SDK for decode.

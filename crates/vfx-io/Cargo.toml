@@ -32,6 +32,12 @@ jp2 = ["dep:jpeg2k"]
 # PSD/PSB format (Adobe Photoshop)
 psd = ["dep:psd"]
 
+# DDS (DirectDraw Surface) GPU texture format
+dds = ["dep:image_dds", "dep:ddsfile"]
+
+# KTX2 (Khronos Texture 2.0) format
+ktx = []
+
 # HEIF/HEIC support (requires system libheif >= 1.17)
 # 
 # Windows (vcpkg):
@@ -97,6 +103,10 @@ jpeg2k = { version = "0.8", optional = true }
 
 # PSD support
 psd = { version = "0.3", optional = true }
+
+# DDS support (uses image_dds for BC decompression)
+image_dds = { version = "0.7", optional = true, default-features = false, features = ["ddsfile"] }
+ddsfile = { version = "0.5", optional = true }
 
 # Parallel iteration
 rayon = { version = "1.10", optional = true }

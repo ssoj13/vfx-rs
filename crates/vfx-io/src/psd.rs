@@ -26,7 +26,7 @@
 //! ```
 
 use crate::{ImageData, IoError, IoResult};
-use psd::{ColorMode, Psd, PsdLayer as PsdCrateLayer};
+use psd::{ColorMode, Psd};
 use std::fs;
 use std::path::Path;
 
@@ -118,12 +118,7 @@ pub fn read_from_memory(data: &[u8]) -> IoResult<ImageData> {
         pixels.push(chunk[3] as f32 / 255.0);
     }
 
-    Ok(ImageData {
-        width,
-        height,
-        channels: 4,
-        pixels,
-    })
+    Ok(ImageData::from_f32(width, height, 4, pixels))
 }
 
 /// Reads PSD document info without loading pixel data.
@@ -168,8 +163,9 @@ pub fn read_layers_opts<P: AsRef<Path>>(path: P, load_pixels: bool) -> IoResult<
     let mut layers = Vec::new();
 
     for layer in psd.layers().iter() {
+        // layer.rgba() returns Vec<u8> directly (not Result)
         let pixels = if load_pixels {
-            layer.rgba().ok()
+            Some(layer.rgba())
         } else {
             None
         };
@@ -209,7 +205,7 @@ pub fn read_layer_by_name<P: AsRef<Path>>(path: P, name: &str) -> IoResult<PsdLa
         opacity: layer.opacity() as f32 / 255.0,
         visible: layer.visible(),
         blend_mode: format!("{:?}", layer.blend_mode()),
-        pixels: layer.rgba().ok(),
+        pixels: Some(layer.rgba()),
     })
 }
 
@@ -219,9 +215,16 @@ pub fn read_layer_by_index<P: AsRef<Path>>(path: P, index: usize) -> IoResult<Ps
     let psd = Psd::from_bytes(&data)
         .map_err(|e| IoError::DecodeError(format!("PSD parse error: {e}")))?;
 
-    let layer = psd
-        .layer_by_idx(index)
-        .ok_or_else(|| IoError::MissingData(format!("Layer index {} not found", index)))?;
+    // layer_by_idx returns &PsdLayer, not Option
+    let layers = psd.layers();
+    if index >= layers.len() {
+        return Err(IoError::MissingData(format!(
+            "Layer index {} out of range (0..{})",
+            index,
+            layers.len()
+        )));
+    }
+    let layer = &layers[index];
 
     Ok(PsdLayer {
         name: layer.name().to_string(),
@@ -232,7 +235,7 @@ pub fn read_layer_by_index<P: AsRef<Path>>(path: P, index: usize) -> IoResult<Ps
         opacity: layer.opacity() as f32 / 255.0,
         visible: layer.visible(),
         blend_mode: format!("{:?}", layer.blend_mode()),
-        pixels: layer.rgba().ok(),
+        pixels: Some(layer.rgba()),
     })
 }
 
@@ -256,12 +259,7 @@ pub fn layer_to_image(layer: &PsdLayer) -> IoResult<ImageData> {
         float_pixels.push(chunk[3] as f32 / 255.0);
     }
 
-    Ok(ImageData {
-        width: layer.width,
-        height: layer.height,
-        channels: 4,
-        pixels: float_pixels,
-    })
+    Ok(ImageData::from_f32(layer.width, layer.height, 4, float_pixels))
 }
 
 /// Flattens layers with a custom filter.
@@ -296,12 +294,7 @@ where
         pixels.push(chunk[3] as f32 / 255.0);
     }
 
-    Ok(ImageData {
-        width,
-        height,
-        channels: 4,
-        pixels,
-    })
+    Ok(ImageData::from_f32(width, height, 4, pixels))
 }
 
 #[cfg(test)]
