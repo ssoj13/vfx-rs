@@ -160,6 +160,65 @@ impl Context {
         self.vars.get(name).map(|s| s.as_str())
     }
 
+    /// Resolves variables strictly, returning error if any are unresolved.
+    ///
+    /// Unlike `resolve()`, this method returns an error if any variables
+    /// in the input cannot be resolved.
+    ///
+    /// # Errors
+    /// Returns a list of unresolved variable names if any cannot be resolved.
+    pub fn resolve_strict(&self, input: &str) -> Result<String, Vec<String>> {
+        let unresolved = self.unresolved_vars(input);
+        if unresolved.is_empty() {
+            Ok(self.resolve(input))
+        } else {
+            Err(unresolved)
+        }
+    }
+
+    /// Checks if a string contains unresolved context variables.
+    ///
+    /// Returns `true` if any `$VAR` or `${VAR}` cannot be resolved.
+    pub fn has_unresolved(&self, input: &str) -> bool {
+        !self.unresolved_vars(input).is_empty()
+    }
+
+    /// Returns list of unresolved variable names in a string.
+    ///
+    /// Scans for `$VAR` and `${VAR}` patterns and returns names
+    /// that cannot be resolved from context or environment.
+    pub fn unresolved_vars(&self, input: &str) -> Vec<String> {
+        let mut unresolved = Vec::new();
+        let mut chars = input.chars().peekable();
+
+        while let Some(c) = chars.next() {
+            if c == '$' {
+                if chars.peek() == Some(&'{') {
+                    chars.next(); // consume '{'
+                    let var_name: String = chars.by_ref().take_while(|&c| c != '}').collect();
+                    if !var_name.is_empty() && self.get(&var_name).is_none() {
+                        unresolved.push(var_name);
+                    }
+                } else {
+                    let mut var_name = String::new();
+                    while let Some(&ch) = chars.peek() {
+                        if ch.is_alphanumeric() || ch == '_' {
+                            var_name.push(ch);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    if !var_name.is_empty() && self.get(&var_name).is_none() {
+                        unresolved.push(var_name);
+                    }
+                }
+            }
+        }
+
+        unresolved
+    }
+
     /// Returns the number of user-defined variables.
     #[inline]
     pub fn len(&self) -> usize {
@@ -213,5 +272,44 @@ mod tests {
     fn dollar_at_end() {
         let ctx = Context::without_env();
         assert_eq!(ctx.resolve("test$"), "test$");
+    }
+
+    #[test]
+    fn unresolved_vars_detection() {
+        let mut ctx = Context::without_env();
+        ctx.set("SHOT", "sh010");
+
+        // No unresolved
+        assert!(!ctx.has_unresolved("/path/$SHOT/file"));
+        assert!(ctx.unresolved_vars("/path/$SHOT/file").is_empty());
+
+        // Has unresolved
+        assert!(ctx.has_unresolved("/path/$SHOT/$SEQ/file"));
+        assert_eq!(ctx.unresolved_vars("/path/$SHOT/$SEQ/file"), vec!["SEQ"]);
+
+        // Multiple unresolved
+        let unresolved = ctx.unresolved_vars("$A/${B}/$SHOT");
+        assert_eq!(unresolved, vec!["A", "B"]);
+    }
+
+    #[test]
+    fn resolve_strict_success() {
+        let mut ctx = Context::without_env();
+        ctx.set("SHOT", "sh010");
+        ctx.set("SEQ", "sq01");
+
+        let result = ctx.resolve_strict("/path/$SEQ/$SHOT");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "/path/sq01/sh010");
+    }
+
+    #[test]
+    fn resolve_strict_error() {
+        let mut ctx = Context::without_env();
+        ctx.set("SHOT", "sh010");
+
+        let result = ctx.resolve_strict("/path/$SEQ/$SHOT");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), vec!["SEQ"]);
     }
 }

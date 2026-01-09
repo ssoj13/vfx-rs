@@ -203,6 +203,10 @@ impl ViewerApp {
                 ViewerEvent::Error(msg) => {
                     self.error = Some(msg);
                 }
+                ViewerEvent::PixelValue { x, y, rgba } => {
+                    self.state.cursor_pixel = Some((x, y));
+                    self.state.cursor_color = Some(rgba);
+                }
             }
         }
         had_events
@@ -263,6 +267,14 @@ impl ViewerApp {
             if i.key_pressed(egui::Key::L) {
                 self.state.channel_mode = ChannelMode::Luminance;
                 self.send_regen(ViewerMsg::SetChannelMode(ChannelMode::Luminance));
+            }
+
+            // Copy pixel value to clipboard
+            if i.key_pressed(egui::Key::P) {
+                if let Some(rgba) = self.state.cursor_color {
+                    let text = format!("{:.4}, {:.4}, {:.4}, {:.3}", rgba[0], rgba[1], rgba[2], rgba[3]);
+                    ctx.output_mut(|o| o.copied_text = text);
+                }
             }
 
             // Scroll zoom - use mouse position for zoom-to-cursor
@@ -460,7 +472,16 @@ impl ViewerApp {
     fn draw_hints(&self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("hints").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label("O: Open | F: Fit | H: Home | +/-: Zoom | R/G/B/A/C/L: Channels | Esc: Exit");
+                // Pixel inspector info
+                if let (Some((x, y)), Some(rgba)) = (self.state.cursor_pixel, self.state.cursor_color) {
+                    ui.monospace(format!(
+                        "[{:4},{:4}] R:{:7.4} G:{:7.4} B:{:7.4} A:{:5.3}",
+                        x, y, rgba[0], rgba[1], rgba[2], rgba[3]
+                    ));
+                    ui.separator();
+                }
+
+                ui.label("O: Open | F: Fit | H: Home | +/-: Zoom | R/G/B/A/C/L: Channels | P: Pick | Esc: Exit");
             });
         });
     }
@@ -509,6 +530,29 @@ impl ViewerApp {
 
                 if response.double_clicked() {
                     self.send(ViewerMsg::FitToWindow);
+                }
+
+                // Track hover for pixel inspector
+                if let Some(hover_pos) = response.hover_pos() {
+                    // Convert screen position to image coordinates
+                    let img_pos = hover_pos - rect.min - top_left.to_pos2().to_vec2();
+                    let img_x = (img_pos.x / self.state.zoom) as i32;
+                    let img_y = (img_pos.y / self.state.zoom) as i32;
+
+                    if let Some((w, h)) = self.state.image_dims {
+                        if img_x >= 0 && img_y >= 0 && (img_x as u32) < w && (img_y as u32) < h {
+                            self.send(ViewerMsg::QueryPixel {
+                                x: img_x as u32,
+                                y: img_y as u32,
+                            });
+                        } else {
+                            self.state.cursor_pixel = None;
+                            self.state.cursor_color = None;
+                        }
+                    }
+                } else {
+                    self.state.cursor_pixel = None;
+                    self.state.cursor_color = None;
                 }
 
                 // Paint the image
@@ -576,8 +620,8 @@ impl eframe::App for ViewerApp {
         self.draw_hints(ctx);
         self.draw_canvas(ctx);
 
-        // Only repaint when needed (events pending or dragging)
-        if had_events {
+        // Repaint when needed (events pending, dragging, or hovering image for pixel inspector)
+        if had_events || self.state.cursor_pixel.is_some() {
             ctx.request_repaint();
         }
     }

@@ -102,6 +102,7 @@ impl ViewerHandler {
                 ViewerMsg::FitToWindow => self.fit_to_window(),
                 ViewerMsg::Home => self.home(),
                 ViewerMsg::SetViewport(size) => self.viewport = size,
+                ViewerMsg::QueryPixel { x, y } => self.query_pixel(x, y),
             }
         }
         
@@ -492,6 +493,46 @@ impl ViewerHandler {
                 Color32::from_rgba_unmultiplied(r, g, b, a)
             })
             .collect()
+    }
+
+    /// Query pixel value at image coordinates.
+    fn query_pixel(&self, x: u32, y: u32) {
+        let Some(image) = &self.image else { return };
+
+        // Find the layer
+        let layer = image
+            .layers
+            .iter()
+            .find(|l| l.name == self.layer)
+            .or_else(|| image.layers.first());
+
+        let Some(layer) = layer else { return };
+
+        // Bounds check
+        if x >= layer.width || y >= layer.height {
+            return;
+        }
+
+        // Get pixel data
+        let img_data = match layer.to_image_data() {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+
+        let pixels = img_data.to_f32();
+        let channels = img_data.channels as usize;
+        let idx = (y as usize * layer.width as usize + x as usize) * channels;
+
+        let r = pixels.get(idx).copied().unwrap_or(0.0);
+        let g = pixels.get(idx + 1).copied().unwrap_or(r);
+        let b = pixels.get(idx + 2).copied().unwrap_or(r);
+        let a = pixels.get(idx + 3).copied().unwrap_or(1.0);
+
+        self.send(ViewerEvent::PixelValue {
+            x,
+            y,
+            rgba: [r, g, b, a],
+        });
     }
 
     fn zoom(&mut self, factor: f32, center: [f32; 2]) {

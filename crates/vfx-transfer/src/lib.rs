@@ -22,7 +22,7 @@
 //! | [`hlg`] | HDR broadcast (HLG) | [0, 1] |
 //! | [`log_c`] | ARRI LogC3 cameras (ALEXA) | Scene-referred |
 //! | [`log_c4`] | ARRI LogC4 cameras (ALEXA 35) | Scene-referred |
-//! | [`canon_log`] | Canon Log 2/3 cameras | Scene-referred |
+//! | [`canon_log`] | Canon Log/Log2/Log3 cameras | Scene-referred |
 //! | [`apple_log`] | Apple ProRes RAW | Scene-referred |
 //! | [`s_log2`] | Sony cameras (F65, F55, FS7 legacy) | Scene-referred |
 //! | [`s_log3`] | Sony cameras | Scene-referred |
@@ -81,16 +81,18 @@ pub mod acescct;
 pub mod acescc;
 pub mod red_log;
 pub mod bmd_film;
+pub mod d_log;
+pub mod davinci_intermediate;
 
 // Re-export common functions
 pub use srgb::{eotf as srgb_eotf, oetf as srgb_oetf};
-pub use gamma::{gamma_eotf, gamma_oetf};
+pub use gamma::{gamma_eotf, gamma_oetf, moncurve_fwd, moncurve_rev, moncurve_mirror_fwd, moncurve_mirror_rev};
 pub use rec709::{eotf as rec709_eotf, oetf as rec709_oetf};
 pub use pq::{eotf as pq_eotf, oetf as pq_oetf};
 pub use hlg::{eotf as hlg_eotf, oetf as hlg_oetf};
 pub use log_c::{decode as log_c_decode, encode as log_c_encode};
 pub use log_c4::{decode as log_c4_decode, encode as log_c4_encode};
-pub use canon_log::{clog2_encode, clog2_decode, clog3_encode, clog3_decode};
+pub use canon_log::{clog_encode, clog_decode, clog2_encode, clog2_decode, clog3_encode, clog3_decode};
 pub use apple_log::{encode as apple_log_encode, decode as apple_log_decode};
 pub use s_log2::{decode as s_log2_decode, encode as s_log2_encode};
 pub use s_log3::{decode as s_log3_decode, encode as s_log3_encode};
@@ -99,3 +101,5 @@ pub use acescct::{decode as acescct_decode, encode as acescct_encode};
 pub use acescc::{decode as acescc_decode, encode as acescc_encode};
 pub use red_log::{redlogfilm_encode, redlogfilm_decode, log3g10_encode, log3g10_decode};
 pub use bmd_film::{bmd_film_gen5_encode, bmd_film_gen5_decode};
+pub use d_log::{encode as d_log_encode, decode as d_log_decode};
+pub use davinci_intermediate::{encode as davinci_int_encode, decode as davinci_int_decode};

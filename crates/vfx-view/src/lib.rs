@@ -7,6 +7,7 @@
 //! - Multi-layer EXR support with layer selection
 //! - Channel isolation (R/G/B/A/Luminance)
 //! - Exposure control
+//! - Pixel inspector (hover to see values, P to copy)
 //! - Pan/zoom with mouse
 //! - Keyboard shortcuts
 //! - Persistent settings
@@ -41,6 +42,8 @@
 //! | `A` | Alpha channel |
 //! | `C` | Color mode |
 //! | `L` | Luminance |
+//! | `P` | Copy pixel value to clipboard |
+//! | `O` | Open file dialog |
 //! | `Esc` | Exit |
 
 #![warn(missing_docs)]

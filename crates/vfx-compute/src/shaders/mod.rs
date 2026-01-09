@@ -171,6 +171,85 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 "#;
 
+/// 3D LUT tetrahedral interpolation (higher quality).
+pub const LUT3D_TETRAHEDRAL: &str = r#"
+@group(0) @binding(0) var<storage, read> src: array<f32>;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<uniform> dims: vec4<u32>;  // w, h, c, lut_size
+@group(0) @binding(3) var<storage, read> lut: array<f32>;
+
+fn lut_idx(ri: u32, gi: u32, bi: u32, ch: u32, s: u32) -> f32 {
+    return lut[(bi * s * s + gi * s + ri) * 3 + ch];
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let px = id.x;
+    let total = dims.x * dims.y;
+    if px >= total { return; }
+
+    let c = dims.z;
+    let s = dims.w;
+    let scale = f32(s - 1);
+    let base = px * c;
+
+    let r = clamp(src[base], 0.0, 1.0) * scale;
+    let g = clamp(src[base + 1], 0.0, 1.0) * scale;
+    let b = clamp(src[base + 2], 0.0, 1.0) * scale;
+
+    var r0 = min(u32(r), s - 2);
+    var g0 = min(u32(g), s - 2);
+    var b0 = min(u32(b), s - 2);
+    let r1 = r0 + 1;
+    let g1 = g0 + 1;
+    let b1 = b0 + 1;
+
+    let fr = r - f32(r0);
+    let fg = g - f32(g0);
+    let fb = b - f32(b0);
+
+    for (var ch = 0u; ch < 3u; ch = ch + 1) {
+        // Fetch all 8 corners
+        let c000 = lut_idx(r0, g0, b0, ch, s);
+        let c100 = lut_idx(r1, g0, b0, ch, s);
+        let c010 = lut_idx(r0, g1, b0, ch, s);
+        let c110 = lut_idx(r1, g1, b0, ch, s);
+        let c001 = lut_idx(r0, g0, b1, ch, s);
+        let c101 = lut_idx(r1, g0, b1, ch, s);
+        let c011 = lut_idx(r0, g1, b1, ch, s);
+        let c111 = lut_idx(r1, g1, b1, ch, s);
+
+        // Tetrahedral interpolation: 6 tetrahedra based on fr,fg,fb ordering
+        var result: f32;
+        if fr > fg {
+            if fg > fb {
+                // fr > fg > fb: tetrahedron (0,0,0)-(1,0,0)-(1,1,0)-(1,1,1)
+                result = c000 + fr*(c100-c000) + fg*(c110-c100) + fb*(c111-c110);
+            } else if fr > fb {
+                // fr > fb > fg: tetrahedron (0,0,0)-(1,0,0)-(1,0,1)-(1,1,1)
+                result = c000 + fr*(c100-c000) + fb*(c101-c100) + fg*(c111-c101);
+            } else {
+                // fb > fr > fg: tetrahedron (0,0,0)-(0,0,1)-(1,0,1)-(1,1,1)
+                result = c000 + fb*(c001-c000) + fr*(c101-c001) + fg*(c111-c101);
+            }
+        } else {
+            if fr > fb {
+                // fg > fr > fb: tetrahedron (0,0,0)-(0,1,0)-(1,1,0)-(1,1,1)
+                result = c000 + fg*(c010-c000) + fr*(c110-c010) + fb*(c111-c110);
+            } else if fg > fb {
+                // fg > fb > fr: tetrahedron (0,0,0)-(0,1,0)-(0,1,1)-(1,1,1)
+                result = c000 + fg*(c010-c000) + fb*(c011-c010) + fr*(c111-c011);
+            } else {
+                // fb > fg > fr: tetrahedron (0,0,0)-(0,0,1)-(0,1,1)-(1,1,1)
+                result = c000 + fb*(c001-c000) + fg*(c011-c001) + fr*(c111-c011);
+            }
+        }
+        dst[base + ch] = result;
+    }
+    if c >= 4 { dst[base + 3] = src[base + 3]; }
+}
+"#;
+
 /// Bilinear resize.
 pub const RESIZE: &str = r#"
 @group(0) @binding(0) var<storage, read> src: array<f32>;
@@ -216,6 +295,123 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let bot = c01 + ffx * (c11 - c01);
         dst[dst_base + ch] = top + ffy * (bot - top);
     }
+}
+"#;
+
+/// Hue curves (Hue vs Hue/Sat/Lum) shader.
+pub const HUE_CURVES: &str = r#"
+@group(0) @binding(0) var<storage, read> src: array<f32>;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<uniform> dims: vec4<u32>;  // w, h, c, lut_size
+@group(0) @binding(3) var<storage, read> hue_vs_hue: array<f32>;
+@group(0) @binding(4) var<storage, read> hue_vs_sat: array<f32>;
+@group(0) @binding(5) var<storage, read> hue_vs_lum: array<f32>;
+
+// RGB to HSL
+fn rgb_to_hsl(r: f32, g: f32, b: f32) -> vec3<f32> {
+    let mx = max(max(r, g), b);
+    let mn = min(min(r, g), b);
+    let l = (mx + mn) * 0.5;
+
+    if mx - mn < 1e-6 {
+        return vec3<f32>(0.0, 0.0, l);
+    }
+
+    let d = mx - mn;
+    let s = select(d / (mx + mn), d / (2.0 - mx - mn), l > 0.5);
+
+    var h: f32;
+    if mx == r {
+        h = (g - b) / d;
+        if g < b { h = h + 6.0; }
+    } else if mx == g {
+        h = (b - r) / d + 2.0;
+    } else {
+        h = (r - g) / d + 4.0;
+    }
+    h = h / 6.0;
+
+    return vec3<f32>(h, s, l);
+}
+
+fn hue_to_rgb(p: f32, q: f32, t_in: f32) -> f32 {
+    var t = t_in;
+    if t < 0.0 { t = t + 1.0; }
+    if t > 1.0 { t = t - 1.0; }
+    if t < 1.0/6.0 { return p + (q - p) * 6.0 * t; }
+    if t < 0.5 { return q; }
+    if t < 2.0/3.0 { return p + (q - p) * (2.0/3.0 - t) * 6.0; }
+    return p;
+}
+
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> vec3<f32> {
+    if s < 1e-6 {
+        return vec3<f32>(l, l, l);
+    }
+    let q = select(l * (1.0 + s), l + s - l * s, l >= 0.5);
+    let p = 2.0 * l - q;
+    return vec3<f32>(
+        hue_to_rgb(p, q, h + 1.0/3.0),
+        hue_to_rgb(p, q, h),
+        hue_to_rgb(p, q, h - 1.0/3.0)
+    );
+}
+
+// Sample LUT with wrap-around interpolation
+fn sample_lut(lut_base: u32, lut_size: u32, hue: f32) -> f32 {
+    let h = hue - floor(hue);  // wrap to 0-1
+    let pos = h * f32(lut_size - 1);
+    let i0 = u32(pos);
+    let i1 = (i0 + 1) % lut_size;
+    let f = pos - f32(i0);
+    // Note: we use different array accessors based on which LUT
+    return 0.0; // placeholder - actual impl uses binding index
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let px = id.x;
+    let total = dims.x * dims.y;
+    if px >= total { return; }
+
+    let c = dims.z;
+    let lut_size = dims.w;
+    let base = px * c;
+
+    let r = src[base];
+    let g = src[base + 1];
+    let b = src[base + 2];
+
+    // RGB to HSL
+    let hsl = rgb_to_hsl(r, g, b);
+    let h = hsl.x;
+    let s = hsl.y;
+    let l = hsl.z;
+
+    // Sample LUTs
+    let h_norm = h - floor(h);
+    let pos = h_norm * f32(lut_size - 1);
+    let i0 = u32(pos);
+    let i1 = min(i0 + 1, lut_size - 1);
+    let f = pos - f32(i0);
+
+    let hue_shift = hue_vs_hue[i0] + f * (hue_vs_hue[i1] - hue_vs_hue[i0]);
+    let sat_mult = hue_vs_sat[i0] + f * (hue_vs_sat[i1] - hue_vs_sat[i0]);
+    let lum_offset = hue_vs_lum[i0] + f * (hue_vs_lum[i1] - hue_vs_lum[i0]);
+
+    // Apply adjustments
+    var new_h = h + hue_shift;
+    new_h = new_h - floor(new_h);  // wrap
+    let new_s = clamp(s * sat_mult, 0.0, 1.0);
+    let new_l = clamp(l + lum_offset, 0.0, 1.0);
+
+    // HSL to RGB
+    let rgb = hsl_to_rgb(new_h, new_s, new_l);
+
+    dst[base] = rgb.x;
+    dst[base + 1] = rgb.y;
+    dst[base + 2] = rgb.z;
+    if c >= 4 { dst[base + 3] = src[base + 3]; }
 }
 "#;
 

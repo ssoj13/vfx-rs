@@ -319,6 +319,87 @@ impl GpuPrimitives for CpuPrimitives {
         Ok(())
     }
 
+    fn exec_hue_curves(&self, src: &Self::Handle, dst: &mut Self::Handle,
+                       hue_vs_hue: &[f32], hue_vs_sat: &[f32], hue_vs_lum: &[f32],
+                       lut_size: u32) -> ComputeResult<()> {
+        let (_, _, c) = src.dimensions();
+        let lut_sz = lut_size as usize;
+
+        // Process pixels in parallel
+        dst.data.par_chunks_mut(c as usize)
+            .zip(src.data.par_chunks(c as usize))
+            .for_each(|(dst_px, src_px)| {
+                let r = src_px[0];
+                let g = src_px[1];
+                let b = src_px[2];
+
+                // RGB to HSL
+                let mx = r.max(g).max(b);
+                let mn = r.min(g).min(b);
+                let l = (mx + mn) * 0.5;
+
+                let (h, s) = if (mx - mn).abs() < 1e-6 {
+                    (0.0, 0.0)
+                } else {
+                    let d = mx - mn;
+                    let s = if l > 0.5 { d / (2.0 - mx - mn) } else { d / (mx + mn) };
+                    let h = if (mx - r).abs() < 1e-6 {
+                        let mut hv = (g - b) / d;
+                        if g < b { hv += 6.0; }
+                        hv / 6.0
+                    } else if (mx - g).abs() < 1e-6 {
+                        ((b - r) / d + 2.0) / 6.0
+                    } else {
+                        ((r - g) / d + 4.0) / 6.0
+                    };
+                    (h, s)
+                };
+
+                // Sample LUTs
+                let h_norm = h - h.floor();
+                let pos = h_norm * (lut_sz - 1) as f32;
+                let i0 = pos as usize;
+                let i1 = (i0 + 1).min(lut_sz - 1);
+                let f = pos - i0 as f32;
+
+                let hue_shift = hue_vs_hue[i0] + f * (hue_vs_hue[i1] - hue_vs_hue[i0]);
+                let sat_mult = hue_vs_sat[i0] + f * (hue_vs_sat[i1] - hue_vs_sat[i0]);
+                let lum_offset = hue_vs_lum[i0] + f * (hue_vs_lum[i1] - hue_vs_lum[i0]);
+
+                // Apply
+                let mut new_h = h + hue_shift;
+                new_h = new_h - new_h.floor();
+                let new_s = (s * sat_mult).clamp(0.0, 1.0);
+                let new_l = (l + lum_offset).clamp(0.0, 1.0);
+
+                // HSL to RGB
+                let (r_out, g_out, b_out) = if new_s.abs() < 1e-6 {
+                    (new_l, new_l, new_l)
+                } else {
+                    let q = if new_l < 0.5 { new_l * (1.0 + new_s) } else { new_l + new_s - new_l * new_s };
+                    let p = 2.0 * new_l - q;
+                    let hue_to_rgb = |p: f32, q: f32, mut t: f32| -> f32 {
+                        if t < 0.0 { t += 1.0; }
+                        if t > 1.0 { t -= 1.0; }
+                        if t < 1.0/6.0 { return p + (q - p) * 6.0 * t; }
+                        if t < 0.5 { return q; }
+                        if t < 2.0/3.0 { return p + (q - p) * (2.0/3.0 - t) * 6.0; }
+                        p
+                    };
+                    (hue_to_rgb(p, q, new_h + 1.0/3.0),
+                     hue_to_rgb(p, q, new_h),
+                     hue_to_rgb(p, q, new_h - 1.0/3.0))
+                };
+
+                dst_px[0] = r_out;
+                dst_px[1] = g_out;
+                dst_px[2] = b_out;
+                if c >= 4 { dst_px[3] = src_px[3]; }
+            });
+
+        Ok(())
+    }
+
     fn exec_flip_h(&self, handle: &mut Self::Handle) -> ComputeResult<()> {
         let (w, _h, c) = handle.dimensions();
         let row_size = (w * c) as usize;

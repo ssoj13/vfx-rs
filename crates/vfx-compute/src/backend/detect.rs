@@ -201,14 +201,21 @@ fn detect_wgpu() -> BackendInfo {
 
 #[cfg(feature = "cuda")]
 fn detect_cuda() -> BackendInfo {
-    match cudarc::driver::CudaDevice::new(0) {
-        Ok(device) => {
-            // Get device properties
-            let name = device.name().unwrap_or_else(|_| "Unknown CUDA Device".to_string());
+    use cudarc::driver::{CudaContext, sys as cuda_sys};
+    
+    match CudaContext::new(0) {
+        Ok(ctx) => {
+            // Get device ordinal as name
+            let device_ordinal = ctx.cu_device();
+            let name = format!("CUDA Device {device_ordinal}");
             
-            // Get memory info
-            let (free, total) = device.memory_free_and_total()
-                .unwrap_or((0, 0));
+            // Get memory info via cuMemGetInfo
+            let mut free: usize = 0;
+            let mut total: usize = 0;
+            #[allow(unsafe_code)]
+            let _ = unsafe {
+                cuda_sys::cuMemGetInfo_v2(&raw mut free, &raw mut total)
+            };
             
             BackendInfo {
                 backend: Backend::Cuda,
@@ -232,7 +239,7 @@ fn detect_cuda() -> BackendInfo {
                 device: None,
                 vram_total: None,
                 vram_free: None,
-                unavailable_reason: Some(format!("CUDA init failed: {}", e)),
+                unavailable_reason: Some(format!("CUDA init failed: {e:?}")),
             }
         }
     }

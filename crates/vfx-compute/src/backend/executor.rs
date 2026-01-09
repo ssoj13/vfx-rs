@@ -96,6 +96,13 @@ pub enum ColorOp {
     Lut1d { lut: Vec<f32>, channels: u32 },
     /// 3D LUT with cube size.
     Lut3d { lut: Vec<f32>, size: u32 },
+    /// Hue curves (Hue vs Hue/Sat/Lum).
+    HueCurves {
+        hue_vs_hue: Vec<f32>,
+        hue_vs_sat: Vec<f32>,
+        hue_vs_lum: Vec<f32>,
+        lut_size: u32,
+    },
 }
 
 /// Image operation to execute.
@@ -470,6 +477,9 @@ impl<G: GpuPrimitives> TiledExecutor<G> {
             }
             ColorOp::Lut1d { lut, channels } => self.gpu.exec_lut1d(src, dst, lut, *channels),
             ColorOp::Lut3d { lut, size } => self.gpu.exec_lut3d(src, dst, lut, *size),
+            ColorOp::HueCurves { hue_vs_hue, hue_vs_sat, hue_vs_lum, lut_size } => {
+                self.gpu.exec_hue_curves(src, dst, hue_vs_hue, hue_vs_sat, hue_vs_lum, *lut_size)
+            }
         }
     }
 

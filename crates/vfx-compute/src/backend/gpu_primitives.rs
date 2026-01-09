@@ -73,15 +73,38 @@ pub trait GpuPrimitives: Send + Sync {
     fn exec_lut1d(&self, src: &Self::Handle, dst: &mut Self::Handle,
                   lut: &[f32], channels: u32) -> ComputeResult<()>;
 
-    /// Execute 3D LUT kernel.
+    /// Execute 3D LUT kernel (trilinear interpolation).
     fn exec_lut3d(&self, src: &Self::Handle, dst: &mut Self::Handle,
                   lut: &[f32], size: u32) -> ComputeResult<()>;
+
+    /// Execute 3D LUT with tetrahedral interpolation (higher quality).
+    ///
+    /// Tetrahedral interpolation splits the unit cube into 6 tetrahedra
+    /// and interpolates using 4 vertices instead of 8. This produces
+    /// smoother results, especially with LUTs containing sharp transitions.
+    fn exec_lut3d_tetrahedral(&self, src: &Self::Handle, dst: &mut Self::Handle,
+                              lut: &[f32], size: u32) -> ComputeResult<()> {
+        // Default: fallback to trilinear
+        self.exec_lut3d(src, dst, lut, size)
+    }
 
     /// Execute resize kernel.
     fn exec_resize(&self, src: &Self::Handle, dst: &mut Self::Handle, filter: u32) -> ComputeResult<()>;
 
     /// Execute blur kernel.
     fn exec_blur(&self, src: &Self::Handle, dst: &mut Self::Handle, radius: f32) -> ComputeResult<()>;
+
+    /// Execute hue curves (Hue vs Hue/Sat/Lum).
+    ///
+    /// Applies three baked LUTs for hue-based adjustments:
+    /// - `hue_vs_hue`: hue shift per input hue
+    /// - `hue_vs_sat`: saturation multiplier per input hue
+    /// - `hue_vs_lum`: luminance offset per input hue
+    ///
+    /// Each LUT has `lut_size` entries covering hue 0-1.
+    fn exec_hue_curves(&self, src: &Self::Handle, dst: &mut Self::Handle,
+                       hue_vs_hue: &[f32], hue_vs_sat: &[f32], hue_vs_lum: &[f32],
+                       lut_size: u32) -> ComputeResult<()>;
 
     // =========================================================================
     // Transform Operations

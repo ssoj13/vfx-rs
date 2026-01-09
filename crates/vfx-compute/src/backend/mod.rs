@@ -93,10 +93,10 @@ pub use streaming::{ExrStreamingSource, ExrStreamingOutput};
 pub use cpu_backend::{CpuBackend, CpuPrimitives, CpuImage};
 
 #[cfg(feature = "wgpu")]
-pub use wgpu_backend::{WgpuBackend, WgpuPrimitives, WgpuImage};
+pub use wgpu_backend::{WgpuPrimitives, WgpuImage};
 
 #[cfg(feature = "cuda")]
-pub use cuda_backend::{CudaBackend, CudaPrimitives, CudaImage};
+pub use cuda_backend::{CudaPrimitives, CudaImage};
 
 use crate::{ComputeResult, ComputeError};
 
@@ -142,11 +142,11 @@ impl Backend {
             Self::Auto => true,
             Self::Cpu => true,
             #[cfg(feature = "wgpu")]
-            Self::Wgpu => WgpuBackend::is_available(),
+            Self::Wgpu => WgpuPrimitives::is_available(),
             #[cfg(not(feature = "wgpu"))]
             Self::Wgpu => false,
             #[cfg(feature = "cuda")]
-            Self::Cuda => CudaBackend::is_available(),
+            Self::Cuda => CudaPrimitives::is_available(),
             #[cfg(not(feature = "cuda"))]
             Self::Cuda => false,
         }

@@ -143,6 +143,12 @@ pub struct ViewerState {
     pub image_dims: Option<(u32, u32)>,
     /// Image file path.
     pub image_path: Option<PathBuf>,
+
+    // Pixel inspector
+    /// Cursor position in image coordinates (None = outside image).
+    pub cursor_pixel: Option<(u32, u32)>,
+    /// Pixel value under cursor [R,G,B,A] - raw values before OCIO.
+    pub cursor_color: Option<[f32; 4]>,
 }
 
 impl Default for ViewerState {
@@ -164,6 +170,8 @@ impl Default for ViewerState {
             viewport_size: DEFAULT_VIEWPORT,
             image_dims: None,
             image_path: None,
+            cursor_pixel: None,
+            cursor_color: None,
         }
     }
 }

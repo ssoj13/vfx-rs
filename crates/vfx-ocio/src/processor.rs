@@ -708,6 +708,58 @@ pub(crate) enum Op {
     },
 }
 
+impl Op {
+    /// Returns true if this operation is an identity (no-op).
+    pub fn is_identity(&self) -> bool {
+        match self {
+            Op::Matrix { matrix, offset } => {
+                // Identity matrix check
+                let identity = [
+                    1.0, 0.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0, 0.0,
+                    0.0, 0.0, 1.0, 0.0,
+                    0.0, 0.0, 0.0, 1.0,
+                ];
+                let is_identity_matrix = matrix.iter().zip(identity.iter())
+                    .all(|(a, b)| (a - b).abs() < 1e-6);
+                let is_zero_offset = offset.iter().all(|v| v.abs() < 1e-6);
+                is_identity_matrix && is_zero_offset
+            }
+            Op::Exponent { value, .. } => {
+                value.iter().all(|v| (*v - 1.0).abs() < 1e-6)
+            }
+            Op::Cdl { slope, offset, power, saturation } => {
+                slope.iter().all(|v| (*v - 1.0).abs() < 1e-6)
+                    && offset.iter().all(|v| v.abs() < 1e-6)
+                    && power.iter().all(|v| (*v - 1.0).abs() < 1e-6)
+                    && (*saturation - 1.0).abs() < 1e-6
+            }
+            Op::Range { scale, offset, clamp_min, clamp_max } => {
+                (*scale - 1.0).abs() < 1e-6
+                    && offset.abs() < 1e-6
+                    && clamp_min.is_none()
+                    && clamp_max.is_none()
+            }
+            Op::ExposureContrast { exposure, contrast, gamma, .. } => {
+                exposure.abs() < 1e-6
+                    && (*contrast - 1.0).abs() < 1e-6
+                    && (*gamma - 1.0).abs() < 1e-6
+            }
+            Op::GradingPrimary { lift, gamma, gain, offset, exposure, contrast, saturation, .. } => {
+                lift.iter().all(|v| v.abs() < 1e-6)
+                    && gamma.iter().all(|v| (*v - 1.0).abs() < 1e-6)
+                    && gain.iter().all(|v| (*v - 1.0).abs() < 1e-6)
+                    && offset.abs() < 1e-6
+                    && exposure.abs() < 1e-6
+                    && (*contrast - 1.0).abs() < 1e-6
+                    && (*saturation - 1.0).abs() < 1e-6
+            }
+            // LUTs, Transfer, Log, etc. are generally not identity
+            _ => false,
+        }
+    }
+}
+
 /// Built-in transfer function styles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferStyle {
@@ -760,9 +812,100 @@ impl Processor {
 
     /// Creates a processor from a transform.
     pub fn from_transform(transform: &Transform, direction: TransformDirection) -> OcioResult<Self> {
+        Self::from_transform_with_opts(transform, direction, OptimizationLevel::default())
+    }
+
+    /// Creates a processor from a transform with optimization level.
+    pub fn from_transform_with_opts(
+        transform: &Transform,
+        direction: TransformDirection,
+        optimization: OptimizationLevel,
+    ) -> OcioResult<Self> {
         let mut processor = Self::new();
         processor.compile_transform(transform, direction)?;
+        processor.optimize(optimization);
         Ok(processor)
+    }
+
+    /// Applies optimization to the operation chain.
+    pub fn optimize(&mut self, level: OptimizationLevel) {
+        if level == OptimizationLevel::None {
+            return;
+        }
+
+        // Remove identity operations (lossless)
+        self.ops.retain(|op| !op.is_identity());
+
+        // Combine adjacent matrix operations (lossless)
+        if matches!(level, OptimizationLevel::Lossless | OptimizationLevel::Good | OptimizationLevel::Best) {
+            self.combine_matrices();
+        }
+    }
+
+    /// Combines adjacent matrix operations into single matrix.
+    fn combine_matrices(&mut self) {
+        if self.ops.len() < 2 {
+            return;
+        }
+
+        let mut result = Vec::with_capacity(self.ops.len());
+        let mut pending_matrix: Option<([f32; 16], [f32; 4])> = None;
+
+        for op in self.ops.drain(..) {
+            if let Op::Matrix { matrix, offset } = &op {
+                if let Some((prev_m, prev_o)) = pending_matrix.take() {
+                    // Combine: new_m * prev_m, new_m * prev_o + new_o
+                    let combined_m = Self::mat4_mul(matrix, &prev_m);
+                    let combined_o = Self::mat4_apply(matrix, &prev_o);
+                    let combined_o = [
+                        combined_o[0] + offset[0],
+                        combined_o[1] + offset[1],
+                        combined_o[2] + offset[2],
+                        combined_o[3] + offset[3],
+                    ];
+                    pending_matrix = Some((combined_m, combined_o));
+                } else {
+                    pending_matrix = Some((*matrix, *offset));
+                }
+            } else {
+                // Flush any pending matrix first
+                if let Some((m, o)) = pending_matrix.take() {
+                    result.push(Op::Matrix { matrix: m, offset: o });
+                }
+                result.push(op);
+            }
+        }
+
+        // Flush final pending matrix
+        if let Some((m, o)) = pending_matrix {
+            result.push(Op::Matrix { matrix: m, offset: o });
+        }
+
+        self.ops = result;
+    }
+
+    /// 4x4 matrix multiply (row-major [f32; 16] layout)
+    fn mat4_mul(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
+        let mut r = [0.0; 16];
+        for i in 0..4 {
+            for j in 0..4 {
+                r[i * 4 + j] = a[i * 4] * b[j]
+                    + a[i * 4 + 1] * b[4 + j]
+                    + a[i * 4 + 2] * b[8 + j]
+                    + a[i * 4 + 3] * b[12 + j];
+            }
+        }
+        r
+    }
+
+    /// Apply 4x4 matrix to 4-vector (row-major [f32; 16] layout)
+    fn mat4_apply(m: &[f32; 16], v: &[f32; 4]) -> [f32; 4] {
+        [
+            m[0] * v[0] + m[1] * v[1] + m[2] * v[2] + m[3] * v[3],
+            m[4] * v[0] + m[5] * v[1] + m[6] * v[2] + m[7] * v[3],
+            m[8] * v[0] + m[9] * v[1] + m[10] * v[2] + m[11] * v[3],
+            m[12] * v[0] + m[13] * v[1] + m[14] * v[2] + m[15] * v[3],
+        ]
     }
 
     /// Compiles a transform into operations.
@@ -2082,7 +2225,12 @@ mod tests {
             }),
         ]);
 
-        let processor = Processor::from_transform(&group, TransformDirection::Forward).unwrap();
+        // Use OptimizationLevel::None to test compilation without removal of identities
+        let processor = Processor::from_transform_with_opts(
+            &group,
+            TransformDirection::Forward,
+            OptimizationLevel::None,
+        ).unwrap();
         assert_eq!(processor.num_ops(), 2);
     }
 
@@ -2155,5 +2303,75 @@ mod tests {
         assert!((output[0] - input[0]).abs() < 0.01);
         assert!((output[1] - input[1]).abs() < 0.01);
         assert!((output[2] - input[2]).abs() < 0.01);
+    }
+
+    #[test]
+    fn optimization_removes_identity() {
+        // Create processor with identity CDL (should be removed by optimization)
+        let identity_cdl = Transform::Cdl(CdlTransform::default());
+        
+        // Without optimization
+        let proc_none = Processor::from_transform_with_opts(
+            &identity_cdl,
+            TransformDirection::Forward,
+            OptimizationLevel::None,
+        ).unwrap();
+        assert_eq!(proc_none.num_ops(), 1, "Without optimization, identity CDL should remain");
+        
+        // With Lossless optimization
+        let proc_opt = Processor::from_transform_with_opts(
+            &identity_cdl,
+            TransformDirection::Forward,
+            OptimizationLevel::Lossless,
+        ).unwrap();
+        assert_eq!(proc_opt.num_ops(), 0, "With optimization, identity CDL should be removed");
+    }
+
+    #[test]
+    fn optimization_combines_matrices() {
+        // Create two matrix transforms
+        let m1 = Transform::Matrix(MatrixTransform {
+            matrix: [
+                2.0, 0.0, 0.0, 0.0,
+                0.0, 1.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0,
+            ],
+            offset: [0.0, 0.0, 0.0, 0.0],
+            direction: TransformDirection::Forward,
+        });
+        let m2 = Transform::Matrix(MatrixTransform {
+            matrix: [
+                0.5, 0.0, 0.0, 0.0,
+                0.0, 1.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0,
+            ],
+            offset: [0.0, 0.0, 0.0, 0.0],
+            direction: TransformDirection::Forward,
+        });
+        
+        let group = Transform::group(vec![m1, m2]);
+        
+        // Without optimization
+        let proc_none = Processor::from_transform_with_opts(
+            &group,
+            TransformDirection::Forward,
+            OptimizationLevel::None,
+        ).unwrap();
+        assert_eq!(proc_none.num_ops(), 2, "Without optimization should have 2 matrices");
+        
+        // With Lossless optimization - matrices should be combined
+        let proc_opt = Processor::from_transform_with_opts(
+            &group,
+            TransformDirection::Forward,
+            OptimizationLevel::Lossless,
+        ).unwrap();
+        assert_eq!(proc_opt.num_ops(), 1, "With optimization, matrices should be combined to 1");
+        
+        // Verify combined matrix produces correct output (2.0 * 0.5 = 1.0 = identity)
+        let mut pixels = [[0.5_f32, 0.5, 0.5]];
+        proc_opt.apply_rgb(&mut pixels);
+        assert!((pixels[0][0] - 0.5).abs() < 0.0001, "Combined matrix should be identity");
     }
 }

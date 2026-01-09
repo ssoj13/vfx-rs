@@ -7,7 +7,7 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use super::GpuLimits;
-use super::gpu_primitives::{GpuPrimitives, AsAny};
+use super::gpu_primitives::{GpuPrimitives, ImageHandle, AsAny};
 use crate::{ComputeError, ComputeResult};
 use crate::shaders;
 
@@ -118,17 +118,21 @@ struct Pipelines {
     cdl: wgpu::ComputePipeline,
     lut1d: wgpu::ComputePipeline,
     lut3d: wgpu::ComputePipeline,
+    lut3d_tetra: wgpu::ComputePipeline,
     resize: wgpu::ComputePipeline,
     blur_h: wgpu::ComputePipeline,
     blur_v: wgpu::ComputePipeline,
     // Composite
     composite_over: wgpu::ComputePipeline,
     blend: wgpu::ComputePipeline,
-    // Transform
+    // Transform (crop not yet exposed via trait)
+    #[allow(dead_code)]
     crop: wgpu::ComputePipeline,
     flip_h: wgpu::ComputePipeline,
     flip_v: wgpu::ComputePipeline,
     rotate_90: wgpu::ComputePipeline,
+    // Grading
+    hue_curves: wgpu::ComputePipeline,
 }
 
 // =============================================================================
@@ -243,6 +247,7 @@ impl WgpuPrimitives {
             cdl: create_pipeline(shaders::CDL, "cdl_pipeline")?,
             lut1d: create_pipeline(shaders::LUT1D, "lut1d_pipeline")?,
             lut3d: create_pipeline(shaders::LUT3D, "lut3d_pipeline")?,
+            lut3d_tetra: create_pipeline(shaders::LUT3D_TETRAHEDRAL, "lut3d_tetra_pipeline")?,
             resize: create_pipeline(shaders::RESIZE, "resize_pipeline")?,
             blur_h: create_pipeline(shaders::BLUR_H, "blur_h_pipeline")?,
             blur_v: create_pipeline(shaders::BLUR_V, "blur_v_pipeline")?,
@@ -254,6 +259,7 @@ impl WgpuPrimitives {
             flip_h: create_pipeline(shaders::FLIP_H, "flip_h_pipeline")?,
             flip_v: create_pipeline(shaders::FLIP_V, "flip_v_pipeline")?,
             rotate_90: create_pipeline(shaders::ROTATE_90, "rotate_90_pipeline")?,
+            hue_curves: create_pipeline(shaders::HUE_CURVES, "hue_curves_pipeline")?,
         })
     }
 
@@ -477,6 +483,35 @@ impl GpuPrimitives for WgpuPrimitives {
         Ok(())
     }
 
+    fn exec_lut3d_tetrahedral(&self, src: &Self::Handle, dst: &mut Self::Handle, lut: &[f32], size: u32) -> ComputeResult<()> {
+        let (w, h, c) = src.dimensions();
+        let total = w * h;
+
+        let dims_buf = self.create_dims_buffer(w, h, c, size);
+        
+        let lut_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("lut3d_tetra_buffer"),
+            contents: bytemuck::cast_slice(lut),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let layout = self.pipelines.lut3d_tetra.get_bind_group_layout(0);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("lut3d_tetra_bind_group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: src.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: dst.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: dims_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: lut_buf.as_entire_binding() },
+            ],
+        });
+
+        let workgroups = (total.div_ceil(256), 1, 1);
+        self.dispatch_and_wait(&self.pipelines.lut3d_tetra, &bind_group, workgroups);
+        Ok(())
+    }
+
     fn exec_resize(&self, src: &Self::Handle, dst: &mut Self::Handle, _filter: u32) -> ComputeResult<()> {
         let (sw, sh, c) = src.dimensions();
         let (dw, dh, _) = dst.dimensions();
@@ -559,6 +594,48 @@ impl GpuPrimitives for WgpuPrimitives {
         });
         self.dispatch_and_wait(&self.pipelines.blur_v, &bind_group_v, (total.div_ceil(256), 1, 1));
 
+        Ok(())
+    }
+
+    fn exec_hue_curves(&self, src: &Self::Handle, dst: &mut Self::Handle,
+                       hue_vs_hue: &[f32], hue_vs_sat: &[f32], hue_vs_lum: &[f32],
+                       lut_size: u32) -> ComputeResult<()> {
+        let (w, h, c) = src.dimensions();
+        let total = w * h;
+
+        let dims_buf = self.create_dims_buffer(w, h, c, lut_size);
+
+        let lut_hue_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("hue_vs_hue_lut"),
+            contents: bytemuck::cast_slice(hue_vs_hue),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let lut_sat_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("hue_vs_sat_lut"),
+            contents: bytemuck::cast_slice(hue_vs_sat),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let lut_lum_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("hue_vs_lum_lut"),
+            contents: bytemuck::cast_slice(hue_vs_lum),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let layout = self.pipelines.hue_curves.get_bind_group_layout(0);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("hue_curves_bind_group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: src.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: dst.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: dims_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: lut_hue_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: lut_sat_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: lut_lum_buf.as_entire_binding() },
+            ],
+        });
+
+        self.dispatch_and_wait(&self.pipelines.hue_curves, &bind_group, (total.div_ceil(256), 1, 1));
         Ok(())
     }
 
@@ -726,15 +803,6 @@ impl GpuPrimitives for WgpuPrimitives {
 
     fn limits(&self) -> &GpuLimits { &self.limits }
     fn name(&self) -> &'static str { "wgpu" }
-}
-
-// =============================================================================
-            ],
-        });
-
-        self.primitives.dispatch_and_wait(&self.primitives.pipelines.rotate_90, &bind_group, (dw.div_ceil(16), dh.div_ceil(16), 1));
-        Ok(Box::new(dst))
-    }
 }
 
 // =============================================================================

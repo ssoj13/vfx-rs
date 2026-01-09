@@ -65,6 +65,9 @@ pub enum ViewerMsg {
 
     /// Close viewer.
     Close,
+
+    /// Query pixel value at image coordinates.
+    QueryPixel { x: u32, y: u32 },
 }
 
 /// Events from worker thread to UI thread.
@@ -107,4 +110,12 @@ pub enum ViewerEvent {
 
     /// Error occurred.
     Error(String),
+
+    /// Pixel value response.
+    PixelValue {
+        x: u32,
+        y: u32,
+        /// Raw RGBA values before OCIO transform.
+        rgba: [f32; 4],
+    },
 }

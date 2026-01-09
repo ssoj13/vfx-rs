@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use cudarc::driver::{CudaContext, CudaFunction, CudaModule, CudaSlice, CudaStream, LaunchConfig, PushKernelArg};
 
-use super::gpu_primitives::{GpuPrimitives, ImageHandle, KernelParams, AsAny};
+use super::gpu_primitives::{GpuPrimitives, ImageHandle, AsAny};
 use super::tiling::GpuLimits;
 
 use crate::{ComputeError, ComputeResult};
@@ -15,6 +15,20 @@ use crate::{ComputeError, ComputeResult};
 // CUDA Kernel Source
 // =============================================================================
 
+/// CUDA PTX kernel source for color/image operations.
+///
+/// Compiled at runtime via NVRTC. Contains:
+/// - `color_matrix`: 4x4 matrix color transform
+/// - `cdl_kernel`: ASC CDL (slope/offset/power/sat)
+/// - `lut1d_kernel`: 1D LUT interpolation per channel
+/// - `lut3d_kernel`: 3D LUT trilinear interpolation
+/// - `lut3d_tetra_kernel`: 3D LUT tetrahedral interpolation (higher quality)
+/// - `resize_kernel`: Bilinear resize
+/// - `blur_h_kernel`/`blur_v_kernel`: Separable Gaussian blur
+/// - `flip_h_kernel`/`flip_v_kernel`: Horizontal/vertical flip
+/// - `rotate90_kernel`: 90° rotations (n * 90°)
+/// - `composite_over_kernel`: Alpha-over compositing
+/// - `blend_kernel`: Photoshop blend modes
 const CUDA_KERNELS: &str = r#"
 extern "C" {
 
@@ -162,6 +176,77 @@ __global__ void lut3d_kernel(
         float cc1 = c01 + fg * (c11 - c01);
 
         dst[base + ch] = cc0 + fb * (cc1 - cc0);
+    }
+    if (c >= 4) dst[base + 3] = src[base + 3];
+}
+
+// ============================================================================
+// 3D LUT Tetrahedral Interpolation (higher quality)
+// ============================================================================
+__global__ void lut3d_tetra_kernel(
+    const float* __restrict__ src,
+    float* __restrict__ dst,
+    const float* __restrict__ lut,
+    int total, int c, int s
+) {
+    int px = blockIdx.x * blockDim.x + threadIdx.x;
+    if (px >= total) return;
+
+    int base = px * c;
+    float scale = (float)(s - 1);
+
+    float r = fminf(fmaxf(src[base], 0.0f), 1.0f) * scale;
+    float g = fminf(fmaxf(src[base + 1], 0.0f), 1.0f) * scale;
+    float b = fminf(fmaxf(src[base + 2], 0.0f), 1.0f) * scale;
+
+    int r0 = min((int)r, s - 2); r0 = max(r0, 0);
+    int g0 = min((int)g, s - 2); g0 = max(g0, 0);
+    int b0 = min((int)b, s - 2); b0 = max(b0, 0);
+    int r1 = r0 + 1;
+    int g1 = g0 + 1;
+    int b1 = b0 + 1;
+
+    float fr = r - (float)r0;
+    float fg = g - (float)g0;
+    float fb = b - (float)b0;
+
+    for (int ch = 0; ch < 3; ch++) {
+        // Fetch all 8 corners
+        float c000 = lut3d_sample(lut, r0, g0, b0, ch, s);
+        float c100 = lut3d_sample(lut, r1, g0, b0, ch, s);
+        float c010 = lut3d_sample(lut, r0, g1, b0, ch, s);
+        float c110 = lut3d_sample(lut, r1, g1, b0, ch, s);
+        float c001 = lut3d_sample(lut, r0, g0, b1, ch, s);
+        float c101 = lut3d_sample(lut, r1, g0, b1, ch, s);
+        float c011 = lut3d_sample(lut, r0, g1, b1, ch, s);
+        float c111 = lut3d_sample(lut, r1, g1, b1, ch, s);
+
+        // Tetrahedral interpolation: 6 tetrahedra based on fr,fg,fb ordering
+        float result;
+        if (fr > fg) {
+            if (fg > fb) {
+                // fr > fg > fb: tetrahedron (0,0,0)-(1,0,0)-(1,1,0)-(1,1,1)
+                result = c000 + fr*(c100-c000) + fg*(c110-c100) + fb*(c111-c110);
+            } else if (fr > fb) {
+                // fr > fb > fg: tetrahedron (0,0,0)-(1,0,0)-(1,0,1)-(1,1,1)
+                result = c000 + fr*(c100-c000) + fb*(c101-c100) + fg*(c111-c101);
+            } else {
+                // fb > fr > fg: tetrahedron (0,0,0)-(0,0,1)-(1,0,1)-(1,1,1)
+                result = c000 + fb*(c001-c000) + fr*(c101-c001) + fg*(c111-c101);
+            }
+        } else {
+            if (fr > fb) {
+                // fg > fr > fb: tetrahedron (0,0,0)-(0,1,0)-(1,1,0)-(1,1,1)
+                result = c000 + fg*(c010-c000) + fr*(c110-c010) + fb*(c111-c110);
+            } else if (fg > fb) {
+                // fg > fb > fr: tetrahedron (0,0,0)-(0,1,0)-(0,1,1)-(1,1,1)
+                result = c000 + fg*(c010-c000) + fb*(c011-c010) + fr*(c111-c011);
+            } else {
+                // fb > fg > fr: tetrahedron (0,0,0)-(0,0,1)-(0,1,1)-(1,1,1)
+                result = c000 + fb*(c001-c000) + fg*(c011-c001) + fr*(c111-c011);
+            }
+        }
+        dst[base + ch] = result;
     }
     if (c >= 4) dst[base + 3] = src[base + 3];
 }
@@ -422,6 +507,106 @@ __global__ void blend_kernel(
     }
 }
 
+// ============================================================================
+// Hue Curves (Hue vs Hue/Sat/Lum)
+// ============================================================================
+
+// RGB to HSL conversion
+__device__ void rgb_to_hsl(float r, float g, float b, float* h, float* s, float* l) {
+    float mx = fmaxf(fmaxf(r, g), b);
+    float mn = fminf(fminf(r, g), b);
+    *l = (mx + mn) * 0.5f;
+
+    if (mx - mn < 1e-6f) {
+        *h = 0.0f;
+        *s = 0.0f;
+        return;
+    }
+
+    float d = mx - mn;
+    *s = (*l > 0.5f) ? d / (2.0f - mx - mn) : d / (mx + mn);
+
+    if (mx == r) {
+        *h = (g - b) / d;
+        if (g < b) *h += 6.0f;
+    } else if (mx == g) {
+        *h = (b - r) / d + 2.0f;
+    } else {
+        *h = (r - g) / d + 4.0f;
+    }
+    *h /= 6.0f;
+}
+
+__device__ float hue_to_rgb(float p, float q, float t) {
+    if (t < 0.0f) t += 1.0f;
+    if (t > 1.0f) t -= 1.0f;
+    if (t < 1.0f/6.0f) return p + (q - p) * 6.0f * t;
+    if (t < 0.5f) return q;
+    if (t < 2.0f/3.0f) return p + (q - p) * (2.0f/3.0f - t) * 6.0f;
+    return p;
+}
+
+__device__ void hsl_to_rgb(float h, float s, float l, float* r, float* g, float* b) {
+    if (s < 1e-6f) {
+        *r = *g = *b = l;
+        return;
+    }
+    float q = (l < 0.5f) ? l * (1.0f + s) : l + s - l * s;
+    float p = 2.0f * l - q;
+    *r = hue_to_rgb(p, q, h + 1.0f/3.0f);
+    *g = hue_to_rgb(p, q, h);
+    *b = hue_to_rgb(p, q, h - 1.0f/3.0f);
+}
+
+// Sample 1D LUT with linear interpolation (hue wraps around)
+__device__ float sample_hue_lut(const float* lut, int lut_size, float hue) {
+    float h = hue - floorf(hue);  // wrap to 0-1
+    float pos = h * (float)(lut_size - 1);
+    int i0 = (int)pos;
+    int i1 = (i0 + 1) % lut_size;
+    float f = pos - (float)i0;
+    return lut[i0] + f * (lut[i1] - lut[i0]);
+}
+
+__global__ void hue_curves_kernel(
+    const float* __restrict__ src,
+    float* __restrict__ dst,
+    const float* __restrict__ hue_vs_hue,   // hue shift LUT
+    const float* __restrict__ hue_vs_sat,   // sat multiplier LUT  
+    const float* __restrict__ hue_vs_lum,   // lum offset LUT
+    int total, int c, int lut_size
+) {
+    int px = blockIdx.x * blockDim.x + threadIdx.x;
+    if (px >= total) return;
+
+    int base = px * c;
+    float r = src[base];
+    float g = src[base + 1];
+    float b = src[base + 2];
+
+    // RGB to HSL
+    float h, s, l;
+    rgb_to_hsl(r, g, b, &h, &s, &l);
+
+    // Apply curves
+    float hue_shift = sample_hue_lut(hue_vs_hue, lut_size, h);
+    float sat_mult = sample_hue_lut(hue_vs_sat, lut_size, h);
+    float lum_offset = sample_hue_lut(hue_vs_lum, lut_size, h);
+
+    float new_h = h + hue_shift;
+    new_h = new_h - floorf(new_h);  // wrap
+    float new_s = fminf(fmaxf(s * sat_mult, 0.0f), 1.0f);
+    float new_l = fminf(fmaxf(l + lum_offset, 0.0f), 1.0f);
+
+    // HSL to RGB
+    hsl_to_rgb(new_h, new_s, new_l, &r, &g, &b);
+
+    dst[base] = r;
+    dst[base + 1] = g;
+    dst[base + 2] = b;
+    if (c >= 4) dst[base + 3] = src[base + 3];
+}
+
 } // extern "C"
 "#;
 
@@ -430,15 +615,20 @@ __global__ void blend_kernel(
 // =============================================================================
 
 /// CUDA buffer handle for image data.
+///
+/// Holds a GPU-allocated slice of f32 values representing an image.
+/// Memory is managed by cudarc and freed when this handle is dropped.
 pub struct CudaImage {
+    /// Device-side buffer containing pixel data (planar RGB/RGBA).
     buffer: CudaSlice<f32>,
+    /// Image width in pixels.
     width: u32,
+    /// Image height in pixels.
     height: u32,
+    /// Number of channels (3=RGB, 4=RGBA).
     channels: u32,
 }
 
-// Alias for backward compatibility
-pub type CudaImageHandle = CudaImage;
 
 impl AsAny for CudaImage {
     fn as_any(&self) -> &dyn std::any::Any { self }
@@ -459,16 +649,30 @@ impl ImageHandle for CudaImage {
 ///
 /// Implements `GpuPrimitives` trait for use with `TiledExecutor<CudaPrimitives>`.
 pub struct CudaPrimitives {
+    /// CUDA context - kept alive for the lifetime of primitives.
+    #[allow(dead_code)]
     ctx: Arc<CudaContext>,
     stream: Arc<CudaStream>,
+    /// Compiled CUDA module - kept alive for kernel lifetime.
+    #[allow(dead_code)]
     module: Arc<CudaModule>,
     k_matrix: CudaFunction,
     k_cdl: CudaFunction,
     k_lut1d: CudaFunction,
     k_lut3d: CudaFunction,
+    k_lut3d_tetra: CudaFunction,
     k_resize: CudaFunction,
     k_blur_h: CudaFunction,
     k_blur_v: CudaFunction,
+    // Transform ops
+    k_flip_h: CudaFunction,
+    k_flip_v: CudaFunction,
+    k_rotate90: CudaFunction,
+    // Composite ops
+    k_composite_over: CudaFunction,
+    k_blend: CudaFunction,
+    // Grading ops
+    k_hue_curves: CudaFunction,
     limits: GpuLimits,
 }
 
@@ -497,27 +701,56 @@ impl CudaPrimitives {
             ComputeError::ShaderCompilation(format!("CUDA module load failed: {e:?}"))
         })?;
 
-        let load_fn = |name: &str| -> ComputeResult<CudaFunction> {
-            module.load_function(name).map_err(|e| {
-                ComputeError::ShaderCompilation(format!("Failed to load {name}: {e:?}"))
-            })
+        // Load all kernel functions
+        let load_err = |name: &str, e: cudarc::driver::result::DriverError| {
+            ComputeError::ShaderCompilation(format!("Failed to load {name}: {e:?}"))
         };
+
+        let k_matrix = module.load_function("color_matrix").map_err(|e| load_err("color_matrix", e))?;
+        let k_cdl = module.load_function("cdl_kernel").map_err(|e| load_err("cdl_kernel", e))?;
+        let k_lut1d = module.load_function("lut1d_kernel").map_err(|e| load_err("lut1d_kernel", e))?;
+        let k_lut3d = module.load_function("lut3d_kernel").map_err(|e| load_err("lut3d_kernel", e))?;
+        let k_lut3d_tetra = module.load_function("lut3d_tetra_kernel").map_err(|e| load_err("lut3d_tetra_kernel", e))?;
+        let k_resize = module.load_function("resize_kernel").map_err(|e| load_err("resize_kernel", e))?;
+        let k_blur_h = module.load_function("blur_h_kernel").map_err(|e| load_err("blur_h_kernel", e))?;
+        let k_blur_v = module.load_function("blur_v_kernel").map_err(|e| load_err("blur_v_kernel", e))?;
+        let k_flip_h = module.load_function("flip_h_kernel").map_err(|e| load_err("flip_h_kernel", e))?;
+        let k_flip_v = module.load_function("flip_v_kernel").map_err(|e| load_err("flip_v_kernel", e))?;
+        let k_rotate90 = module.load_function("rotate90_kernel").map_err(|e| load_err("rotate90_kernel", e))?;
+        let k_composite_over = module.load_function("composite_over_kernel").map_err(|e| load_err("composite_over_kernel", e))?;
+        let k_blend = module.load_function("blend_kernel").map_err(|e| load_err("blend_kernel", e))?;
+        let k_hue_curves = module.load_function("hue_curves_kernel").map_err(|e| load_err("hue_curves_kernel", e))?;
 
         Ok(Self {
             ctx,
             stream,
             module,
-            k_matrix: load_fn("color_matrix")?,
-            k_cdl: load_fn("cdl_kernel")?,
-            k_lut1d: load_fn("lut1d_kernel")?,
-            k_lut3d: load_fn("lut3d_kernel")?,
-            k_resize: load_fn("resize_kernel")?,
-            k_blur_h: load_fn("blur_h_kernel")?,
-            k_blur_v: load_fn("blur_v_kernel")?,
+            k_matrix,
+            k_cdl,
+            k_lut1d,
+            k_lut3d,
+            k_lut3d_tetra,
+            k_resize,
+            k_blur_h,
+            k_blur_v,
+            k_flip_h,
+            k_flip_v,
+            k_rotate90,
+            k_composite_over,
+            k_blend,
+            k_hue_curves,
             limits,
         })
     }
 
+    /// Check if CUDA is available.
+    pub fn is_available() -> bool {
+        CudaContext::new(0).is_ok()
+    }
+
+    /// Create launch config for 1D kernel (pixel-parallel).
+    ///
+    /// Uses 256 threads per block for simple per-pixel operations.
     fn launch_1d(&self, total: u32) -> LaunchConfig {
         let block = 256u32;
         let grid = total.div_ceil(block);
@@ -528,6 +761,9 @@ impl CudaPrimitives {
         }
     }
 
+    /// Create launch config for 2D kernel (image-parallel).
+    ///
+    /// Uses 16x16 thread blocks for spatial operations (blur, resize).
     fn launch_2d(&self, w: u32, h: u32) -> LaunchConfig {
         let block = 16u32;
         LaunchConfig {
@@ -572,9 +808,11 @@ impl GpuPrimitives for CudaPrimitives {
         builder.arg(&dst.buffer);
         builder.arg(&total);
         builder.arg(&c);
-        for &m in matrix {
-            builder.arg(&m);
-        }
+        // Pass matrix elements individually
+        builder.arg(&matrix[0]); builder.arg(&matrix[1]); builder.arg(&matrix[2]); builder.arg(&matrix[3]);
+        builder.arg(&matrix[4]); builder.arg(&matrix[5]); builder.arg(&matrix[6]); builder.arg(&matrix[7]);
+        builder.arg(&matrix[8]); builder.arg(&matrix[9]); builder.arg(&matrix[10]); builder.arg(&matrix[11]);
+        builder.arg(&matrix[12]); builder.arg(&matrix[13]); builder.arg(&matrix[14]); builder.arg(&matrix[15]);
 
         #[allow(unsafe_code)]
         unsafe { builder.launch(cfg) }.map_err(|e| {
@@ -658,6 +896,32 @@ impl GpuPrimitives for CudaPrimitives {
         Ok(())
     }
 
+    fn exec_lut3d_tetrahedral(&self, src: &Self::Handle, dst: &mut Self::Handle,
+                              lut: &[f32], size: u32) -> ComputeResult<()> {
+        let total = (src.width * src.height) as i32;
+        let c = src.channels as i32;
+        let s = size as i32;
+
+        let lut_buf = self.stream.clone_htod(lut).map_err(|e| {
+            ComputeError::BufferCreation(format!("LUT upload failed: {e:?}"))
+        })?;
+
+        let cfg = self.launch_1d(total as u32);
+        let mut builder = self.stream.launch_builder(&self.k_lut3d_tetra);
+        builder.arg(&src.buffer);
+        builder.arg(&dst.buffer);
+        builder.arg(&lut_buf);
+        builder.arg(&total);
+        builder.arg(&c);
+        builder.arg(&s);
+
+        #[allow(unsafe_code)]
+        unsafe { builder.launch(cfg) }.map_err(|e| {
+            ComputeError::OperationFailed(format!("LUT3D tetrahedral failed: {e:?}"))
+        })?;
+        Ok(())
+    }
+
     fn exec_resize(&self, src: &Self::Handle, dst: &mut Self::Handle, _filter: u32) -> ComputeResult<()> {
         let (sw, sh, c) = (src.width as i32, src.height as i32, src.channels as i32);
         let (dw, dh) = (dst.width as i32, dst.height as i32);
@@ -731,6 +995,160 @@ impl GpuPrimitives for CudaPrimitives {
         Ok(())
     }
 
+    fn exec_hue_curves(&self, src: &Self::Handle, dst: &mut Self::Handle,
+                       hue_vs_hue: &[f32], hue_vs_sat: &[f32], hue_vs_lum: &[f32],
+                       lut_size: u32) -> ComputeResult<()> {
+        let total = (src.width * src.height) as i32;
+        let c = src.channels as i32;
+        let lut_sz = lut_size as i32;
+
+        // Upload LUTs to GPU
+        let lut_hue = self.stream.clone_htod(hue_vs_hue).map_err(|e| {
+            ComputeError::BufferCreation(format!("HueCurve LUT upload failed: {e:?}"))
+        })?;
+        let lut_sat = self.stream.clone_htod(hue_vs_sat).map_err(|e| {
+            ComputeError::BufferCreation(format!("HueCurve LUT upload failed: {e:?}"))
+        })?;
+        let lut_lum = self.stream.clone_htod(hue_vs_lum).map_err(|e| {
+            ComputeError::BufferCreation(format!("HueCurve LUT upload failed: {e:?}"))
+        })?;
+
+        let cfg = self.launch_1d(total as u32);
+        let mut builder = self.stream.launch_builder(&self.k_hue_curves);
+        builder.arg(&src.buffer);
+        builder.arg(&dst.buffer);
+        builder.arg(&lut_hue);
+        builder.arg(&lut_sat);
+        builder.arg(&lut_lum);
+        builder.arg(&total);
+        builder.arg(&c);
+        builder.arg(&lut_sz);
+
+        #[allow(unsafe_code)]
+        unsafe { builder.launch(cfg) }.map_err(|e| {
+            ComputeError::OperationFailed(format!("HueCurves failed: {e:?}"))
+        })?;
+
+        Ok(())
+    }
+
+    fn exec_flip_h(&self, handle: &mut Self::Handle) -> ComputeResult<()> {
+        let (w, h, c) = (handle.width as i32, handle.height as i32, handle.channels as i32);
+        
+        let dst: CudaSlice<f32> = self.stream.alloc_zeros((w * h * c) as usize).map_err(|e| {
+            ComputeError::BufferCreation(format!("{e:?}"))
+        })?;
+
+        let cfg = self.launch_2d(handle.width, handle.height);
+        let mut builder = self.stream.launch_builder(&self.k_flip_h);
+        builder.arg(&handle.buffer);
+        builder.arg(&dst);
+        builder.arg(&w); builder.arg(&h); builder.arg(&c);
+
+        #[allow(unsafe_code)]
+        unsafe { builder.launch(cfg) }.map_err(|e| {
+            ComputeError::OperationFailed(format!("Flip H failed: {e:?}"))
+        })?;
+
+        handle.buffer = dst;
+        Ok(())
+    }
+
+    fn exec_flip_v(&self, handle: &mut Self::Handle) -> ComputeResult<()> {
+        let (w, h, c) = (handle.width as i32, handle.height as i32, handle.channels as i32);
+        
+        let dst: CudaSlice<f32> = self.stream.alloc_zeros((w * h * c) as usize).map_err(|e| {
+            ComputeError::BufferCreation(format!("{e:?}"))
+        })?;
+
+        let cfg = self.launch_2d(handle.width, handle.height);
+        let mut builder = self.stream.launch_builder(&self.k_flip_v);
+        builder.arg(&handle.buffer);
+        builder.arg(&dst);
+        builder.arg(&w); builder.arg(&h); builder.arg(&c);
+
+        #[allow(unsafe_code)]
+        unsafe { builder.launch(cfg) }.map_err(|e| {
+            ComputeError::OperationFailed(format!("Flip V failed: {e:?}"))
+        })?;
+
+        handle.buffer = dst;
+        Ok(())
+    }
+
+    fn exec_rotate_90(&self, src: &Self::Handle, n: u32) -> ComputeResult<Self::Handle> {
+        let n = n % 4;
+        if n == 0 {
+            // No rotation - copy
+            let data = self.download(src)?;
+            return self.upload(&data, src.width, src.height, src.channels);
+        }
+
+        let (sw, sh, c) = (src.width as i32, src.height as i32, src.channels as i32);
+        let (dw, dh) = if n % 2 == 1 { (sh, sw) } else { (sw, sh) };
+        let n_i32 = n as i32;
+        
+        let dst: CudaSlice<f32> = self.stream.alloc_zeros((dw * dh * c) as usize).map_err(|e| {
+            ComputeError::BufferCreation(format!("{e:?}"))
+        })?;
+
+        let cfg = self.launch_2d(dw as u32, dh as u32);
+        let mut builder = self.stream.launch_builder(&self.k_rotate90);
+        builder.arg(&src.buffer);
+        builder.arg(&dst);
+        builder.arg(&sw); builder.arg(&sh);
+        builder.arg(&dw); builder.arg(&dh);
+        builder.arg(&c); builder.arg(&n_i32);
+
+        #[allow(unsafe_code)]
+        unsafe { builder.launch(cfg) }.map_err(|e| {
+            ComputeError::OperationFailed(format!("Rotate90 failed: {e:?}"))
+        })?;
+
+        Ok(CudaImage {
+            buffer: dst,
+            width: dw as u32,
+            height: dh as u32,
+            channels: src.channels,
+        })
+    }
+
+    fn exec_composite_over(&self, fg: &Self::Handle, bg: &mut Self::Handle) -> ComputeResult<()> {
+        let total = (fg.width * fg.height) as i32;
+        let c = fg.channels as i32;
+
+        let cfg = self.launch_1d(total as u32);
+        let mut builder = self.stream.launch_builder(&self.k_composite_over);
+        builder.arg(&fg.buffer);
+        builder.arg(&bg.buffer);
+        builder.arg(&total); builder.arg(&c);
+
+        #[allow(unsafe_code)]
+        unsafe { builder.launch(cfg) }.map_err(|e| {
+            ComputeError::OperationFailed(format!("Composite Over failed: {e:?}"))
+        })?;
+        Ok(())
+    }
+
+    fn exec_blend(&self, fg: &Self::Handle, bg: &mut Self::Handle, mode: u32, opacity: f32) -> ComputeResult<()> {
+        let total = (fg.width * fg.height) as i32;
+        let c = fg.channels as i32;
+        let m = mode as i32;
+
+        let cfg = self.launch_1d(total as u32);
+        let mut builder = self.stream.launch_builder(&self.k_blend);
+        builder.arg(&fg.buffer);
+        builder.arg(&bg.buffer);
+        builder.arg(&total); builder.arg(&c);
+        builder.arg(&m); builder.arg(&opacity);
+
+        #[allow(unsafe_code)]
+        unsafe { builder.launch(cfg) }.map_err(|e| {
+            ComputeError::OperationFailed(format!("Blend failed: {e:?}"))
+        })?;
+        Ok(())
+    }
+
     fn limits(&self) -> &GpuLimits {
         &self.limits
     }
@@ -741,10 +1159,13 @@ impl GpuPrimitives for CudaPrimitives {
 }
 
 // =============================================================================
-// =============================================================================
 // VRAM Detection
 // =============================================================================
 
+/// Query available VRAM from CUDA driver.
+///
+/// Returns 60% of free memory to leave headroom for other allocations.
+/// Falls back to 4GB if query fails.
 fn query_available_memory() -> u64 {
     use cudarc::driver::sys as cuda_sys;
 
@@ -757,7 +1178,7 @@ fn query_available_memory() -> u64 {
     };
 
     if result == cuda_sys::CUresult::CUDA_SUCCESS {
-        // 60% safety margin
+        // 60% safety margin for driver overhead and other allocations
         (free as f64 * 0.6) as u64
     } else {
         4 * 1024 * 1024 * 1024 // 4GB fallback

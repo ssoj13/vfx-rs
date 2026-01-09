@@ -65,6 +65,8 @@ pub struct Config {
     active_views: Vec<String>,
     /// Shared views (OCIO v2.3+).
     shared_views: Vec<SharedView>,
+    /// Viewing rules (OCIO v2.0+) - filter views by colorspace encoding.
+    viewing_rules: Vec<ViewingRule>,
     /// Named transforms (OCIO v2.0+).
     named_transforms: Vec<NamedTransform>,
     /// Inactive color spaces (hidden from UI).
@@ -128,10 +130,26 @@ pub struct SharedView {
     pub display_colorspace: String,
     /// Look (optional).
     pub looks: Option<String>,
-    /// Rule (optional).
+    /// Rule (optional) - references a viewing_rule by name.
     pub rule: Option<String>,
     /// Description (optional).
     pub description: Option<String>,
+}
+
+/// Viewing rule definition (OCIO v2.0+).
+/// Rules filter which views are applicable based on colorspace encoding.
+#[derive(Debug, Clone)]
+pub struct ViewingRule {
+    /// Rule name (referenced by shared_views).
+    pub name: String,
+    /// List of colorspace names this rule applies to.
+    /// Mutually exclusive with encodings.
+    pub colorspaces: Vec<String>,
+    /// List of encoding types this rule applies to (e.g., "log", "scene-linear").
+    /// Mutually exclusive with colorspaces.
+    pub encodings: Vec<String>,
+    /// Custom key-value pairs.
+    pub custom_keys: Vec<(String, String)>,
 }
 
 /// File rule matching behavior.
@@ -171,6 +189,7 @@ impl Config {
             active_displays: Vec::new(),
             active_views: Vec::new(),
             shared_views: Vec::new(),
+            viewing_rules: Vec::new(),
             named_transforms: Vec::new(),
             inactive_colorspaces: Vec::new(),
             file_rules: Vec::new(),
@@ -247,6 +266,7 @@ impl Config {
             active_displays: yaml_str_list(root, "active_displays"),
             active_views: yaml_str_list(root, "active_views"),
             shared_views: parse_shared_views(root),
+            viewing_rules: parse_viewing_rules(root),
             named_transforms: Vec::new(),  // Parsed below after config is created
             inactive_colorspaces: yaml_str_list(root, "inactive_colorspaces"),
             file_rules: Vec::new(),
@@ -923,7 +943,7 @@ impl Config {
         &self,
         src: &str,
         dst: &str,
-        _optimization: OptimizationLevel,
+        optimization: OptimizationLevel,
     ) -> OcioResult<Processor> {
         let src_cs = self
             .colorspace(src)
@@ -953,7 +973,7 @@ impl Config {
         }
 
         let group = Transform::group(transforms);
-        Processor::from_transform(&group, TransformDirection::Forward)
+        Processor::from_transform_with_opts(&group, TransformDirection::Forward, optimization)
     }
 
     /// Creates a display processor.
@@ -1427,28 +1447,49 @@ impl Config {
 
         // Check file rules (v2)
         if self.version == ConfigVersion::V2 && !self.file_rules.is_empty() {
-            // Check that file rules have valid color spaces
-            for rule in &self.file_rules {
-                if !matches!(rule.kind, FileRuleKind::Default) {
-                    if self.colorspace(&rule.colorspace).is_none() {
-                        errors.push(format!(
-                            "File rule '{}' references non-existent color space '{}'",
-                            rule.name, rule.colorspace
-                        ));
-                    }
-                }
+            // Count Default rules
+            let default_count = self
+                .file_rules
+                .iter()
+                .filter(|r| matches!(r.kind, FileRuleKind::Default))
+                .count();
+
+            if default_count == 0 {
+                errors.push(
+                    "File rules must include a Default rule (OCIO v2 requirement)".to_string(),
+                );
+            } else if default_count > 1 {
+                errors.push(format!(
+                    "File rules must have exactly one Default rule, found {}",
+                    default_count
+                ));
             }
 
-            // Check that Default rule exists and is last
-            let has_default = self
+            // Check that Default rule is last
+            let last_is_default = self
                 .file_rules
                 .last()
                 .map(|r| matches!(r.kind, FileRuleKind::Default))
                 .unwrap_or(false);
-            if !has_default {
+            if !last_is_default && default_count > 0 {
                 errors.push(
-                    "File rules must end with a Default rule (OCIO v2 requirement)".to_string(),
+                    "Default rule must be the last file rule".to_string(),
                 );
+            }
+
+            // Check that all file rules have valid color spaces (including Default)
+            for rule in &self.file_rules {
+                // Default rule colorspace can be a role name or direct colorspace
+                let cs_name = &rule.colorspace;
+                let is_valid = self.colorspace(cs_name).is_some()
+                    || self.roles.get(cs_name).is_some();
+                
+                if !is_valid {
+                    errors.push(format!(
+                        "File rule '{}' references non-existent color space or role '{}'",
+                        rule.name, rule.colorspace
+                    ));
+                }
             }
         }
 
@@ -1925,6 +1966,71 @@ impl Config {
         &self.shared_views
     }
 
+    /// Gets the number of viewing rules.
+    pub fn num_viewing_rules(&self) -> usize {
+        self.viewing_rules.len()
+    }
+
+    /// Returns viewing rules (OCIO v2.0+).
+    pub fn viewing_rules(&self) -> &[ViewingRule] {
+        &self.viewing_rules
+    }
+
+    /// Gets a viewing rule by name.
+    pub fn viewing_rule(&self, name: &str) -> Option<&ViewingRule> {
+        self.viewing_rules.iter().find(|r| r.name == name)
+    }
+
+    /// Checks if a view is applicable for a given colorspace based on viewing rules.
+    /// 
+    /// If the view has no rule, it's always applicable.
+    /// If the view has a rule, checks if the colorspace matches the rule's criteria.
+    pub fn is_view_applicable(&self, view: &SharedView, colorspace_name: &str) -> bool {
+        // No rule means always applicable
+        let rule_name = match &view.rule {
+            Some(r) => r,
+            None => return true,
+        };
+        
+        // Find the rule
+        let rule = match self.viewing_rule(rule_name) {
+            Some(r) => r,
+            None => return true, // Unknown rule, assume applicable
+        };
+        
+        // Find the colorspace
+        let cs = match self.colorspace(colorspace_name) {
+            Some(cs) => cs,
+            None => return true, // Unknown colorspace, assume applicable
+        };
+        
+        // Check colorspace list match
+        if !rule.colorspaces.is_empty() {
+            return rule.colorspaces.iter().any(|n| n == colorspace_name);
+        }
+        
+        // Check encoding match
+        if !rule.encodings.is_empty() {
+            let encoding = cs.encoding();
+            if encoding != Encoding::Unknown {
+                let enc_str = encoding.as_str();
+                return rule.encodings.iter().any(|e| e == enc_str);
+            }
+            return false; // Unknown encoding, rule requires specific encoding
+        }
+        
+        // Empty rule matches everything
+        true
+    }
+
+    /// Returns filtered shared views applicable for a given colorspace.
+    pub fn applicable_views(&self, colorspace_name: &str) -> Vec<&SharedView> {
+        self.shared_views
+            .iter()
+            .filter(|v| self.is_view_applicable(v, colorspace_name))
+            .collect()
+    }
+
     // ========================================================================
     // Additional OCIO compatibility methods
     // ========================================================================
@@ -2208,6 +2314,54 @@ fn parse_shared_views(root: &Yaml) -> Vec<SharedView> {
         }
     }
     views
+}
+
+/// Parses viewing_rules from YAML (OCIO v2.0+).
+/// 
+/// Viewing rules define which views are applicable based on colorspace encoding.
+/// Example YAML:
+/// ```yaml
+/// viewing_rules:
+///   - !<Rule> {name: Any Scene-linear or Log, encodings: [log, scene-linear]}
+///   - !<Rule> {name: Any Video, encodings: [sdr-video, hdr-video]}
+///   - !<Rule> {name: ACEScg Only, colorspaces: [ACEScg]}
+/// ```
+fn parse_viewing_rules(root: &Yaml) -> Vec<ViewingRule> {
+    let mut rules = Vec::new();
+    if let Some(Yaml::Sequence(seq)) = yaml_get(root, "viewing_rules") {
+        for item in seq {
+            let item = unwrap_tagged(item);
+            if let Some(name) = yaml_str(item, "name") {
+                // Parse colorspaces list
+                let colorspaces = yaml_str_list(item, "colorspaces");
+                
+                // Parse encodings list
+                let encodings = yaml_str_list(item, "encodings");
+                
+                // Parse custom keys (any key that isn't name, colorspaces, or encodings)
+                let mut custom_keys: Vec<(String, String)> = Vec::new();
+                if let Yaml::Mapping(map) = item {
+                    for (k, v) in map.iter() {
+                        if let Some(key) = yaml_as_str(k) {
+                            if key != "name" && key != "colorspaces" && key != "encodings" {
+                                if let Some(val) = yaml_as_str(v) {
+                                    custom_keys.push((key.to_string(), val.to_string()));
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                rules.push(ViewingRule {
+                    name: name.to_string(),
+                    colorspaces,
+                    encodings,
+                    custom_keys,
+                });
+            }
+        }
+    }
+    rules
 }
 
 /// Parses RGBM (RGB + Master) array for grading transforms.
@@ -2574,5 +2728,109 @@ displays:
         let nt2 = config.named_transform("Utility - Rec709 to XYZ").unwrap();
         assert!(nt2.forward.is_some());
         assert!(nt2.inverse.is_some());
+    }
+
+    #[test]
+    fn parse_viewing_rules() {
+        let yaml = r#"
+ocio_profile_version: 2.1
+
+environment: {}
+roles:
+  default: scene_linear
+file_rules:
+  - !<Rule> {name: Default, colorspace: default}
+
+viewing_rules:
+  - !<Rule> {name: log-encoded, encodings: [log]}
+  - !<Rule> {name: scene-linear, encodings: [scene-linear]}
+  - !<Rule> {name: aces-primaries, colorspaces: [ACEScg, ACES2065-1]}
+
+colorspaces:
+  - !<ColorSpace>
+    name: scene_linear
+    encoding: scene-linear
+  - !<ColorSpace>
+    name: ACEScg
+    encoding: scene-linear
+  - !<ColorSpace>
+    name: log_cs
+    encoding: log
+  - !<ColorSpace>
+    name: raw
+    isdata: true
+
+displays:
+  sRGB:
+    - name: View
+      colorspace: scene_linear
+"#;
+        let config = Config::from_yaml_str(yaml, PathBuf::from(".")).unwrap();
+        
+        assert_eq!(config.num_viewing_rules(), 3);
+        
+        // Check log rule
+        let log_rule = config.viewing_rule("log-encoded").unwrap();
+        assert_eq!(log_rule.encodings, vec!["log"]);
+        assert!(log_rule.colorspaces.is_empty());
+        
+        // Check scene-linear rule
+        let linear_rule = config.viewing_rule("scene-linear").unwrap();
+        assert_eq!(linear_rule.encodings, vec!["scene-linear"]);
+        
+        // Check colorspace rule
+        let aces_rule = config.viewing_rule("aces-primaries").unwrap();
+        assert_eq!(aces_rule.colorspaces, vec!["ACEScg", "ACES2065-1"]);
+        assert!(aces_rule.encodings.is_empty());
+    }
+
+    #[test]
+    fn file_rule_validation() {
+        // Valid config with Default rule using role reference
+        let yaml = r#"
+ocio_profile_version: 2
+roles:
+  default: sRGB
+  reference: scene_linear
+file_rules:
+  - !<Rule> {name: exr, pattern: "*.exr", colorspace: scene_linear}
+  - !<Rule> {name: Default, colorspace: default}
+colorspaces:
+  - !<ColorSpace>
+    name: scene_linear
+  - !<ColorSpace>
+    name: sRGB
+displays:
+  sRGB:
+    - name: View
+      colorspace: sRGB
+"#;
+        let config = Config::from_yaml_str(yaml, PathBuf::from(".")).unwrap();
+        let errors = config.validate();
+        assert!(errors.is_empty(), "Valid config should have no errors: {:?}", errors);
+
+        // Invalid: Default rule references non-existent colorspace/role
+        let yaml_bad_cs = r#"
+ocio_profile_version: 2
+roles:
+  default: sRGB
+  reference: sRGB
+file_rules:
+  - !<Rule> {name: Default, colorspace: nonexistent}
+colorspaces:
+  - !<ColorSpace>
+    name: sRGB
+displays:
+  sRGB:
+    - name: View
+      colorspace: sRGB
+"#;
+        let config_bad = Config::from_yaml_str(yaml_bad_cs, PathBuf::from(".")).unwrap();
+        let errors = config_bad.validate();
+        assert!(
+            errors.iter().any(|e| e.contains("nonexistent")),
+            "Should detect invalid colorspace in Default rule: {:?}",
+            errors
+        );
     }
 }

@@ -16,7 +16,6 @@ io = ["dep:vfx-io"]
 [dependencies]
 # GPU compute (optional)
 wgpu = { version = "24", optional = true }
-cudarc = { version = "0.16", optional = true }
 bytemuck = { version = "1.21", features = ["derive"] }
 pollster = { version = "0.4", optional = true }
 
@@ -39,6 +38,10 @@ windows = { version = "0.58", features = ["Win32_Graphics_Dxgi"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nvml-wrapper = { version = "0.10", optional = true }
+
+# CUDA: Windows/Linux only (not macOS)
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+cudarc = { version = "0.18", default-features = false, features = ["driver", "nvrtc", "cuda-version-from-build-system", "dynamic-loading"], optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

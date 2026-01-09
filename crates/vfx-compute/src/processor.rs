@@ -591,6 +591,30 @@ impl Processor {
         self.executor.execute_color(img, &op)
     }
 
+    /// Apply hue curves (Hue vs Hue/Sat/Lum).
+    ///
+    /// # Arguments
+    /// * `hue_vs_hue` - Hue shift LUT (baked)
+    /// * `hue_vs_sat` - Saturation multiplier LUT (baked)
+    /// * `hue_vs_lum` - Luminance offset LUT (baked)
+    /// * `lut_size` - Number of entries in each LUT
+    pub fn apply_hue_curves(
+        &self,
+        img: &mut ComputeImage,
+        hue_vs_hue: &[f32],
+        hue_vs_sat: &[f32],
+        hue_vs_lum: &[f32],
+        lut_size: u32,
+    ) -> ComputeResult<()> {
+        let op = ColorOp::HueCurves {
+            hue_vs_hue: hue_vs_hue.to_vec(),
+            hue_vs_sat: hue_vs_sat.to_vec(),
+            hue_vs_lum: hue_vs_lum.to_vec(),
+            lut_size,
+        };
+        self.executor.execute_color(img, &op)
+    }
+
     /// Apply multiple color operations without GPU round-trips.
     ///
     /// More efficient than calling individual methods when applying

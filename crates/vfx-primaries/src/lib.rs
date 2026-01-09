@@ -141,17 +141,38 @@ impl From<ColorSpaceId> for Primaries {
 // Standard White Points
 // ============================================================================
 
-/// D65 white point chromaticity (daylight, ~6500K).
-pub const D65_XY: (f32, f32) = (0.31270, 0.32900);
-
 /// D50 white point chromaticity (~5000K).
-pub const D50_XY: (f32, f32) = (0.34567, 0.35850);
+pub const D50_XY: (f32, f32) = (0.34570, 0.35850);
+
+/// D55 white point chromaticity (~5500K).
+pub const D55_XY: (f32, f32) = (0.33242, 0.34743);
 
 /// D60 white point chromaticity (~6000K, used by ACES).
 pub const D60_XY: (f32, f32) = (0.32168, 0.33767);
 
+/// D65 white point chromaticity (daylight, ~6500K).
+pub const D65_XY: (f32, f32) = (0.31270, 0.32900);
+
+/// D75 white point chromaticity (~7500K, north sky daylight).
+pub const D75_XY: (f32, f32) = (0.29902, 0.31485);
+
 /// DCI white point chromaticity (theatrical projection).
 pub const DCI_XY: (f32, f32) = (0.31400, 0.35100);
+
+/// CIE Standard Illuminant A (incandescent, ~2856K).
+pub const ILLUM_A_XY: (f32, f32) = (0.44757, 0.40745);
+
+/// CIE Illuminant E (equal energy).
+pub const ILLUM_E_XY: (f32, f32) = (1.0 / 3.0, 1.0 / 3.0);
+
+/// CIE F2 (cool white fluorescent).
+pub const F2_XY: (f32, f32) = (0.37208, 0.37529);
+
+/// CIE F7 (D65 simulator, broadband daylight fluorescent).
+pub const F7_XY: (f32, f32) = (0.31292, 0.32933);
+
+/// CIE F11 (narrow-band white fluorescent, TL84).
+pub const F11_XY: (f32, f32) = (0.38052, 0.37713);
 
 // ============================================================================
 // Standard Color Space Primaries
@@ -312,6 +333,26 @@ pub const V_GAMUT: Primaries = Primaries {
     b: (0.1000, -0.0300),
     w: D65_XY,
     name: "V-Gamut",
+};
+
+/// DaVinci Wide Gamut primaries (Blackmagic Design).
+/// Reference: DaVinci Resolve 17 Wide Gamut Intermediate documentation.
+pub const DAVINCI_WIDE_GAMUT: Primaries = Primaries {
+    r: (0.8000, 0.3130),
+    g: (0.1682, 0.9877),
+    b: (0.0790, -0.1155),
+    w: D65_XY,
+    name: "DaVinci Wide Gamut",
+};
+
+/// DJI D-Gamut primaries.
+/// Reference: DJI Cinema Color System whitepaper.
+pub const DJI_D_GAMUT: Primaries = Primaries {
+    r: (0.71, 0.31),
+    g: (0.21, 0.88),
+    b: (0.09, -0.08),
+    w: D65_XY,
+    name: "DJI D-Gamut",
 };
 
 // ============================================================================
@@ -550,7 +591,12 @@ mod tests {
     #[test]
     fn test_primaries_have_correct_white() {
         // All primaries should have valid white points
-        let spaces = [SRGB, REC2020, DCI_P3, DISPLAY_P3, ACES_AP0, ACES_AP1];
+        let spaces = [
+            SRGB, REC2020, DCI_P3, DISPLAY_P3, ACES_AP0, ACES_AP1,
+            ARRI_WIDE_GAMUT_3, ARRI_WIDE_GAMUT_4, S_GAMUT3, S_GAMUT3_CINE,
+            CANON_CGAMUT, RED_WIDE_GAMUT, V_GAMUT,
+            DAVINCI_WIDE_GAMUT, DJI_D_GAMUT,
+        ];
         
         for space in spaces {
             let m = rgb_to_xyz_matrix(&space);

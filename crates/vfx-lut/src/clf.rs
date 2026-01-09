@@ -1056,8 +1056,65 @@ fn write_node<W: Write>(xml: &mut Writer<W>, node: &ProcessNode) -> LutResult<()
             xml.write_event(Event::End(BytesEnd::new("Range")))
                 .map_err(|e| LutError::ParseError(format!("write error: {}", e)))?;
         }
-        ProcessNode::Log(_) | ProcessNode::Exponent(_) => {
-            // Simplified - full impl would write all params
+        ProcessNode::Log(params) => {
+            let mut start = BytesStart::new("Log");
+            let style_str = match params.style {
+                LogStyle::Log10 => "log10",
+                LogStyle::Log2 => "log2",
+                LogStyle::AntiLog10 => "antiLog10",
+                LogStyle::AntiLog2 => "antiLog2",
+                LogStyle::LinToLog => "linToLog",
+                LogStyle::LogToLin => "logToLin",
+            };
+            start.push_attribute(("style", style_str));
+            xml.write_event(Event::Start(start))
+                .map_err(|e| LutError::ParseError(format!("write error: {}", e)))?;
+
+            // Write params for camera-style log
+            if matches!(params.style, LogStyle::LinToLog | LogStyle::LogToLin) {
+                let mut log_params = BytesStart::new("LogParams");
+                log_params.push_attribute(("base", params.base.to_string().as_str()));
+                log_params.push_attribute(("linSideSlope", 
+                    format!("{} {} {}", params.lin_slope[0], params.lin_slope[1], params.lin_slope[2]).as_str()));
+                log_params.push_attribute(("linSideOffset",
+                    format!("{} {} {}", params.lin_offset[0], params.lin_offset[1], params.lin_offset[2]).as_str()));
+                log_params.push_attribute(("logSideSlope",
+                    format!("{} {} {}", params.log_slope[0], params.log_slope[1], params.log_slope[2]).as_str()));
+                log_params.push_attribute(("logSideOffset",
+                    format!("{} {} {}", params.log_offset[0], params.log_offset[1], params.log_offset[2]).as_str()));
+                xml.write_event(Event::Empty(log_params))
+                    .map_err(|e| LutError::ParseError(format!("write error: {}", e)))?;
+            }
+
+            xml.write_event(Event::End(BytesEnd::new("Log")))
+                .map_err(|e| LutError::ParseError(format!("write error: {}", e)))?;
+        }
+        ProcessNode::Exponent(params) => {
+            let mut start = BytesStart::new("Exponent");
+            let style_str = match params.style {
+                ExponentStyle::Basic => "basicFwd",
+                ExponentStyle::BasicMirror => "basicMirrorFwd",
+                ExponentStyle::PassThru => "basicPassThruFwd",
+                ExponentStyle::MonCurve => "monCurveFwd",
+                ExponentStyle::MonCurveMirror => "monCurveMirrorFwd",
+            };
+            start.push_attribute(("style", style_str));
+            xml.write_event(Event::Start(start))
+                .map_err(|e| LutError::ParseError(format!("write error: {}", e)))?;
+
+            // Write ExponentParams element
+            let mut exp_params = BytesStart::new("ExponentParams");
+            exp_params.push_attribute(("exponent",
+                format!("{} {} {}", params.exponent[0], params.exponent[1], params.exponent[2]).as_str()));
+            if params.style == ExponentStyle::MonCurve || params.style == ExponentStyle::MonCurveMirror {
+                exp_params.push_attribute(("offset",
+                    format!("{} {} {}", params.offset[0], params.offset[1], params.offset[2]).as_str()));
+            }
+            xml.write_event(Event::Empty(exp_params))
+                .map_err(|e| LutError::ParseError(format!("write error: {}", e)))?;
+
+            xml.write_event(Event::End(BytesEnd::new("Exponent")))
+                .map_err(|e| LutError::ParseError(format!("write error: {}", e)))?;
         }
     }
     Ok(())
@@ -1221,5 +1278,42 @@ mod tests {
         let parsed = parse_ctf(std::io::Cursor::new(ctf_content)).unwrap();
         assert_eq!(parsed.id, "test_ctf");
         assert_eq!(parsed.nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_log_exponent_serialization() {
+        // Create ProcessList with Log and Exponent nodes
+        let mut clf = ProcessList::new("log_exp_test");
+        clf.nodes.push(ProcessNode::Log(LogParams {
+            style: LogStyle::LinToLog,
+            base: 10.0,
+            lin_slope: [1.0, 1.0, 1.0],
+            lin_offset: [0.0, 0.0, 0.0],
+            log_slope: [0.3, 0.3, 0.3],
+            log_offset: [0.5, 0.5, 0.5],
+            offset: [0.0; 3],
+        }));
+        clf.nodes.push(ProcessNode::Exponent(ExponentParams {
+            style: ExponentStyle::MonCurve,
+            exponent: [2.4, 2.4, 2.4],
+            offset: [0.055, 0.055, 0.055],
+        }));
+
+        // Serialize to buffer
+        let mut buf = Vec::new();
+        write_clf_to(&mut buf, &clf).unwrap();
+        let xml_str = String::from_utf8(buf).unwrap();
+
+        // Check Log element
+        assert!(xml_str.contains("<Log style=\"linToLog\""), "Missing Log element");
+        assert!(xml_str.contains("LogParams"), "Missing LogParams");
+        assert!(xml_str.contains("base=\"10\""), "Missing base attribute");
+        assert!(xml_str.contains("logSideSlope"), "Missing logSideSlope");
+
+        // Check Exponent element
+        assert!(xml_str.contains("<Exponent style=\"monCurveFwd\""), "Missing Exponent element");
+        assert!(xml_str.contains("ExponentParams"), "Missing ExponentParams");
+        assert!(xml_str.contains("exponent=\"2.4 2.4 2.4\""), "Missing exponent values");
+        assert!(xml_str.contains("offset=\"0.055"), "Missing offset for monCurve");
     }
 }

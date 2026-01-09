@@ -24,6 +24,9 @@ pub mod rotate;
 pub mod warp;
 pub mod aces;
 pub mod udim;
+pub mod grade;
+pub mod clamp;
+pub mod premult;
 #[cfg(feature = "viewer")]
 pub mod view;
 

@@ -237,6 +237,15 @@ enum Commands {
     #[cfg(feature = "viewer")]
     #[command(visible_alias = "v")]
     View(ViewArgs),
+
+    /// Apply CDL grading (slope/offset/power/saturation)
+    Grade(GradeArgs),
+
+    /// Clamp pixel values to range
+    Clamp(ClampArgs),
+
+    /// Control alpha premultiplication
+    Premult(PremultArgs),
 }
 
 #[derive(Args)]
@@ -736,6 +745,10 @@ struct AcesArgs {
 }
 
 /// Arguments for the `view` command.
+use commands::grade::GradeArgs;
+use commands::clamp::ClampArgs;
+use commands::premult::PremultArgs;
+
 #[cfg(feature = "viewer")]
 #[derive(Args)]
 struct ViewArgs {
@@ -871,5 +884,8 @@ fn main() -> Result<()> {
         Commands::Udim(args) => commands::udim::run(args, cli.verbose),
         #[cfg(feature = "viewer")]
         Commands::View(args) => commands::view::run(args, cli.verbose),
+        Commands::Grade(args) => commands::grade::run(args, cli.verbose, cli.allow_non_color),
+        Commands::Clamp(args) => commands::clamp::run(args, cli.verbose),
+        Commands::Premult(args) => commands::premult::run(args, cli.verbose),
     }
 }

@@ -117,6 +117,74 @@ impl Processor {
         image.inner = vfx_compute::to_image_data(&compute_img);
         Ok(())
     }
+
+    /// Apply 1D LUT.
+    ///
+    /// # Arguments
+    /// * `image` - Image to modify
+    /// * `lut` - 1D LUT data (flat array of RGB values)
+    /// * `channels` - Number of channels in LUT (typically 3)
+    #[pyo3(signature = (image, lut, channels=3))]
+    fn lut1d(&self, image: &mut Image, lut: Vec<f32>, channels: u32) -> PyResult<()> {
+        let mut compute_img = vfx_compute::from_image_data(image.as_image_data());
+        self.inner.apply_lut1d(&mut compute_img, &lut, channels)
+            .map_err(|e| PyRuntimeError::new_err(format!("LUT1D failed: {}", e)))?;
+        image.inner = vfx_compute::to_image_data(&compute_img);
+        Ok(())
+    }
+
+    /// Apply 3D LUT.
+    ///
+    /// # Arguments
+    /// * `image` - Image to modify
+    /// * `lut` - 3D LUT data (flat array of RGB values, size^3 * 3)
+    /// * `size` - LUT cube size (e.g., 33 for 33x33x33)
+    #[pyo3(signature = (image, lut, size))]
+    fn lut3d(&self, image: &mut Image, lut: Vec<f32>, size: u32) -> PyResult<()> {
+        let mut compute_img = vfx_compute::from_image_data(image.as_image_data());
+        self.inner.apply_lut3d(&mut compute_img, &lut, size)
+            .map_err(|e| PyRuntimeError::new_err(format!("LUT3D failed: {}", e)))?;
+        image.inner = vfx_compute::to_image_data(&compute_img);
+        Ok(())
+    }
+
+    /// Apply hue curves (Hue vs Hue/Sat/Lum).
+    ///
+    /// # Arguments
+    /// * `image` - Image to modify
+    /// * `hue_vs_hue` - Hue shift LUT (baked, 256 entries)
+    /// * `hue_vs_sat` - Saturation multiplier LUT (baked, 256 entries)
+    /// * `hue_vs_lum` - Luminance offset LUT (baked, 256 entries)
+    ///
+    /// # Example
+    /// ```python
+    /// # Identity LUTs (no change)
+    /// hue_shift = [0.0] * 256  # No hue shift
+    /// sat_mult = [1.0] * 256   # No sat change
+    /// lum_offset = [0.0] * 256 # No lum change
+    /// proc.hue_curves(img, hue_shift, sat_mult, lum_offset)
+    /// ```
+    #[pyo3(signature = (image, hue_vs_hue, hue_vs_sat, hue_vs_lum))]
+    fn hue_curves(
+        &self,
+        image: &mut Image,
+        hue_vs_hue: Vec<f32>,
+        hue_vs_sat: Vec<f32>,
+        hue_vs_lum: Vec<f32>,
+    ) -> PyResult<()> {
+        let lut_size = hue_vs_hue.len();
+        if hue_vs_sat.len() != lut_size || hue_vs_lum.len() != lut_size {
+            return Err(PyRuntimeError::new_err(
+                "All hue curve LUTs must have the same length"
+            ));
+        }
+
+        let mut compute_img = vfx_compute::from_image_data(image.as_image_data());
+        self.inner.apply_hue_curves(&mut compute_img, &hue_vs_hue, &hue_vs_sat, &hue_vs_lum, lut_size as u32)
+            .map_err(|e| PyRuntimeError::new_err(format!("HueCurves failed: {}", e)))?;
+        image.inner = vfx_compute::to_image_data(&compute_img);
+        Ok(())
+    }
     
     fn __repr__(&self) -> String {
         format!("Processor(backend='{}')", self.backend())

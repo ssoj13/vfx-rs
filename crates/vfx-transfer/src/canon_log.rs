@@ -1,8 +1,17 @@
-//! Canon Log 2 and Canon Log 3 transfer functions.
+//! Canon Log transfer functions (Canon Log, Canon Log 2, Canon Log 3).
 //!
-//! Reference: OCIO CanonCameras.cpp
+//! Reference: OCIO CanonCameras.cpp, Colour Science Python library
+//! Canon Log - original (C300, C500, etc.) - Thorpe 2012
 //! Canon Log 2 - used in Cinema EOS cameras (C300 Mark II, C500 Mark II, etc.)
 //! Canon Log 3 - wider dynamic range with linear segment near black
+
+/// Canon Log (original) constants - Thorpe 2012
+mod clog {
+    pub const CUT: f64 = 0.0730597;       // Cut point in log domain
+    pub const LOG_SLOPE: f64 = 0.529136;  // Log segment slope
+    pub const LIN_SCALE: f64 = 10.1596;   // Linear scaling factor
+    pub const NORM: f64 = 0.9;            // Normalization (reflection)
+}
 
 /// Canon Log 2 constants
 mod clog2 {
@@ -30,6 +39,60 @@ mod clog3 {
     pub const LIN_OFFSET: f64 = 0.12512219;
     
     pub const NORM: f64 = 0.9;  // normalization factor
+}
+
+// ============================================================================
+// Canon Log (original)
+// ============================================================================
+
+/// Encode linear to Canon Log (original)
+#[inline]
+pub fn clog_encode(linear: f32) -> f32 {
+    clog_encode_f64(linear as f64) as f32
+}
+
+/// Decode Canon Log (original) to linear
+#[inline]
+pub fn clog_decode(log: f32) -> f32 {
+    clog_decode_f64(log as f64) as f32
+}
+
+/// Encode linear to Canon Log (f64 precision)
+/// 
+/// Formula from Thorpe 2012:
+/// - if x < 0: clog = -(0.529136 * log10(-x * 10.1596 + 1) - 0.0730597)
+/// - if x >= 0: clog = 0.529136 * log10(x * 10.1596 + 1) + 0.0730597
+#[inline]
+pub fn clog_encode_f64(linear: f64) -> f64 {
+    use clog::*;
+    
+    // Denormalize (reflection to scene linear)
+    let x = linear / NORM;
+    
+    if x < 0.0 {
+        -(LOG_SLOPE * (-x * LIN_SCALE + 1.0).log10() - CUT)
+    } else {
+        LOG_SLOPE * (x * LIN_SCALE + 1.0).log10() + CUT
+    }
+}
+
+/// Decode Canon Log (original) to linear (f64 precision)
+/// 
+/// Formula from Thorpe 2012:
+/// - if clog < 0.0730597: out = -(10^((0.0730597 - clog) / 0.529136) - 1) / 10.1596
+/// - else: out = (10^((clog - 0.0730597) / 0.529136) - 1) / 10.1596
+/// Then multiply by 0.9
+#[inline]
+pub fn clog_decode_f64(log: f64) -> f64 {
+    use clog::*;
+    
+    let out = if log < CUT {
+        -(10.0_f64.powf((CUT - log) / LOG_SLOPE) - 1.0) / LIN_SCALE
+    } else {
+        (10.0_f64.powf((log - CUT) / LOG_SLOPE) - 1.0) / LIN_SCALE
+    };
+    
+    out * NORM
 }
 
 // ============================================================================
@@ -164,6 +227,103 @@ mod tests {
     
     const EPSILON: f64 = 1e-9;
     const EPSILON_F32: f32 = 1e-5;
+    
+    // ========================================================================
+    // Canon Log (original) tests
+    // ========================================================================
+    
+    #[test]
+    fn clog_roundtrip_f64() {
+        let test_values = [
+            0.0, 0.18, 0.5, 1.0, 0.01, 0.001, 0.1, 0.9,
+            -0.01, -0.001,  // negative values
+        ];
+        
+        for &lin in &test_values {
+            let encoded = clog_encode_f64(lin);
+            let decoded = clog_decode_f64(encoded);
+            assert!(
+                (lin - decoded).abs() < EPSILON,
+                "CLog roundtrip failed for {lin}: got {decoded}"
+            );
+        }
+    }
+    
+    #[test]
+    fn clog_roundtrip_f32() {
+        let test_values = [0.0f32, 0.18, 0.5, 1.0, 0.01, -0.01];
+        
+        for &lin in &test_values {
+            let encoded = clog_encode(lin);
+            let decoded = clog_decode(encoded);
+            assert!(
+                (lin - decoded).abs() < EPSILON_F32,
+                "CLog f32 roundtrip failed for {lin}: got {decoded}"
+            );
+        }
+    }
+    
+    #[test]
+    fn clog_zero() {
+        // At linear 0, should encode to the cut point
+        let encoded = clog_encode_f64(0.0);
+        assert!(
+            (encoded - clog::CUT).abs() < EPSILON,
+            "CLog(0) should be {}, got {encoded}", clog::CUT
+        );
+        
+        // Decode the cut point back to 0
+        let decoded = clog_decode_f64(clog::CUT);
+        assert!(
+            decoded.abs() < EPSILON,
+            "CLog decode({}) should be 0, got {decoded}", clog::CUT
+        );
+    }
+    
+    #[test]
+    fn clog_symmetry() {
+        // Canon Log should be anti-symmetric around (0, cut)
+        let test_values = [0.01, 0.05, 0.1, 0.5];
+        
+        for &x in &test_values {
+            let pos = clog_encode_f64(x);
+            let neg = clog_encode_f64(-x);
+            
+            // Check: pos - cut == cut - neg (anti-symmetry)
+            let diff_pos = pos - clog::CUT;
+            let diff_neg = clog::CUT - neg;
+            
+            assert!(
+                (diff_pos - diff_neg).abs() < EPSILON,
+                "CLog symmetry failed for x={x}: pos={pos}, neg={neg}"
+            );
+        }
+    }
+    
+    #[test]
+    fn clog_monotonic() {
+        // Encoding should be monotonically increasing
+        let mut prev = clog_encode_f64(-0.1);
+        for i in 1..100 {
+            let lin = -0.1 + 0.012 * i as f64;
+            let enc = clog_encode_f64(lin);
+            assert!(enc > prev, "CLog not monotonic at lin={lin}");
+            prev = enc;
+        }
+    }
+    
+    #[test]
+    fn clog_thorpe_table_values() {
+        // From Thorpe 2012 Table 2 (without code values normalization)
+        // 0% -> 7.3% IRE, 18% -> 32.8% IRE, 90% -> 62.7% IRE
+        let lin_18 = 0.18;
+        let enc_18 = clog_encode_f64(lin_18);
+        // Should be approximately 32.8% = 0.328
+        assert!(
+            (enc_18 - 0.328).abs() < 0.001,
+            "CLog(0.18) should be ~0.328, got {enc_18}"
+        );
+    }
     
     // ========================================================================
     // Canon Log 2 tests
