@@ -12,7 +12,7 @@ default = ["exr", "png", "jpeg", "tiff", "dpx", "hdr"]
 
 # Text rendering
 text = ["dep:cosmic-text"]
-exr = ["dep:exr"]
+exr = ["dep:vfx-exr"]
 png = ["dep:png"]
 jpeg = ["dep:jpeg-decoder", "dep:jpeg-encoder"]
 tiff = ["dep:tiff"]
@@ -54,7 +54,7 @@ tracing = "0.1"
 half = "2.4"
 
 # EXR support
-exr = { version = "1.74", optional = true }
+vfx-exr = { workspace = true, optional = true }
 
 # PNG support
 png = { version = "0.18", optional = true }

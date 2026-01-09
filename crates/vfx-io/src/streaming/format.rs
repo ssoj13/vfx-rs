@@ -360,7 +360,7 @@ fn estimate_tiff(path: &Path) -> IoResult<MemoryEstimate> {
 
 /// Estimates memory for EXR files.
 fn estimate_exr(path: &Path) -> IoResult<MemoryEstimate> {
-    use exr::prelude::*;
+    use vfx_exr::prelude::*;
 
     let meta = MetaData::read_from_file(path, false)
         .map_err(|e| IoError::DecodeError(format!("EXR header: {}", e)))?;

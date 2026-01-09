@@ -1,10 +1,26 @@
 //! Deep EXR data structures and I/O.
 //!
-//! Copied and adapted from custom exrs library for standalone use.
+//! Full deep EXR support using vfx-exr (custom exrs fork).
 
 use crate::{IoError, IoResult};
 use half::f16;
 use std::path::Path;
+
+// Re-export vfx-exr deep types for direct use
+pub use vfx_exr::image::deep::{
+    DeepSamples as ExrDeepSamples, 
+    DeepChannelData as ExrDeepChannelData,
+};
+pub use vfx_exr::image::read::deep::{
+    read_first_deep_layer_from_file as read_exr_deep,
+    read_all_deep_layers_from_file as read_exr_deep_all,
+    read_deep as read_exr_deep_builder,
+    DeepImage, DeepLayersImage,
+};
+pub use vfx_exr::image::write::deep::{
+    write_deep_image_to_file as write_exr_deep,
+    write_deep_scanlines_to_file as write_exr_deep_scanlines,
+};
 
 // ============================================================================
 // DeepChannelData - sample data for a single channel
@@ -291,29 +307,44 @@ pub struct DeepChannelDesc {
 
 /// Reads a deep EXR file.
 ///
-/// **Note**: Full implementation requires deep block decompression which
-/// is not available in the current exr crate version.
+/// Returns deep samples and channel descriptions.
 pub fn read_deep_exr<P: AsRef<Path>>(path: P) -> IoResult<(DeepSamples, Vec<DeepChannelDesc>)> {
-    // Check if file is actually deep
-    let meta = exr::meta::MetaData::read_from_file(path.as_ref(), false)
-        .map_err(|e| IoError::DecodeError(format!("EXR read failed: {}", e)))?;
-
-    let header = meta
-        .headers
-        .first()
-        .ok_or_else(|| IoError::DecodeError("EXR has no layers".into()))?;
-
-    if !header.deep {
-        return Err(IoError::InvalidFile("Not a deep EXR file".into()));
+    use vfx_exr::image::read::deep::read_first_deep_layer_from_file;
+    
+    let image = read_first_deep_layer_from_file(path.as_ref())
+        .map_err(|e| IoError::DecodeError(format!("Deep EXR read failed: {}", e)))?;
+    
+    let layer = &image.layer_data;
+    let exr_samples = &layer.channel_data.list[0].sample_data;
+    
+    // Convert vfx-exr DeepSamples to our format
+    let mut samples = DeepSamples::new(exr_samples.width, exr_samples.height);
+    samples.sample_offsets = exr_samples.sample_offsets.clone();
+    
+    // Convert channels
+    for exr_channel in &exr_samples.channels {
+        let channel = match exr_channel {
+            ExrDeepChannelData::F16(v) => DeepChannelData::F16(v.clone()),
+            ExrDeepChannelData::F32(v) => DeepChannelData::F32(v.clone()),
+            ExrDeepChannelData::U32(v) => DeepChannelData::U32(v.clone()),
+        };
+        samples.channels.push(channel);
     }
-
-    // For now, we can only read the structure, not the actual deep data
-    // because the exr crate on crates.io doesn't support deep block decompression
-    Err(IoError::UnsupportedFeature(
-        "Deep EXR reading requires updated exrs crate with deep data support. \
-         Use is_deep_exr() and probe_deep_exr() for metadata inspection."
-            .into(),
-    ))
+    
+    // Build channel descriptions
+    let channels: Vec<DeepChannelDesc> = layer.channel_data.list.iter()
+        .map(|ch| DeepChannelDesc {
+            name: ch.name.to_string(),
+            sample_type: match ch.sample_data.channels.first() {
+                Some(ExrDeepChannelData::F16(_)) => SampleType::F16,
+                Some(ExrDeepChannelData::F32(_)) => SampleType::F32,
+                Some(ExrDeepChannelData::U32(_)) => SampleType::U32,
+                None => SampleType::F32, // default
+            },
+        })
+        .collect();
+    
+    Ok((samples, channels))
 }
 
 /// Writes deep samples to an EXR file.
@@ -336,7 +367,7 @@ pub fn write_deep_exr<P: AsRef<Path>>(
 
 /// Checks if an EXR file contains deep data (reads header only).
 pub fn is_deep_exr<P: AsRef<Path>>(path: P) -> IoResult<bool> {
-    let meta = exr::meta::MetaData::read_from_file(path.as_ref(), false)
+    let meta = vfx_exr::meta::MetaData::read_from_file(path.as_ref(), false)
         .map_err(|e| IoError::DecodeError(format!("EXR probe failed: {}", e)))?;
 
     Ok(meta.headers.iter().any(|h| h.deep))
@@ -361,7 +392,7 @@ pub struct DeepExrStats {
 
 /// Gets statistics about a deep EXR file without loading data.
 pub fn probe_deep_exr<P: AsRef<Path>>(path: P) -> IoResult<DeepExrStats> {
-    let meta = exr::meta::MetaData::read_from_file(path.as_ref(), false)
+    let meta = vfx_exr::meta::MetaData::read_from_file(path.as_ref(), false)
         .map_err(|e| IoError::DecodeError(format!("EXR probe failed: {}", e)))?;
 
     let header = meta

@@ -94,8 +94,8 @@ pub enum Compression {
 
 impl Compression {
     /// Convert to exr crate's compression type.
-    fn to_exr(&self) -> exr::prelude::Compression {
-        use exr::prelude::Compression as ExrComp;
+    fn to_exr(&self) -> vfx_exr::prelude::Compression {
+        use vfx_exr::prelude::Compression as ExrComp;
         match self {
             Compression::None => ExrComp::Uncompressed,
             Compression::Rle => ExrComp::RLE,
@@ -218,8 +218,8 @@ impl ExrReader {
     ///
     /// Internal implementation shared by file and memory reading.
     fn read_impl(&self, data: &[u8]) -> IoResult<ImageData> {
-        use exr::prelude::*;
-        use exr::math::Vec2;
+        use vfx_exr::prelude::*;
+        use vfx_exr::math::Vec2;
 
         // Read first RGBA layer using builder pattern
         let image = read()
@@ -278,8 +278,8 @@ impl ExrReader {
     ///
     /// Note: deep data is not supported by the `exr` crate, so deep layers will fail to load.
     pub fn read_layers<P: AsRef<Path>>(&self, path: P) -> IoResult<LayeredImage> {
-        use exr::image::read::read_all_flat_layers_from_file;
-        use exr::image::FlatSamples;
+        use vfx_exr::image::read::read_all_flat_layers_from_file;
+        use vfx_exr::image::FlatSamples;
 
         let path = path.as_ref();
         let data = std::fs::read(path)?;
@@ -366,7 +366,7 @@ impl ExrReader {
 
     /// Extracts metadata from EXR headers.
     fn extract_metadata(&self, data: &[u8], metadata: &mut Metadata) -> IoResult<()> {
-        let meta = exr::meta::MetaData::read_from_buffered(Cursor::new(data), false)
+        let meta = vfx_exr::meta::MetaData::read_from_buffered(Cursor::new(data), false)
             .map_err(|e| IoError::DecodeError(format!("EXR metadata parse error: {}", e)))?;
 
         for (layer_idx, header) in meta.headers.iter().enumerate() {
@@ -559,7 +559,7 @@ impl ExrWriter {
 
     /// Internal write implementation.
     fn write_impl(&self, image: &ImageData) -> IoResult<Vec<u8>> {
-        use exr::prelude::*;
+        use vfx_exr::prelude::*;
 
         if image.format == PixelFormat::U32 {
             let layer_name = self
@@ -629,11 +629,11 @@ impl ExrWriter {
 
     /// Internal multi-layer write implementation.
     fn write_layers_impl(&self, image: &LayeredImage) -> IoResult<Vec<u8>> {
-        use exr::image::FlatSamples;
-        use exr::meta::attribute::Text;
-        use exr::meta::header::ImageAttributes;
-        use exr::prelude::*;
-        use exr::math::Vec2;
+        use vfx_exr::image::FlatSamples;
+        use vfx_exr::meta::attribute::Text;
+        use vfx_exr::meta::header::ImageAttributes;
+        use vfx_exr::prelude::*;
+        use vfx_exr::math::Vec2;
 
         let first = image.layers.first().ok_or_else(|| {
             IoError::EncodeError("EXR encode error: no layers provided".into())
@@ -845,7 +845,7 @@ pub fn write_layers<P: AsRef<Path>>(path: P, image: &LayeredImage) -> IoResult<(
 ///
 /// Reads only the header metadata, making it very fast for large files.
 pub fn probe_dimensions<P: AsRef<Path>>(path: P) -> IoResult<(u32, u32)> {
-    let meta = exr::meta::MetaData::read_from_file(path.as_ref(), false)
+    let meta = vfx_exr::meta::MetaData::read_from_file(path.as_ref(), false)
         .map_err(|e| IoError::DecodeError(format!("EXR probe failed: {}", e)))?;
     
     if let Some(header) = meta.headers.first() {

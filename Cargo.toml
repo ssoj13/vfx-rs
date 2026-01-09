@@ -2,6 +2,7 @@
 resolver = "2"
 
 members = [
+    "crates/vfx-exr",
     "crates/vfx-core",
     "crates/vfx-math",
     "crates/vfx-lut",
@@ -39,6 +40,7 @@ vfx-io = { path = "crates/vfx-io" }
 vfx-ops = { path = "crates/vfx-ops" }
 vfx-compute = { path = "crates/vfx-compute" }
 vfx-ocio = { path = "crates/vfx-ocio" }
+vfx-exr = { path = "crates/vfx-exr" }
 
 # Math & SIMD
 glam = "0.30"

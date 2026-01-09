@@ -27,8 +27,8 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
-use exr::prelude::*;
-use exr::meta::BlockDescription;
+use vfx_exr::prelude::*;
+use vfx_exr::meta::BlockDescription;
 
 use crate::{IoResult, IoError, PixelFormat, ImageData};
 use super::traits::{Region, StreamingSource, RGBA_CHANNELS};
@@ -141,7 +141,7 @@ impl ExrStreamingSource {
         let reader = BufReader::new(file);
         
         // Use filtered reading - only process tiles in our range
-        let image = exr::prelude::read()
+        let image = vfx_exr::prelude::read()
             .no_deep_data()
             .largest_resolution_level()
             .rgba_channels(
@@ -356,7 +356,7 @@ impl super::traits::StreamingOutput for ExrStreamingOutput {
 mod tests {
     #[test]
     fn test_format_detection() {
-        use exr::prelude::SampleType;
+        use vfx_exr::prelude::SampleType;
         
         let samples = [SampleType::F16, SampleType::F32];
         let has_f32 = samples.iter().any(|s| matches!(s, SampleType::F32));
