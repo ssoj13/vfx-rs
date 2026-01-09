@@ -155,10 +155,14 @@ pub struct ViewerState {
     pub histogram: Option<Histogram>,
     /// Show histogram panel.
     pub show_histogram: bool,
+    /// Waveform data.
+    pub waveform: Option<Waveform>,
+    /// Show waveform panel.
+    pub show_waveform: bool,
 }
 
 /// RGB histogram data.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Histogram {
     /// Red channel bins (256 values, normalized 0-1).
     pub r: [f32; 256],
@@ -168,6 +172,43 @@ pub struct Histogram {
     pub b: [f32; 256],
     /// Luminance bins.
     pub luma: [f32; 256],
+}
+
+impl Default for Histogram {
+    fn default() -> Self {
+        Self {
+            r: [0.0; 256],
+            g: [0.0; 256],
+            b: [0.0; 256],
+            luma: [0.0; 256],
+        }
+    }
+}
+
+/// Waveform data - luminance distribution per column.
+/// Width is downsampled to WAVEFORM_WIDTH, height is 256 bins.
+pub const WAVEFORM_WIDTH: usize = 256;
+pub const WAVEFORM_HEIGHT: usize = 256;
+
+#[derive(Debug, Clone)]
+pub struct Waveform {
+    /// RGB waveform data [column][row] normalized 0-1.
+    /// Each column shows vertical distribution of luma values.
+    pub r: Vec<Vec<f32>>,
+    pub g: Vec<Vec<f32>>,
+    pub b: Vec<Vec<f32>>,
+    pub luma: Vec<Vec<f32>>,
+}
+
+impl Default for Waveform {
+    fn default() -> Self {
+        Self {
+            r: vec![vec![0.0; WAVEFORM_HEIGHT]; WAVEFORM_WIDTH],
+            g: vec![vec![0.0; WAVEFORM_HEIGHT]; WAVEFORM_WIDTH],
+            b: vec![vec![0.0; WAVEFORM_HEIGHT]; WAVEFORM_WIDTH],
+            luma: vec![vec![0.0; WAVEFORM_HEIGHT]; WAVEFORM_WIDTH],
+        }
+    }
 }
 
 impl Default for ViewerState {
@@ -193,6 +234,8 @@ impl Default for ViewerState {
             cursor_color: None,
             histogram: None,
             show_histogram: false,
+            waveform: None,
+            show_waveform: false,
         }
     }
 }

@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 use egui::Color32;
 
-use crate::state::{ChannelMode, Histogram};
+use crate::state::{ChannelMode, Histogram, Waveform};
 
 /// Generation counter for invalidating stale results.
 pub type Generation = u64;
@@ -121,4 +121,7 @@ pub enum ViewerEvent {
 
     /// Histogram data.
     HistogramReady(Histogram),
+
+    /// Waveform data.
+    WaveformReady(Waveform),
 }

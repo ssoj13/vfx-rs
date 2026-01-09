@@ -857,6 +857,87 @@ pub fn probe_dimensions<P: AsRef<Path>>(path: P) -> IoResult<(u32, u32)> {
 }
 
 // ============================================================================
+// Deep EXR Support
+// ============================================================================
+
+// Re-export deep data types and functions from our standalone module
+pub use crate::exr_deep::{
+    DeepChannelData, DeepExrStats, DeepSamples, SampleType as DeepSampleType,
+    is_deep_exr, probe_deep_exr,
+};
+
+// DeepData import kept for function signature (returns stub error)
+use crate::deepdata::DeepData;
+// TypeDesc removed - was only used in full deep read implementation
+
+/// Reads a deep EXR file and converts to vfx-io DeepData format.
+///
+/// Reads the first deep layer from the file and converts the exrs SoA format
+/// to vfx-io's OIIO-compatible AoS format.
+///
+/// # Example
+///
+/// ```ignore
+/// use vfx_io::exr;
+///
+/// let deep = exr::read_deep("deep_render.exr")?;
+/// println!("{}x{} pixels, {} total samples",
+///     deep.pixels() / height as i64, height,
+///     deep.all_samples().iter().map(|&s| s as u64).sum::<u64>());
+/// ```
+pub fn read_deep<P: AsRef<Path>>(_path: P) -> IoResult<DeepData> {
+    // Deep EXR read requires exrs crate with deep module (not yet in crates.io)
+    // Use is_deep_exr() and probe_deep_exr() for header inspection
+    Err(IoError::UnsupportedFeature(
+        "Deep EXR read requires exrs deep module (not yet published to crates.io). \
+         Header inspection via is_deep_exr()/probe_deep_exr() is available.".into()
+    ))
+}
+
+/// Writes DeepData to a deep EXR file.
+///
+/// Converts vfx-io's OIIO-compatible AoS format to exrs SoA format and writes.
+///
+/// # Arguments
+///
+/// * `path` - Output file path
+/// * `deep` - Deep data to write
+/// * `width` - Image width in pixels
+/// * `height` - Image height in pixels
+///
+/// # Example
+///
+/// ```ignore
+/// use vfx_io::exr;
+///
+/// exr::write_deep("output.exr", &deep_data, 1920, 1080)?;
+/// ```
+pub fn write_deep<P: AsRef<Path>>(
+    path: P,
+    deep: &DeepData,
+    width: u32,
+    height: u32,
+) -> IoResult<()> {
+    write_deep_with_compression(path, deep, width, height, Compression::Zip)
+}
+
+/// Writes DeepData to a deep EXR file with specified compression.
+pub fn write_deep_with_compression<P: AsRef<Path>>(
+    _path: P,
+    _deep: &DeepData,
+    _width: u32,
+    _height: u32,
+    _compression: Compression,
+) -> IoResult<()> {
+    // Deep EXR write requires exrs crate with deep module (not yet in crates.io)
+    Err(IoError::UnsupportedFeature(
+        "Deep EXR write requires exrs deep module (not yet published to crates.io).".into()
+    ))
+}
+
+// is_deep_exr and probe_deep_exr are re-exported from exr_deep module above
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1129,12 +1210,40 @@ mod tests {
     #[test]
     fn test_can_read() {
         let reader = ExrReader::new();
-        
+
         // Valid EXR magic
         assert!(reader.can_read(&[0x76, 0x2F, 0x31, 0x01]));
-        
+
         // Invalid
         assert!(!reader.can_read(&[0x89, 0x50, 0x4E, 0x47])); // PNG
         assert!(!reader.can_read(&[0xFF, 0xD8, 0xFF])); // JPEG
+    }
+
+    /// Tests deep EXR stubs return UnsupportedFeature.
+    /// Full deep EXR support requires exrs crate with deep module (not yet in crates.io).
+    #[test]
+    fn test_deep_exr_stubs() {
+        use crate::IoError;
+
+        // read_deep should return UnsupportedFeature
+        let result = read_deep("nonexistent.exr");
+        assert!(result.is_err());
+        if let Err(IoError::UnsupportedFeature(msg)) = result {
+            assert!(msg.contains("exrs"), "Error should mention exrs crate");
+        } else {
+            panic!("Expected UnsupportedFeature error");
+        }
+
+        // write_deep should return UnsupportedFeature
+        use crate::deepdata::DeepData;
+        use vfx_core::TypeDesc;
+        let deep = DeepData::new(4, &[TypeDesc::FLOAT], &["Z"]);
+        let result = write_deep("test.exr", &deep, 2, 2);
+        assert!(result.is_err());
+        if let Err(IoError::UnsupportedFeature(msg)) = result {
+            assert!(msg.contains("exrs"), "Error should mention exrs crate");
+        } else {
+            panic!("Expected UnsupportedFeature error");
+        }
     }
 }

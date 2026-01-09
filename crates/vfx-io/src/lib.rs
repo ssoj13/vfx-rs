@@ -140,6 +140,14 @@ pub mod avif;
 #[cfg(feature = "jp2")]
 pub mod jp2;
 
+/// ARRI Raw format (.ari) - requires ARRI SDK for decode.
+pub mod arriraw;
+/// RED REDCODE format (.r3d) - requires RED SDK for decode.
+pub mod redcode;
+/// Deep EXR types and utilities (stub until exrs crate publishes deep support).
+#[cfg(feature = "exr")]
+pub mod exr_deep;
+
 pub mod sequence;
 pub mod cache;
 pub mod texture;
@@ -227,7 +235,10 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
 
         #[cfg(not(feature = "jp2"))]
         Format::Jp2 => Err(IoError::UnsupportedFormat("JPEG2000 support requires 'jp2' feature".into())),
-        
+
+        Format::ArriRaw => arriraw::decode(path),
+        Format::RedCode => redcode::decode(path, 0),
+
         Format::Unknown => Err(IoError::UnsupportedFormat(
             path.extension()
                 .and_then(|e| e.to_str())
@@ -307,7 +318,11 @@ pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
 
         // JP2 is read-only - the jpeg2k crate doesn't support creating new images
         Format::Jp2 => Err(IoError::UnsupportedFormat("JPEG2000 write not supported (read-only format)".into())),
-        
+
+        // Camera raw formats are read-only
+        Format::ArriRaw => Err(IoError::UnsupportedFormat("ARRIRAW write not supported (camera raw format)".into())),
+        Format::RedCode => Err(IoError::UnsupportedFormat("REDCODE write not supported (camera raw format)".into())),
+
         Format::Unknown => Err(IoError::UnsupportedFormat(
             path.extension()
                 .and_then(|e| e.to_str())

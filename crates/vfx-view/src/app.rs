@@ -210,6 +210,9 @@ impl ViewerApp {
                 ViewerEvent::HistogramReady(hist) => {
                     self.state.histogram = Some(hist);
                 }
+                ViewerEvent::WaveformReady(wf) => {
+                    self.state.waveform = Some(wf);
+                }
             }
         }
         had_events
@@ -283,6 +286,11 @@ impl ViewerApp {
             // Toggle histogram
             if i.key_pressed(egui::Key::I) {
                 self.state.show_histogram = !self.state.show_histogram;
+            }
+
+            // Toggle waveform
+            if i.key_pressed(egui::Key::W) {
+                self.state.show_waveform = !self.state.show_waveform;
             }
 
             // Scroll zoom - use mouse position for zoom-to-cursor
@@ -612,6 +620,80 @@ impl ViewerApp {
         }
     }
 
+    /// Draw waveform panel.
+    fn draw_waveform(&self, ctx: &egui::Context) {
+        if !self.state.show_waveform {
+            return;
+        }
+
+        let Some(wf) = &self.state.waveform else { return };
+
+        egui::TopBottomPanel::bottom("waveform")
+            .default_height(200.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("Waveform");
+                    ui.separator();
+                    ui.label("Luma");
+                });
+                ui.separator();
+
+                let (rect, _) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), ui.available_height()),
+                    egui::Sense::hover(),
+                );
+                self.paint_waveform(ui.painter(), rect, wf);
+            });
+    }
+
+    /// Paint waveform display.
+    fn paint_waveform(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        wf: &crate::state::Waveform,
+    ) {
+        use crate::state::{WAVEFORM_HEIGHT, WAVEFORM_WIDTH};
+
+        // Background
+        painter.rect_filled(rect, 2.0, Color32::from_gray(20));
+
+        let w = rect.width();
+        let h = rect.height();
+        let cell_w = w / WAVEFORM_WIDTH as f32;
+        let cell_h = h / WAVEFORM_HEIGHT as f32;
+
+        // Draw luma waveform (or could do RGB parade)
+        for col in 0..WAVEFORM_WIDTH {
+            let x = rect.left() + col as f32 * cell_w;
+            for row in 0..WAVEFORM_HEIGHT {
+                let val = wf.luma[col][row];
+                if val > 0.01 {
+                    // Invert row: 0 at bottom, 255 at top
+                    let y = rect.bottom() - (row as f32 + 1.0) * cell_h;
+                    let brightness = (val.sqrt() * 255.0).min(255.0) as u8;
+                    let color = Color32::from_gray(brightness);
+                    let cell_rect = egui::Rect::from_min_size(
+                        egui::pos2(x, y),
+                        Vec2::new(cell_w.max(1.0), cell_h.max(1.0)),
+                    );
+                    painter.rect_filled(cell_rect, 0.0, color);
+                }
+            }
+        }
+
+        // Draw guide lines at 0%, 50%, 100%
+        let line_color = Color32::from_rgba_unmultiplied(255, 255, 255, 40);
+        for pct in [0.0, 0.5, 1.0] {
+            let y = rect.bottom() - pct * h;
+            painter.line_segment(
+                [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+                egui::Stroke::new(1.0, line_color),
+            );
+        }
+    }
+
     /// Draw bottom hints panel.
     fn draw_hints(&self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("hints").show(ctx, |ui| {
@@ -625,7 +707,7 @@ impl ViewerApp {
                     ui.separator();
                 }
 
-                ui.label("O: Open | F: Fit | H: Home | +/-: Zoom | R/G/B/A/C/L: Channels | P: Pick | Esc: Exit");
+                ui.label("O:Open F:Fit H:Home +/-:Zoom RGBACL:Ch I:Hist W:Wave P:Pick Esc:Exit");
             });
         });
     }
@@ -762,6 +844,7 @@ impl eframe::App for ViewerApp {
         // Draw UI
         self.draw_controls(ctx);
         self.draw_hints(ctx);
+        self.draw_waveform(ctx);
         self.draw_histogram(ctx);
         self.draw_canvas(ctx);
 

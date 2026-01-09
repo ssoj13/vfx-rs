@@ -11,7 +11,10 @@ use vfx_io::{ImageData, LayeredImage};
 use vfx_ocio::Config;
 
 use crate::messages::{Generation, ViewerEvent, ViewerMsg};
-use crate::state::{ChannelMode, Histogram, DEFAULT_EXPOSURE, DEFAULT_VIEWPORT};
+use crate::state::{
+    ChannelMode, Histogram, Waveform, DEFAULT_EXPOSURE, DEFAULT_VIEWPORT,
+    WAVEFORM_HEIGHT, WAVEFORM_WIDTH,
+};
 
 // =============================================================================
 // Constants
@@ -361,8 +364,9 @@ impl ViewerHandler {
             pixels,
         });
 
-        // Compute histogram from raw (pre-OCIO) data
+        // Compute histogram and waveform from raw (pre-OCIO) data
         self.compute_histogram(&processed);
+        self.compute_waveform(&processed);
     }
 
     /// Applies channel isolation.
@@ -632,5 +636,61 @@ impl ViewerHandler {
         }
 
         self.send(ViewerEvent::HistogramReady(hist));
+    }
+
+    /// Computes waveform from raw image data.
+    fn compute_waveform(&self, img: &ImageData) {
+        let pixels = img.to_f32();
+        let channels = img.channels as usize;
+        let w = img.width as usize;
+        let h = img.height as usize;
+
+        let mut wf = Waveform::default();
+        let mut counts_r = vec![vec![0u32; WAVEFORM_HEIGHT]; WAVEFORM_WIDTH];
+        let mut counts_g = vec![vec![0u32; WAVEFORM_HEIGHT]; WAVEFORM_WIDTH];
+        let mut counts_b = vec![vec![0u32; WAVEFORM_HEIGHT]; WAVEFORM_WIDTH];
+        let mut counts_l = vec![vec![0u32; WAVEFORM_HEIGHT]; WAVEFORM_WIDTH];
+
+        // Map image columns to waveform columns
+        for y in 0..h {
+            for x in 0..w {
+                let i = y * w + x;
+                let r = pixels[i * channels];
+                let g = if channels > 1 { pixels[i * channels + 1] } else { r };
+                let b = if channels > 2 { pixels[i * channels + 2] } else { r };
+                let luma = LUMA_R * r + LUMA_G * g + LUMA_B * b;
+
+                // Map x to waveform column
+                let col = (x * WAVEFORM_WIDTH / w).min(WAVEFORM_WIDTH - 1);
+
+                // Map values to vertical bins (inverted: 0=bottom, 255=top)
+                let bin_r = (r.clamp(0.0, 1.0) * 255.0) as usize;
+                let bin_g = (g.clamp(0.0, 1.0) * 255.0) as usize;
+                let bin_b = (b.clamp(0.0, 1.0) * 255.0) as usize;
+                let bin_l = (luma.clamp(0.0, 1.0) * 255.0) as usize;
+
+                counts_r[col][bin_r.min(255)] += 1;
+                counts_g[col][bin_g.min(255)] += 1;
+                counts_b[col][bin_b.min(255)] += 1;
+                counts_l[col][bin_l.min(255)] += 1;
+            }
+        }
+
+        // Normalize each column
+        for col in 0..WAVEFORM_WIDTH {
+            let max_r = counts_r[col].iter().copied().max().unwrap_or(1).max(1) as f32;
+            let max_g = counts_g[col].iter().copied().max().unwrap_or(1).max(1) as f32;
+            let max_b = counts_b[col].iter().copied().max().unwrap_or(1).max(1) as f32;
+            let max_l = counts_l[col].iter().copied().max().unwrap_or(1).max(1) as f32;
+
+            for row in 0..WAVEFORM_HEIGHT {
+                wf.r[col][row] = counts_r[col][row] as f32 / max_r;
+                wf.g[col][row] = counts_g[col][row] as f32 / max_g;
+                wf.b[col][row] = counts_b[col][row] as f32 / max_b;
+                wf.luma[col][row] = counts_l[col][row] as f32 / max_l;
+            }
+        }
+
+        self.send(ViewerEvent::WaveformReady(wf));
     }
 }

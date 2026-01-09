@@ -72,6 +72,9 @@ libheif-rs = { version = "2.5", optional = true }
 # For DPX (manual implementation)
 byteorder = "1.5"
 
+# For deep EXR channel lists
+smallvec = "1.15"
+
 # WebP/AVIF support via image crate
 # WebP: full encode/decode
 # AVIF: write-only (ravif encoder). For AVIF read support:

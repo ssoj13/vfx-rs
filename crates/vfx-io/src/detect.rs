@@ -30,6 +30,10 @@ pub enum Format {
     Avif,
     /// JPEG2000 format.
     Jp2,
+    /// ARRI Raw format (.ari).
+    ArriRaw,
+    /// RED REDCODE format (.r3d).
+    RedCode,
     /// Unknown/unsupported format.
     Unknown,
 }
@@ -71,6 +75,8 @@ impl Format {
             Some("webp") => Format::WebP,
             Some("avif") => Format::Avif,
             Some("jp2") | Some("j2k") | Some("j2c") | Some("jpx") => Format::Jp2,
+            Some("ari") => Format::ArriRaw,
+            Some("r3d") => Format::RedCode,
             _ => Format::Unknown,
         }
     }
@@ -163,6 +169,16 @@ impl Format {
             }
         }
 
+        // ARRIRAW: starts with "ARRI"
+        if bytes.len() >= 4 && bytes[0..4] == [b'A', b'R', b'R', b'I'] {
+            return Format::ArriRaw;
+        }
+
+        // REDCODE: starts with "RED1" or "RED2"
+        if bytes.len() >= 4 && bytes[0..3] == [b'R', b'E', b'D'] && (bytes[3] == b'1' || bytes[3] == b'2') {
+            return Format::RedCode;
+        }
+
         Format::Unknown
     }
     
@@ -179,6 +195,8 @@ impl Format {
             Format::WebP => "webp",
             Format::Avif => "avif",
             Format::Jp2 => "jp2",
+            Format::ArriRaw => "ari",
+            Format::RedCode => "r3d",
             Format::Unknown => "",
         }
     }
@@ -196,13 +214,15 @@ impl Format {
             Format::WebP => "image/webp",
             Format::Avif => "image/avif",
             Format::Jp2 => "image/jp2",
+            Format::ArriRaw => "image/x-arri-raw",
+            Format::RedCode => "image/x-red-r3d",
             Format::Unknown => "application/octet-stream",
         }
     }
     
     /// Returns true if this format supports HDR/float data.
     pub fn supports_hdr(&self) -> bool {
-        matches!(self, Format::Exr | Format::Tiff | Format::Hdr | Format::Heif | Format::Avif)
+        matches!(self, Format::Exr | Format::Tiff | Format::Hdr | Format::Heif | Format::Avif | Format::ArriRaw | Format::RedCode)
     }
     
     /// Returns true if this format supports alpha channel.

@@ -52,6 +52,14 @@ pub enum IoError {
     /// Parse error (filename patterns, metadata, etc.).
     #[error("parse error: {0}")]
     Parse(String),
+
+    /// Format-specific error.
+    #[error("format error: {0}")]
+    Format(String),
+
+    /// Feature requires external SDK or dependency.
+    #[error("feature unavailable: {0}")]
+    UnsupportedFeature(String),
 }
 
 /// Result type for I/O operations.
