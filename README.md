@@ -15,6 +15,7 @@ OpenImageIO and OpenColorIO are industry-standard tools that power countless pro
 
 - **Simple builds** - `cargo build` handles everything, no separate toolchain setup
 - **Memory safety** - Rust's guarantees help prevent common bugs in image processing code
+- **Deep data support** - Full OpenEXR deep compositing via vfx-exr
 - **GPU acceleration** - wgpu (Vulkan/Metal/DX12) and CUDA backends
 - **Python bindings** - PyO3 for pipeline integration
 - **Cross-platform** - Same code runs on Windows, Linux, macOS
@@ -23,13 +24,14 @@ OpenImageIO and OpenColorIO are industry-standard tools that power countless pro
 
 | Category | Features |
 |----------|----------|
-| **Formats** | EXR, PNG, JPEG, TIFF, DPX, HDR, WebP, PSD (read), TX |
+| **EXR** | Deep data, multi-layer, mip/rip maps, tiled, all compression (except DWA) |
+| **Formats** | EXR, PNG, JPEG, TIFF, DPX, HDR, WebP, HEIF, PSD (read), TX |
 | **Color** | sRGB, Rec.709, Rec.2020, DCI-P3, ACEScg, ACES2065-1 |
 | **Transfer Functions** | sRGB, PQ, HLG, LogC3, LogC4, S-Log2/3, V-Log, Canon Log 2/3, Apple Log, ACEScc/cct, REDLog |
-| **LUTs** | .cube, .clf, .spi1d/.spi3d, .csp |
-| **Operations** | Resize, Crop, Rotate, Flip, Blur, Sharpen, Composite, Grade |
+| **LUTs** | .cube, .clf, .spi1d/.spi3d, .csp, .cdl, 15 formats total |
+| **Operations** | Resize, Crop, Rotate, Flip, Blur, Sharpen, Composite, Grade, FFT |
 | **ACES** | IDT, RRT, ODT, LMT transforms |
-| **I/O** | Streaming read/write, tiled caching, multi-layer EXR |
+| **I/O** | Streaming read/write, tiled caching, multi-layer EXR, deep data |
 | **GPU** | Auto backend selection, automatic tiling, operation fusion |
 
 ## Quick Start
@@ -38,7 +40,7 @@ OpenImageIO and OpenColorIO are industry-standard tools that power countless pro
 # Install CLI
 cargo install vfx-cli
 
-# Get image info
+# Get image info (works with deep EXR)
 vfx info render.exr
 
 # Convert EXR to PNG with sRGB transform
@@ -54,18 +56,39 @@ vfx aces linear.exr -o preview.png -t rrt-odt
 vfx batch "renders/*.exr" -o processed/ --op resize --args scale=0.5
 ```
 
-## ACES Workflow Example
+## Deep EXR Support
 
-```bash
-# 1. Camera footage -> ACEScg (Input Device Transform)
-vfx aces camera.dpx -o working.exr -t idt
+vfx-rs includes **vfx-exr**, a full fork of [exrs](https://github.com/johannesvollmer/exrs) with complete deep data support:
 
-# 2. Grade in ACEScg (linear, wide-gamut)
-vfx color working.exr -o graded.exr --exposure 0.3 --saturation 1.1
+```rust
+use vfx_io::exr_deep::{read_exr_deep, write_exr_deep, DeepImage};
 
-# 3. ACEScg -> sRGB display (Reference Rendering + Output Transform)
-vfx aces graded.exr -o final.png -t rrt-odt
+// Read deep EXR file
+let deep_image: DeepImage = read_exr_deep("deep_render.exr")?;
+
+// Access deep samples per pixel
+for pixel in deep_image.layer.channel_data.deep_samples.pixels() {
+    println!("Pixel has {} samples", pixel.sample_count);
+    for i in 0..pixel.sample_count {
+        let depth = pixel.get_f32(0, i);  // Z channel
+        let alpha = pixel.get_f32(1, i);  // A channel
+    }
+}
+
+// Write deep EXR
+write_exr_deep("output_deep.exr", &deep_image)?;
 ```
+
+### Deep Data Features
+
+| Feature | Status |
+|---------|--------|
+| Deep scanline read | Production-ready |
+| Deep scanline write | Production-ready |
+| Variable samples per pixel | Full support |
+| All sample types (f16, f32, u32) | Full support |
+| ZIP/ZIPS compression | Full support |
+| Multi-layer deep | Full support |
 
 ## Library Usage
 
@@ -75,7 +98,7 @@ use vfx_ops::resize;
 use vfx_color::ColorProcessor;
 
 fn main() -> anyhow::Result<()> {
-    // Read any supported format
+    // Read any supported format (including deep EXR)
     let image = read("input.exr")?;
     
     // Resize with Lanczos
@@ -112,15 +135,6 @@ fn main() -> anyhow::Result<()> {
     let mut pixels: Vec<f32> = read_pixels("render.exr")?;
     processor.apply(&mut pixels, 4)?;  // 4 channels (RGBA)
     
-    // Display transform with look
-    let display_processor = config.display_processor(
-        "ACEScg",      // input space
-        "sRGB",        // display
-        "Film",        // view
-        Some("Warm"),  // optional look
-    )?;
-    display_processor.apply(&mut pixels, 4)?;
-    
     Ok(())
 }
 ```
@@ -135,6 +149,7 @@ vfx-rs/
 ├── vfx-primaries   # Color primaries (Rec.709, P3, Rec.2020, AWG4, CGamut...)
 ├── vfx-lut         # LUT parsing (.cube, .clf, .spi, .csp, CDL)
 ├── vfx-color       # Color pipeline, ACES 2.0, grading ops
+├── vfx-exr         # OpenEXR I/O with deep data (fork of exrs)
 ├── vfx-io          # Image I/O (EXR, PNG, JPEG, TIFF, DPX, HDR...)
 ├── vfx-icc         # ICC profile support (lcms2)
 ├── vfx-ocio        # OpenColorIO config compatibility
@@ -160,17 +175,17 @@ Full camera gamut support verified against OCIO ColorMatrixHelpers.cpp:
 
 ## Parity Status
 
-### vs OpenImageIO (~50%)
+### vs OpenImageIO (~60%)
 
 | Feature | Status |
 |---------|--------|
 | Image I/O (11 formats) | **Production-ready** |
 | Multi-layer EXR | **Production-ready** |
+| Deep data EXR | **Production-ready** - full read/write support |
 | Streaming I/O | **Production-ready** - progressive read/write for large files |
 | Tiled image caching | **Production-ready** - on-demand tile loading |
 | UDIM textures | **Production-ready** |
 | ImageBufAlgo (100+ functions) | Partial |
-| Deep data | Not implemented |
 | Plugin system | Not implemented |
 
 ### vs OpenColorIO (~90%)
@@ -187,24 +202,20 @@ Full camera gamut support verified against OCIO ColorMatrixHelpers.cpp:
 | FileTransform (LUTs) | **Production-ready** - .cube, .spi1d, .spi3d, .clf, .ctf |
 | GradingPrimary/Tone/Curve | **Production-ready** |
 
-### Transfer Functions (100%)
+### EXR Compression Support
 
-All major camera log curves verified against OCIO reference code:
-
-| Function | Verified Against | Status |
-|----------|-----------------|--------|
-| sRGB | IEC 61966-2-1 | 51+ tests passing |
-| PQ (HDR10) | SMPTE ST 2084 | Verified |
-| HLG | ITU-R BT.2100-2 | Verified |
-| ARRI LogC3 | OCIO ArriCameras.cpp | Verified |
-| ARRI LogC4 | OCIO ArriCameras.cpp | Verified (new) |
-| Sony S-Log2/3 | OCIO SonyCameras.cpp | Verified |
-| Panasonic V-Log | OCIO PanasonicCameras.cpp | Verified |
-| Canon Log 2/3 | OCIO CanonCameras.cpp | Verified (new) |
-| Apple Log | OCIO AppleCameras.cpp | Verified (new) |
-| RED REDLogFilm/3G10 | OCIO RedCameras.cpp | Verified |
-| Blackmagic Film Gen5 | BMD spec | Verified |
-| ACEScc/cct | AMPAS | Verified |
+| Method | Read | Write | Type |
+|--------|------|-------|------|
+| None | Yes | Yes | Uncompressed |
+| RLE | Yes | Yes | Lossless |
+| ZIP | Yes | Yes | Lossless |
+| ZIPS | Yes | Yes | Lossless |
+| PIZ | Yes | Yes | Lossless (wavelet) |
+| PXR24 | Yes | Yes | Lossless (f16/u32) |
+| B44 | Yes | Yes | Lossy (fixed) |
+| B44A | Yes | Yes | Lossy (adaptive) |
+| DWAA | No | No | Help wanted |
+| DWAB | No | No | Help wanted |
 
 ## GPU Acceleration
 
@@ -266,6 +277,9 @@ cargo build --release
 # With GPU support
 cargo build --release --features wgpu
 cargo build --release --features cuda  # Requires CUDA toolkit
+
+# With EXR viewer
+cargo build --release -p vfx-exr --features view
 ```
 
 ## Documentation
@@ -292,20 +306,23 @@ mdbook serve
 3. **Composable** - Small crates that do one thing well
 4. **Observable** - Structured logging with `tracing`
 5. **Documented** - Every public API has examples
+6. **Safe** - No unsafe code in core crates (`#[forbid(unsafe_code)]`)
 
 ## Contributing
 
 Contributions welcome! Areas that need work:
 
-- [ ] ImageBufAlgo functions (resize, composite done; 50+ more to go)
-- [ ] Deep data support for EXR
+- [ ] DWA/DWAB compression for EXR
+- [ ] More ImageBufAlgo functions
 - [ ] OCIO GradingTransform parsing
-- [ ] More LUT formats (.3dl, .look)
 - [ ] Additional image formats (ARRIRAW, REDCODE)
+- [ ] Deep data compositing operations
 
 ## License
 
 Dual-licensed under MIT and Apache 2.0. Choose whichever suits your needs.
+
+vfx-exr is licensed under BSD-3-Clause (inherited from exrs).
 
 ---
 

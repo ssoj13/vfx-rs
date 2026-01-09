@@ -1,7 +1,7 @@
 # VFX-RS Project Status Report
 
-**Last Updated:** 2026-01-08
-**Overall Progress:** ~88% Complete
+**Last Updated:** 2026-01-09
+**Overall Progress:** ~92% Complete
 
 ---
 
@@ -9,6 +9,8 @@
 
 | Component | Status | Progress |
 |-----------|--------|----------|
+| EXR (vfx-exr) | PRODUCTION-READY | 100% |
+| Deep Data | PRODUCTION-READY | 100% |
 | Transfer Functions | PRODUCTION-READY | 85% |
 | LUT Formats | COMPLETE | 100% |
 | Color Ops | PRODUCTION-READY | 92% |
@@ -34,9 +36,11 @@ vfx-core         - Core types (Pixel, ImageSpec, BitDepth)
      |
      +---> vfx-color      - ACES2, CDL, color conversions
      |
+     +---> vfx-exr        - OpenEXR I/O (fork of exrs with deep data)
+     |
      +---> vfx-ops        - Image operations (grading, composite, FFT)
      |
-     +---> vfx-io         - Image I/O (11+ formats, ImageBufAlgo)
+     +---> vfx-io         - Image I/O (11+ formats, uses vfx-exr)
      |
      +---> vfx-ocio       - OCIO config parser, transforms, processor
      |
@@ -50,6 +54,52 @@ vfx-core         - Core types (Pixel, ImageSpec, BitDepth)
      |
      +---> vfx-view       - GUI viewer (iced)
 ```
+
+---
+
+## vfx-exr (OpenEXR Support)
+
+**Full fork of exrs 1.74.0** with complete deep data support.
+
+### Features
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Deep Data (read) | COMPLETE | Full scanline deep decompression |
+| Deep Data (write) | COMPLETE | Scanline and image writers |
+| Multi-layer | COMPLETE | Unlimited layers per file |
+| Mip Maps | COMPLETE | Full resolution pyramid |
+| Rip Maps | COMPLETE | Anisotropic resolution |
+| Tiled Images | COMPLETE | Arbitrary tile sizes |
+| Parallel I/O | COMPLETE | rayon-based compression |
+| Memory Mapping | COMPLETE | Via std::io traits |
+
+### Compression Support
+
+| Method | Read | Write | Notes |
+|--------|------|-------|-------|
+| None | Yes | Yes | Uncompressed |
+| RLE | Yes | Yes | Lossless |
+| ZIP | Yes | Yes | Lossless, scanline |
+| ZIPS | Yes | Yes | Lossless, block |
+| PIZ | Yes | Yes | Lossless, wavelet |
+| PXR24 | Yes | Yes | Lossless for f16/u32 |
+| B44 | Yes | Yes | Lossy, fixed rate |
+| B44A | Yes | Yes | Lossy, adaptive |
+| DWAA | No | No | Help wanted |
+| DWAB | No | No | Help wanted |
+
+### Binaries
+
+- `exrs-gen` - Test image generator (patterns, shapes, deep data)
+- `exrs-view` - EXR viewer with 2D/3D visualization (feature: `view`)
+
+### Test Assets
+
+Workspace-wide test assets in `test/assets-exr/`:
+- `valid/` - OpenEXR test suite images
+- `invalid/` - Malformed files for fuzz testing
+- `fuzzed/` - Auto-generated fuzz test cases
 
 ---
 
@@ -136,6 +186,7 @@ vfx-core         - Core types (Pixel, ImageSpec, BitDepth)
 11. viewing_rules (OCIO v2.0+)
 12. Blackmagic Wide Gamut primaries
 13. D75, F-series illuminants
+14. DWA/DWAB compression for EXR
 
 ---
 
@@ -145,6 +196,7 @@ vfx-core         - Core types (Pixel, ImageSpec, BitDepth)
 
 | Crate | Tests |
 |-------|-------|
+| vfx-exr | 100+ (deep, roundtrip, fuzz) |
 | vfx-transfer | 51+ |
 | vfx-lut | 60+ |
 | vfx-ops | 50+ |
@@ -169,7 +221,8 @@ vfx-core         - Core types (Pixel, ImageSpec, BitDepth)
 ## Build Notes
 
 ### Dependencies
-- Rust 1.75+ (edition 2021)
+- Rust 1.61+ for vfx-exr (edition 2018)
+- Rust 1.85+ for other crates (edition 2024)
 - vcpkg for C libraries (libheif, etc.)
 - Optional: CUDA toolkit for GPU backend
 
@@ -187,19 +240,39 @@ text = ["dep:rusttype"]
 
 ---
 
+## Recent Changes (2026-01-09)
+
+### vfx-exr Integration
+- Full fork of exrs 1.74.0 integrated as `vfx-exr`
+- Complete deep data support (read/write)
+- All imports updated from `exr::` to `vfx_exr::`
+- Test assets moved to `test/assets-exr/` (workspace-wide)
+- vfx-io now uses vfx-exr for all EXR operations
+- Exposed deep API: `read_exr_deep`, `write_exr_deep`, `DeepImage`, etc.
+
+### Files Changed
+- `crates/vfx-exr/` - New crate (full exrs fork)
+- `crates/vfx-io/Cargo.toml` - Updated to use vfx-exr
+- `crates/vfx-io/src/exr_deep.rs` - Re-exports vfx-exr deep types
+- `test/assets-exr/` - Workspace-wide EXR test assets
+
+---
+
 ## Conclusion
 
 VFX-RS is **production-ready** for:
 - Color management pipelines
-- Image I/O operations
+- Image I/O operations (including deep EXR)
 - LUT processing
 - OCIO config compatibility
+- Deep compositing workflows
 
 **Needs completion** for:
 - Full GPU acceleration (shaders exist, integration needed)
 - OCIO processor edge cases
 - Minor transfer functions
+- DWA/DWAB compression
 
 ---
 
-*Report generated: 2026-01-08*
+*Report generated: 2026-01-09*
