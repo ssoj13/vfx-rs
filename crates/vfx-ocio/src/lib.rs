@@ -83,6 +83,7 @@ mod baker;
 mod dynamic;
 mod simd;
 mod cache;
+mod builtin_transforms;
 
 pub mod builtin;
 pub mod validate;

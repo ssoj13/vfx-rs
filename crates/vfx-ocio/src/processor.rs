@@ -597,6 +597,9 @@ pub struct Processor {
     /// Has dynamic properties.
     #[allow(dead_code)]
     has_dynamic: bool,
+    /// Context for variable resolution.
+    #[allow(dead_code)]
+    context: Option<crate::Context>,
 }
 
 /// Re-export BitDepth from vfx-core.
@@ -835,6 +838,7 @@ impl Processor {
             input_bit_depth: BitDepth::Unknown,
             output_bit_depth: BitDepth::Unknown,
             has_dynamic: false,
+            context: None,
         }
     }
 
@@ -845,7 +849,18 @@ impl Processor {
             input_bit_depth: BitDepth::Unknown,
             output_bit_depth: BitDepth::Unknown,
             has_dynamic: false,
+            context: None,
         }
+    }
+
+    /// Sets the context for variable resolution.
+    pub fn set_context(&mut self, context: crate::Context) {
+        self.context = Some(context);
+    }
+
+    /// Returns the context (if set).
+    pub fn context(&self) -> Option<&crate::Context> {
+        self.context.as_ref()
     }
 
     /// Returns the compiled operations (for caching).
@@ -1466,6 +1481,21 @@ impl Processor {
                     },
                 };
                 self.compile_lut3d(&vfx_lut, lut.interpolation, forward);
+            }
+
+            Transform::Builtin(bt) => {
+                let dir = if direction == TransformDirection::Inverse {
+                    bt.direction.inverse()
+                } else {
+                    bt.direction
+                };
+                let forward = dir == TransformDirection::Forward;
+                
+                // Look up builtin transform definition
+                if let Some(def) = crate::builtin_transforms::get_builtin(&bt.style) {
+                    crate::builtin_transforms::compile_builtin(&def, forward, &mut self.ops);
+                }
+                // Unknown builtin styles silently become no-op
             }
 
             _ => {

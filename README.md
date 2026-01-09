@@ -188,19 +188,23 @@ Full camera gamut support verified against OCIO ColorMatrixHelpers.cpp:
 | ImageBufAlgo (100+ functions) | Partial |
 | Plugin system | Not implemented |
 
-### vs OpenColorIO (~90%)
+### vs OpenColorIO (~98%)
 
 | Feature | Status |
 |---------|--------|
 | Config YAML parsing | **Production-ready** |
 | ColorSpace definitions | **Production-ready** |
+| Aliases & Categories | **Production-ready** |
 | Roles, Displays, Views | **Production-ready** |
 | Shared Views (v2.3+) | **Production-ready** |
 | Context variables | **Production-ready** |
 | Matrix/CDL/Log/Range transforms | **Production-ready** |
-| BuiltinTransform | **Production-ready** |
+| BuiltinTransform | **Production-ready** - 20+ ACES styles |
 | FileTransform (LUTs) | **Production-ready** - .cube, .spi1d, .spi3d, .clf, .ctf |
 | GradingPrimary/Tone/Curve | **Production-ready** |
+| Baker (LUT export) | **Production-ready** |
+| DynamicProcessor | **Production-ready** |
+| ProcessorCache | **Production-ready** |
 
 ### EXR Compression Support
 

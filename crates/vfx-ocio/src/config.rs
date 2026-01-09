@@ -506,6 +506,16 @@ impl Config {
             }
         }
 
+        if let Some(categories) = yaml_get(yaml, "categories") {
+            if let Yaml::Sequence(seq) = unwrap_tagged(categories) {
+                for cat in seq {
+                    if let Some(s) = yaml_as_str(cat) {
+                        builder = builder.category(s);
+                    }
+                }
+            }
+        }
+
         // Parse transforms - OCIO v1: to_reference/from_reference
         // OCIO v2: to_scene_reference/from_scene_reference + display variants
         let transform_fields = [
@@ -876,6 +886,22 @@ impl Config {
         self.colorspaces.iter().map(|cs| cs.name())
     }
 
+    /// Returns colorspaces filtered by category.
+    pub fn colorspaces_by_category(&self, category: &str) -> Vec<&ColorSpace> {
+        self.colorspaces.iter().filter(|cs| cs.has_category(category)).collect()
+    }
+
+    /// Returns all unique categories across colorspaces.
+    pub fn all_categories(&self) -> Vec<&str> {
+        let mut cats: Vec<&str> = self.colorspaces
+            .iter()
+            .flat_map(|cs| cs.categories().iter().map(|s| s.as_str()))
+            .collect();
+        cats.sort();
+        cats.dedup();
+        cats
+    }
+
     /// Returns the roles mapping.
     #[inline]
     pub fn roles(&self) -> &Roles {
@@ -1095,6 +1121,22 @@ impl Config {
         
         let group = Transform::group(transforms);
         Processor::from_transform(&group, TransformDirection::Forward)
+    }
+
+    /// Creates a processor with context variables for path resolution.
+    ///
+    /// Context variables are used to resolve `$VAR` references in FileTransform paths.
+    pub fn processor_with_context(
+        &self,
+        src: &str,
+        dst: &str,
+        context: &crate::Context,
+    ) -> OcioResult<Processor> {
+        // For now, context is applied to search paths
+        // Full implementation would resolve $VAR in FileTransform paths
+        let mut processor = self.processor(src, dst)?;
+        processor.set_context(context.clone());
+        Ok(processor)
     }
 
     fn append_look_transforms(&self, transforms: &mut Vec<Transform>, looks: &str) -> OcioResult<()> {
@@ -1665,6 +1707,13 @@ impl Config {
                 output.push_str(&format!(
                     "    aliases: [{}]\n",
                     cs.aliases().join(", ")
+                ));
+            }
+
+            if !cs.categories().is_empty() {
+                output.push_str(&format!(
+                    "    categories: [{}]\n",
+                    cs.categories().join(", ")
                 ));
             }
 

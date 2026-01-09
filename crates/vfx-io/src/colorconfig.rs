@@ -25,7 +25,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use vfx_ocio::{Config, OcioError, OcioResult, Processor};
+use vfx_ocio::{Config, Context, OcioError, OcioResult, Processor};
 
 /// OIIO-style color configuration wrapper.
 ///
@@ -240,6 +240,48 @@ impl ColorConfig {
             .unwrap_or("")
     }
 
+    /// Gets the color space aliases.
+    pub fn colorspace_aliases(&self, name: &str) -> Vec<String> {
+        self.config
+            .colorspace(name)
+            .map(|cs| cs.aliases().iter().map(|s| s.to_string()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Gets the color space categories.
+    pub fn colorspace_categories(&self, name: &str) -> Vec<String> {
+        self.config
+            .colorspace(name)
+            .map(|cs| cs.categories().iter().map(|s| s.to_string()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Checks if colorspace has a specific category.
+    pub fn colorspace_has_category(&self, name: &str, category: &str) -> bool {
+        self.config
+            .colorspace(name)
+            .map(|cs| cs.has_category(category))
+            .unwrap_or(false)
+    }
+
+    /// Gets colorspaces filtered by category.
+    pub fn colorspaces_by_category(&self, category: &str) -> Vec<String> {
+        self.config
+            .colorspaces_by_category(category)
+            .iter()
+            .map(|cs| cs.name().to_string())
+            .collect()
+    }
+
+    /// Gets all unique categories across all colorspaces.
+    pub fn all_categories(&self) -> Vec<String> {
+        self.config
+            .all_categories()
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    }
+
     /// Determines the appropriate color space from a file path.
     ///
     /// Uses file rules defined in the OCIO config to match the path.
@@ -448,6 +490,84 @@ impl ColorConfig {
     }
 
     // ========================================================================
+    // Active displays/views
+    // ========================================================================
+
+    /// Returns the active displays list.
+    pub fn active_displays(&self) -> Vec<String> {
+        self.config.active_displays().iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Returns the active views list.
+    pub fn active_views(&self) -> Vec<String> {
+        self.config.active_views().iter().map(|s| s.to_string()).collect()
+    }
+
+    // ========================================================================
+    // Viewing rules
+    // ========================================================================
+
+    /// Returns viewing rules as (name, colorspaces, encodings) tuples.
+    pub fn viewing_rules(&self) -> Vec<(String, Vec<String>, Vec<String>)> {
+        self.config.viewing_rules().iter().map(|vr| {
+            (vr.name.clone(), vr.colorspaces.clone(), vr.encodings.clone())
+        }).collect()
+    }
+
+    // ========================================================================
+    // Role shortcuts
+    // ========================================================================
+
+    /// Gets the reference role color space.
+    pub fn reference(&self) -> Option<&str> {
+        self.config.roles().get("reference")
+    }
+
+    /// Gets the compositing_log role color space.
+    pub fn compositing_log(&self) -> Option<&str> {
+        self.config.roles().get("compositing_log")
+    }
+
+    /// Gets the color_timing role color space.
+    pub fn color_timing(&self) -> Option<&str> {
+        self.config.roles().get("color_timing")
+    }
+
+    /// Gets the data role color space.
+    pub fn data_role(&self) -> Option<&str> {
+        self.config.roles().get("data")
+    }
+
+    /// Gets the color_picking role color space.
+    pub fn color_picking(&self) -> Option<&str> {
+        self.config.roles().get("color_picking")
+    }
+
+    /// Gets the texture_paint role color space.
+    pub fn texture_paint(&self) -> Option<&str> {
+        self.config.roles().get("texture_paint")
+    }
+
+    /// Gets the matte_paint role color space.
+    pub fn matte_paint(&self) -> Option<&str> {
+        self.config.roles().get("matte_paint")
+    }
+
+    // ========================================================================
+    // Serialization
+    // ========================================================================
+
+    /// Serializes config to YAML string.
+    pub fn serialize(&self) -> Result<String, String> {
+        self.config.serialize().map_err(|e| e.to_string())
+    }
+
+    /// Writes config to file.
+    pub fn write_to_file(&self, path: impl AsRef<std::path::Path>) -> Result<(), String> {
+        self.config.write_to_file(path).map_err(|e| e.to_string())
+    }
+
+    // ========================================================================
     // Processor creation
     // ========================================================================
 
@@ -469,6 +589,16 @@ impl ColorConfig {
         view: &str,
     ) -> OcioResult<Processor> {
         self.config.display_processor(from, display, view)
+    }
+
+    /// Creates a processor with context variables for path resolution.
+    pub fn processor_with_context(
+        &self,
+        from: &str,
+        to: &str,
+        context: &Context,
+    ) -> OcioResult<Processor> {
+        self.config.processor_with_context(from, to, context)
     }
 
     // ========================================================================

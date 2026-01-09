@@ -140,6 +140,8 @@ pub struct ColorSpace {
     name: String,
     /// Alternative names.
     aliases: Vec<String>,
+    /// Categories for filtering (OCIO v2).
+    categories: Vec<String>,
     /// Human-readable description.
     description: String,
     /// Family/category.
@@ -187,6 +189,7 @@ impl ColorSpace {
         Self {
             name: name.into(),
             aliases: Vec::new(),
+            categories: Vec::new(),
             description: String::new(),
             family: Family::default(),
             encoding: Encoding::default(),
@@ -216,6 +219,18 @@ impl ColorSpace {
     #[inline]
     pub fn aliases(&self) -> &[String] {
         &self.aliases
+    }
+
+    /// Returns all categories.
+    #[inline]
+    pub fn categories(&self) -> &[String] {
+        &self.categories
+    }
+
+    /// Checks if colorspace has a specific category.
+    #[inline]
+    pub fn has_category(&self, category: &str) -> bool {
+        self.categories.iter().any(|c| c.eq_ignore_ascii_case(category))
     }
 
     /// Returns the description.
@@ -302,6 +317,12 @@ impl ColorSpaceBuilder {
     /// Adds an alias.
     pub fn alias(mut self, alias: impl Into<String>) -> Self {
         self.inner.aliases.push(alias.into());
+        self
+    }
+
+    /// Adds a category.
+    pub fn category(mut self, category: impl Into<String>) -> Self {
+        self.inner.categories.push(category.into());
         self
     }
 
@@ -409,5 +430,18 @@ mod tests {
             .build();
 
         assert!(cs.is_data());
+    }
+
+    #[test]
+    fn categories() {
+        let cs = ColorSpace::builder("ACEScg")
+            .category("scene_linear")
+            .category("working_space")
+            .build();
+
+        assert_eq!(cs.categories().len(), 2);
+        assert!(cs.has_category("scene_linear"));
+        assert!(cs.has_category("SCENE_LINEAR")); // case-insensitive
+        assert!(!cs.has_category("display"));
     }
 }

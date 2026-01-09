@@ -434,9 +434,28 @@ print(config.has_colorspace("ACEScg"))
 print(config.is_colorspace_linear("ACEScg"))
 print(config.colorspace_family("ACEScg"))
 
+# Aliases and categories
+print(config.colorspace_aliases("ACEScg"))  # ["ACES - ACEScg", ...]
+print(config.colorspace_categories("ACEScg"))  # ["scene_linear", ...]
+print(config.colorspaces_by_category("file_io"))
+print(config.all_categories())
+
+# Role shortcuts
+print(config.scene_linear())       # "ACEScg"
+print(config.reference())          # "ACES2065-1"
+print(config.compositing_log())    # "ACEScct"
+print(config.color_timing())       # "ACEScct"
+print(config.data_role())          # "Raw"
+print(config.color_picking())
+print(config.texture_paint())
+print(config.matte_paint())
+
 # Displays and views
 print(config.display_names())
 print(config.default_display())
+print(config.active_displays())  # Active displays list
+print(config.active_views())     # Active views list
+print(config.viewing_rules())    # [(name, colorspaces, encodings), ...]
 for display in config.display_names():
     print(f"{display}: views={config.num_views(display)}")
 
@@ -457,6 +476,53 @@ for name in config.named_transform_names():
 print(f"Shared views: {config.num_shared_views()}")
 for name in config.shared_view_names():
     print(f"  {name}")
+
+# Serialize/save config
+yaml_str = config.serialize()
+config.write_to_file("output_config.ocio")
+```
+
+### Context Variables
+
+```python
+from vfx_rs import Context, ColorConfig
+
+# Create context with variables
+ctx = Context()
+ctx.set("SHOT", "sh010")
+ctx.set("SEQ", "sq01")
+
+# Resolve paths
+resolved = ctx.resolve("/shows/$SEQ/shots/$SHOT/luts/grade.csp")
+print(resolved)  # /shows/sq01/shots/sh010/luts/grade.csp
+
+# Check variables
+print(ctx.get("SHOT"))  # sh010
+print(ctx.vars())  # {"SHOT": "sh010", "SEQ": "sq01"}
+print(ctx.has_unresolved("$UNKNOWN"))  # True
+print(len(ctx))  # 2
+
+# Create processor with context
+config = ColorConfig.aces_1_3()
+config.processor_with_context("ACEScg", "sRGB", ctx)
+```
+
+### GPU Shader Generation
+
+```python
+from vfx_rs import ColorConfig, GpuProcessor, GpuLanguage
+
+config = ColorConfig.aces_1_3()
+
+# Create GPU processor
+gpu_proc = GpuProcessor.from_config(config, "ACEScg", "sRGB")
+
+# Generate shader code
+shader = gpu_proc.generate_shader(GpuLanguage.Glsl330)
+print(shader.fragment_code)
+print(shader.has_textures())
+
+# Available languages: Glsl120, Glsl330, Glsl400, GlslEs300, Hlsl50, Metal
 ```
 
 ### Color Conversion with ColorConfig

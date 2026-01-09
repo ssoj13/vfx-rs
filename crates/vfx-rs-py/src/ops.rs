@@ -1294,6 +1294,19 @@ pub fn unpremult(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
     imagebuf_to_image(&result)
 }
 
+/// Repremultiply (undo unpremult and repremultiply).
+///
+/// Useful when you've done operations on unpremultiplied data
+/// and want to go back to premultiplied while preserving any
+/// modifications to the alpha channel.
+#[pyfunction]
+#[pyo3(signature = (image, roi=None))]
+pub fn repremult(image: &Image, roi: Option<&Roi3D>) -> PyResult<Image> {
+    let buf = image_to_imagebuf(image);
+    let result = imagebufalgo::repremult(&buf, convert_roi(roi));
+    imagebuf_to_image(&result)
+}
+
 /// Adjust color saturation.
 ///
 /// Args:
@@ -2038,6 +2051,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Color
     m.add_function(wrap_pyfunction!(premult, m)?)?;
     m.add_function(wrap_pyfunction!(unpremult, m)?)?;
+    m.add_function(wrap_pyfunction!(repremult, m)?)?;
     m.add_function(wrap_pyfunction!(saturate, m)?)?;
     m.add_function(wrap_pyfunction!(contrast_remap, m)?)?;
     m.add_function(wrap_pyfunction!(color_map, m)?)?;

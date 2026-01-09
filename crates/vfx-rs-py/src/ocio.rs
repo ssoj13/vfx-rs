@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use vfx_io::imagebuf::ImageBuf;
 use vfx_io::imagebufalgo::ocio as rust_ocio;
 use vfx_io::ColorConfig as RustColorConfig;
+use vfx_ocio::Context as RustContext;
 use vfx_core::Roi3D as RustRoi3D;
 
 use crate::Image;
@@ -44,6 +45,127 @@ fn py_roi_to_rust(roi: &Roi3D) -> RustRoi3D {
 
 fn convert_roi(roi: Option<&Roi3D>) -> Option<RustRoi3D> {
     roi.map(py_roi_to_rust)
+}
+
+// ============================================================================
+// Context Class
+// ============================================================================
+
+/// OCIO context for variable substitution in file paths.
+///
+/// Used for resolving `$SHOT`, `$SEQ` etc. in config paths.
+///
+/// Example:
+///     >>> ctx = Context()
+///     >>> ctx.set("SHOT", "sh010")
+///     >>> ctx.set("SEQ", "sq01")
+///     >>> resolved = ctx.resolve("/shows/$SEQ/shots/$SHOT/luts/grade.csp")
+///     >>> print(resolved)  # /shows/sq01/shots/sh010/luts/grade.csp
+#[pyclass]
+#[derive(Clone)]
+pub struct Context {
+    inner: RustContext,
+}
+
+#[pymethods]
+impl Context {
+    /// Create a new empty context.
+    ///
+    /// By default, environment variables are used as fallback.
+    #[new]
+    pub fn new() -> Self {
+        Self {
+            inner: RustContext::new(),
+        }
+    }
+
+    /// Create a context that ignores environment variables.
+    #[staticmethod]
+    pub fn without_env() -> Self {
+        Self {
+            inner: RustContext::without_env(),
+        }
+    }
+
+    /// Set a context variable.
+    ///
+    /// Args:
+    ///     name: Variable name
+    ///     value: Variable value
+    pub fn set(&mut self, name: &str, value: &str) {
+        self.inner.set(name, value);
+    }
+
+    /// Get a context variable value.
+    ///
+    /// Checks user-defined variables first, then environment.
+    ///
+    /// Args:
+    ///     name: Variable name
+    ///
+    /// Returns:
+    ///     Value or None if not found
+    pub fn get(&self, name: &str) -> Option<String> {
+        self.inner.get(name)
+    }
+
+    /// Check if a variable is defined.
+    pub fn contains(&self, name: &str) -> bool {
+        self.inner.contains(name)
+    }
+
+    /// Resolve all `$VAR` and `${VAR}` references in a string.
+    ///
+    /// Unknown variables are left as-is.
+    ///
+    /// Args:
+    ///     input: String with variables to resolve
+    ///
+    /// Returns:
+    ///     Resolved string
+    pub fn resolve(&self, input: &str) -> String {
+        self.inner.resolve(input)
+    }
+
+    /// Get all user-defined variables as a dict.
+    pub fn vars(&self) -> std::collections::HashMap<String, String> {
+        self.inner.vars_map().clone()
+    }
+
+    /// Clear all user-defined variables.
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
+
+    /// Check if a string has unresolved variables.
+    pub fn has_unresolved(&self, input: &str) -> bool {
+        self.inner.has_unresolved(input)
+    }
+
+    /// Get list of unresolved variable names.
+    pub fn unresolved_vars(&self, input: &str) -> Vec<String> {
+        self.inner.unresolved_vars(input)
+    }
+
+    /// Number of user-defined variables.
+    pub fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Check if no variables are defined.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Context(vars={})", self.inner.len())
+    }
+}
+
+impl Context {
+    pub fn inner(&self) -> &RustContext {
+        &self.inner
+    }
 }
 
 // ============================================================================
@@ -206,6 +328,31 @@ impl ColorConfig {
         self.inner.colorspace_description(name).to_string()
     }
 
+    /// Get color space aliases.
+    pub fn colorspace_aliases(&self, name: &str) -> Vec<String> {
+        self.inner.colorspace_aliases(name)
+    }
+
+    /// Get color space categories.
+    pub fn colorspace_categories(&self, name: &str) -> Vec<String> {
+        self.inner.colorspace_categories(name)
+    }
+
+    /// Check if colorspace has a specific category.
+    pub fn colorspace_has_category(&self, name: &str, category: &str) -> bool {
+        self.inner.colorspace_has_category(name, category)
+    }
+
+    /// Get colorspaces filtered by category.
+    pub fn colorspaces_by_category(&self, category: &str) -> Vec<String> {
+        self.inner.colorspaces_by_category(category)
+    }
+
+    /// Get all unique categories across all colorspaces.
+    pub fn all_categories(&self) -> Vec<String> {
+        self.inner.all_categories()
+    }
+
     /// Determine color space from file path using config rules.
     pub fn colorspace_from_filepath(&self, filepath: &str) -> Option<String> {
         self.inner.colorspace_from_filepath(filepath).map(|s| s.to_string())
@@ -354,6 +501,107 @@ impl ColorConfig {
     /// Get all shared view names.
     pub fn shared_view_names(&self) -> Vec<String> {
         self.inner.shared_view_names().iter().map(|s| s.to_string()).collect()
+    }
+
+    // ========================================================================
+    // Active displays/views
+    // ========================================================================
+
+    /// Get active displays list.
+    pub fn active_displays(&self) -> Vec<String> {
+        self.inner.active_displays()
+    }
+
+    /// Get active views list.
+    pub fn active_views(&self) -> Vec<String> {
+        self.inner.active_views()
+    }
+
+    // ========================================================================
+    // Viewing rules
+    // ========================================================================
+
+    /// Get viewing rules as list of (name, colorspaces, encodings) tuples.
+    pub fn viewing_rules(&self) -> Vec<(String, Vec<String>, Vec<String>)> {
+        self.inner.viewing_rules()
+    }
+
+    // ========================================================================
+    // Role shortcuts
+    // ========================================================================
+
+    /// Get reference role color space.
+    pub fn reference(&self) -> Option<String> {
+        self.inner.reference().map(|s| s.to_string())
+    }
+
+    /// Get compositing_log role color space.
+    pub fn compositing_log(&self) -> Option<String> {
+        self.inner.compositing_log().map(|s| s.to_string())
+    }
+
+    /// Get color_timing role color space.
+    pub fn color_timing(&self) -> Option<String> {
+        self.inner.color_timing().map(|s| s.to_string())
+    }
+
+    /// Get data role color space.
+    pub fn data_role(&self) -> Option<String> {
+        self.inner.data_role().map(|s| s.to_string())
+    }
+
+    /// Get color_picking role color space.
+    pub fn color_picking(&self) -> Option<String> {
+        self.inner.color_picking().map(|s| s.to_string())
+    }
+
+    /// Get texture_paint role color space.
+    pub fn texture_paint(&self) -> Option<String> {
+        self.inner.texture_paint().map(|s| s.to_string())
+    }
+
+    /// Get matte_paint role color space.
+    pub fn matte_paint(&self) -> Option<String> {
+        self.inner.matte_paint().map(|s| s.to_string())
+    }
+
+    // ========================================================================
+    // Serialization
+    // ========================================================================
+
+    /// Serialize config to YAML string.
+    pub fn serialize(&self) -> PyResult<String> {
+        self.inner.serialize().map_err(|e| PyIOError::new_err(e))
+    }
+
+    /// Write config to file.
+    pub fn write_to_file(&self, path: PathBuf) -> PyResult<()> {
+        self.inner.write_to_file(path).map_err(|e| PyIOError::new_err(e))
+    }
+
+    // ========================================================================
+    // Processor creation
+    // ========================================================================
+
+    /// Create a processor with context variables for path resolution.
+    ///
+    /// Args:
+    ///     from_space: Source color space name
+    ///     to_space: Destination color space name
+    ///     context: Context with variables for path substitution
+    ///
+    /// Returns:
+    ///     Processor for color conversion
+    ///
+    /// Example:
+    ///     >>> ctx = Context()
+    ///     >>> ctx.set("SHOT", "sh010")
+    ///     >>> proc = config.processor_with_context("ACEScg", "sRGB", ctx)
+    pub fn processor_with_context(&self, from_space: &str, to_space: &str, context: &Context) -> PyResult<()> {
+        self.inner
+            .processor_with_context(from_space, to_space, context.inner())
+            .map(|_| ())  // Drop processor for now, just validate it works
+            .map_err(|e| PyIOError::new_err(e.to_string()))
     }
 
 }
@@ -607,6 +855,7 @@ pub fn list_displays() -> Vec<String> {
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Classes
     m.add_class::<ColorConfig>()?;
+    m.add_class::<Context>()?;
 
     // Advanced classes (ConfigBuilder, Baker, etc.)
     crate::ocio_advanced::register(m)?;

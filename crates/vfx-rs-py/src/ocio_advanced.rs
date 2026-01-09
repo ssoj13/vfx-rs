@@ -491,6 +491,162 @@ impl OcioProcessor {
 }
 
 // ============================================================================
+// OptimizationLevel Enum
+// ============================================================================
+
+/// Optimization level for processors.
+///
+/// Example:
+///     >>> proc = config.processor_optimized("ACEScg", "sRGB", OptimizationLevel.Best)
+#[pyclass(eq, eq_int)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum OptimizationLevel {
+    /// No optimization.
+    None,
+    /// Lossless optimization (matrix combination, identity removal).
+    Lossless,
+    /// Good quality (may combine LUTs).
+    Good,
+    /// Best quality.
+    Best,
+    /// Draft quality (faster, less accurate).
+    Draft,
+}
+
+impl From<OptimizationLevel> for vfx_ocio::OptimizationLevel {
+    fn from(level: OptimizationLevel) -> Self {
+        match level {
+            OptimizationLevel::None => vfx_ocio::OptimizationLevel::None,
+            OptimizationLevel::Lossless => vfx_ocio::OptimizationLevel::Lossless,
+            OptimizationLevel::Good => vfx_ocio::OptimizationLevel::Good,
+            OptimizationLevel::Best => vfx_ocio::OptimizationLevel::Best,
+            OptimizationLevel::Draft => vfx_ocio::OptimizationLevel::Draft,
+        }
+    }
+}
+
+// ============================================================================
+// GpuLanguage Enum
+// ============================================================================
+
+/// GPU shader language for code generation.
+///
+/// Example:
+///     >>> shader = gpu_proc.generate_shader(GpuLanguage.Glsl330)
+#[pyclass(eq, eq_int)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GpuLanguage {
+    /// GLSL 1.20 (OpenGL 2.1)
+    Glsl120,
+    /// GLSL 3.30 (OpenGL 3.3)
+    Glsl330,
+    /// GLSL 4.00 (OpenGL 4.0)
+    Glsl400,
+    /// GLSL ES 3.00 (WebGL 2.0)
+    GlslEs300,
+    /// HLSL Shader Model 5.0
+    Hlsl50,
+    /// Metal Shading Language
+    Metal,
+}
+
+impl From<GpuLanguage> for vfx_ocio::GpuLanguage {
+    fn from(lang: GpuLanguage) -> Self {
+        match lang {
+            GpuLanguage::Glsl120 => vfx_ocio::GpuLanguage::Glsl120,
+            GpuLanguage::Glsl330 => vfx_ocio::GpuLanguage::Glsl330,
+            GpuLanguage::Glsl400 => vfx_ocio::GpuLanguage::Glsl400,
+            GpuLanguage::GlslEs300 => vfx_ocio::GpuLanguage::GlslEs300,
+            GpuLanguage::Hlsl50 => vfx_ocio::GpuLanguage::Hlsl50,
+            GpuLanguage::Metal => vfx_ocio::GpuLanguage::Metal,
+        }
+    }
+}
+
+// ============================================================================
+// GpuProcessor
+// ============================================================================
+
+/// GPU processor for generating shader code.
+///
+/// Example:
+///     >>> config = ColorConfig.aces_1_3()
+///     >>> proc = config.processor("ACEScg", "sRGB")
+///     >>> gpu_proc = GpuProcessor.from_config(config, "ACEScg", "sRGB")
+///     >>> shader = gpu_proc.generate_shader(GpuLanguage.Glsl330)
+///     >>> print(shader.fragment_code)
+#[pyclass]
+pub struct GpuProcessor {
+    inner: vfx_ocio::GpuProcessor,
+}
+
+#[pymethods]
+impl GpuProcessor {
+    /// Create GPU processor from config and color spaces.
+    #[staticmethod]
+    fn from_config(config: &super::ocio::ColorConfig, src: &str, dst: &str) -> PyResult<Self> {
+        let processor = config.inner().config().processor(src, dst)
+            .map_err(|e| PyRuntimeError::new_err(format!("Processor error: {}", e)))?;
+        
+        let inner = vfx_ocio::GpuProcessor::from_processor(&processor)
+            .map_err(|e| PyRuntimeError::new_err(format!("GPU processor error: {}", e)))?;
+        
+        Ok(Self { inner })
+    }
+
+    /// Generate shader code for the specified language.
+    fn generate_shader(&self, language: GpuLanguage) -> GpuShaderCode {
+        let code = self.inner.generate_shader(language.into());
+        GpuShaderCode { inner: code }
+    }
+
+    /// Check if all ops are GPU-compatible.
+    fn is_complete(&self) -> bool {
+        self.inner.is_complete()
+    }
+
+    /// Number of GPU operations.
+    fn num_ops(&self) -> usize {
+        self.inner.num_ops()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("GpuProcessor(ops={}, complete={})", self.inner.num_ops(), self.inner.is_complete())
+    }
+}
+
+// ============================================================================
+// GpuShaderCode
+// ============================================================================
+
+/// Generated GPU shader code.
+#[pyclass]
+pub struct GpuShaderCode {
+    inner: vfx_ocio::GpuShaderCode,
+}
+
+#[pymethods]
+impl GpuShaderCode {
+    /// Get the fragment shader code.
+    #[getter]
+    fn fragment_code(&self) -> &str {
+        self.inner.fragment_code()
+    }
+
+    /// Check if shader requires textures.
+    fn has_textures(&self) -> bool {
+        self.inner.has_textures()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("GpuShaderCode(len={}, textures={})", 
+            self.inner.fragment_code().len(),
+            self.inner.has_textures()
+        )
+    }
+}
+
+// ============================================================================
 // Validation
 // ============================================================================
 
@@ -560,6 +716,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ProcessorCache>()?;
     m.add_class::<OcioProcessor>()?;
     m.add_class::<ValidationIssue>()?;
+    m.add_class::<OptimizationLevel>()?;
+    m.add_class::<GpuLanguage>()?;
+    m.add_class::<GpuProcessor>()?;
+    m.add_class::<GpuShaderCode>()?;
 
     m.add_function(wrap_pyfunction!(validate_config, m)?)?;
     m.add_function(wrap_pyfunction!(config_has_errors, m)?)?;
