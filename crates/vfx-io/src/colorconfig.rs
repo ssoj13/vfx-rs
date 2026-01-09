@@ -485,6 +485,21 @@ impl ColorConfig {
     pub fn into_inner(self) -> Config {
         Arc::try_unwrap(self.config).unwrap_or_else(|arc| (*arc).clone())
     }
+
+    /// Creates a ColorConfig from a vfx_ocio::Config.
+    pub fn from_config(config: Config) -> Self {
+        Self {
+            config: Arc::new(config),
+            config_path: None,
+            valid: true,
+            error_message: String::new(),
+        }
+    }
+
+    /// Returns reference to underlying OCIO Config.
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
 }
 
 impl std::fmt::Debug for ColorConfig {

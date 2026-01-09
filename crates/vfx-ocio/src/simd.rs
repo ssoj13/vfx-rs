@@ -1,8 +1,11 @@
 //! SIMD-optimized color processing operations.
 //!
 //! Auto-selects: AVX2 > SSE4.1 > NEON > scalar.
+//!
+//! NOTE: These functions will be used by processor.rs for optimized transforms.
 
 #![allow(unsafe_op_in_unsafe_fn)]
+#![allow(dead_code)]
 
 /// SIMD capability level
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

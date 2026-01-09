@@ -362,6 +362,13 @@ impl ColorConfig {
     pub fn inner(&self) -> &RustColorConfig {
         &self.inner
     }
+
+    /// Create from vfx_ocio::Config directly.
+    pub fn from_rust_config(config: vfx_ocio::Config) -> Self {
+        Self {
+            inner: RustColorConfig::from_config(config),
+        }
+    }
 }
 
 // ============================================================================
@@ -600,6 +607,9 @@ pub fn list_displays() -> Vec<String> {
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Classes
     m.add_class::<ColorConfig>()?;
+
+    // Advanced classes (ConfigBuilder, Baker, etc.)
+    crate::ocio_advanced::register(m)?;
 
     // Color conversion functions
     m.add_function(wrap_pyfunction!(colorconvert, m)?)?;

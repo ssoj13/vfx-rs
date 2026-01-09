@@ -16,6 +16,7 @@ mod core;
 mod ops;
 mod stats;
 mod ocio;
+mod ocio_advanced;
 mod deep;
 mod fft;
 mod drawing;
