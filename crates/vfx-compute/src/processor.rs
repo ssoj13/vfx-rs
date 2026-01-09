@@ -819,4 +819,64 @@ mod tests {
         // 0.125 * 4 = 0.5
         assert!((img.data()[0] - 0.5).abs() < 1e-5);
     }
+
+    #[test]
+    fn test_hue_curves_identity() {
+        let proc = Processor::cpu().unwrap();
+        // Pure red pixel
+        let mut img = ComputeImage::from_f32(vec![1.0, 0.0, 0.0], 1, 1, 3).unwrap();
+        
+        // Identity LUTs: no change
+        let lut_size = 256u32;
+        let hue_vs_hue: Vec<f32> = (0..lut_size).map(|i| i as f32 / lut_size as f32).collect();
+        let hue_vs_sat: Vec<f32> = vec![1.0; lut_size as usize]; // 1.0 = no saturation change
+        let hue_vs_lum: Vec<f32> = vec![0.0; lut_size as usize]; // 0.0 = no luminance offset
+        
+        proc.apply_hue_curves(&mut img, &hue_vs_hue, &hue_vs_sat, &hue_vs_lum, lut_size).unwrap();
+        
+        // Should still be red
+        let data = img.data();
+        assert!((data[0] - 1.0).abs() < 0.05, "R should be ~1.0, got {}", data[0]);
+        assert!(data[1].abs() < 0.05, "G should be ~0.0, got {}", data[1]);
+        assert!(data[2].abs() < 0.05, "B should be ~0.0, got {}", data[2]);
+    }
+
+    #[test]
+    fn test_hue_curves_saturation_boost() {
+        let proc = Processor::cpu().unwrap();
+        // Desaturated red (pink)
+        let mut img = ComputeImage::from_f32(vec![0.8, 0.4, 0.4], 1, 1, 3).unwrap();
+        
+        let lut_size = 256u32;
+        let hue_vs_hue: Vec<f32> = (0..lut_size).map(|i| i as f32 / lut_size as f32).collect();
+        let hue_vs_sat: Vec<f32> = vec![2.0; lut_size as usize]; // 2x saturation
+        let hue_vs_lum: Vec<f32> = vec![0.0; lut_size as usize];
+        
+        proc.apply_hue_curves(&mut img, &hue_vs_hue, &hue_vs_sat, &hue_vs_lum, lut_size).unwrap();
+        
+        // Saturation should increase (red more prominent, others decrease)
+        let data = img.data();
+        // Pink (0.8, 0.4, 0.4) with 2x sat should become more saturated red
+        assert!(data[0] > 0.7, "R should stay high, got {}", data[0]);
+    }
+
+    #[test]
+    fn test_hue_curves_grayscale() {
+        let proc = Processor::cpu().unwrap();
+        // Gray pixel (no hue)
+        let mut img = ComputeImage::from_f32(vec![0.5, 0.5, 0.5], 1, 1, 3).unwrap();
+        
+        let lut_size = 256u32;
+        // Shift all hues by 0.5 (180 degrees)
+        let hue_vs_hue: Vec<f32> = (0..lut_size).map(|i| ((i as f32 / lut_size as f32) + 0.5) % 1.0).collect();
+        let hue_vs_sat: Vec<f32> = vec![1.0; lut_size as usize];
+        let hue_vs_lum: Vec<f32> = vec![0.0; lut_size as usize];
+        
+        proc.apply_hue_curves(&mut img, &hue_vs_hue, &hue_vs_sat, &hue_vs_lum, lut_size).unwrap();
+        
+        // Gray should remain gray (no hue to shift)
+        let data = img.data();
+        assert!((data[0] - data[1]).abs() < 0.01, "Should remain gray");
+        assert!((data[1] - data[2]).abs() < 0.01, "Should remain gray");
+    }
 }

@@ -207,6 +207,9 @@ impl ViewerApp {
                     self.state.cursor_pixel = Some((x, y));
                     self.state.cursor_color = Some(rgba);
                 }
+                ViewerEvent::HistogramReady(hist) => {
+                    self.state.histogram = Some(hist);
+                }
             }
         }
         had_events
@@ -275,6 +278,11 @@ impl ViewerApp {
                     let text = format!("{:.4}, {:.4}, {:.4}, {:.3}", rgba[0], rgba[1], rgba[2], rgba[3]);
                     ctx.output_mut(|o| o.copied_text = text);
                 }
+            }
+
+            // Toggle histogram
+            if i.key_pressed(egui::Key::I) {
+                self.state.show_histogram = !self.state.show_histogram;
             }
 
             // Scroll zoom - use mouse position for zoom-to-cursor
@@ -468,6 +476,142 @@ impl ViewerApp {
         });
     }
 
+    /// Draw histogram panel.
+    fn draw_histogram(&self, ctx: &egui::Context) {
+        if !self.state.show_histogram {
+            return;
+        }
+
+        let Some(hist) = &self.state.histogram else { return };
+
+        egui::SidePanel::right("histogram")
+            .default_width(280.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.heading("Histogram");
+                ui.separator();
+
+                let height = 80.0;
+                let spacing = 8.0;
+
+                // RGB combined
+                ui.label("RGB");
+                let (rect, _) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), height),
+                    egui::Sense::hover(),
+                );
+                self.paint_histogram_rgb(ui.painter(), rect, hist);
+                ui.add_space(spacing);
+
+                // Individual channels
+                ui.label("Red");
+                let (rect, _) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), height),
+                    egui::Sense::hover(),
+                );
+                self.paint_histogram_channel(ui.painter(), rect, &hist.r, Color32::RED);
+                ui.add_space(spacing);
+
+                ui.label("Green");
+                let (rect, _) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), height),
+                    egui::Sense::hover(),
+                );
+                self.paint_histogram_channel(ui.painter(), rect, &hist.g, Color32::GREEN);
+                ui.add_space(spacing);
+
+                ui.label("Blue");
+                let (rect, _) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), height),
+                    egui::Sense::hover(),
+                );
+                self.paint_histogram_channel(ui.painter(), rect, &hist.b, Color32::from_rgb(80, 120, 255));
+                ui.add_space(spacing);
+
+                ui.label("Luminance");
+                let (rect, _) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), height),
+                    egui::Sense::hover(),
+                );
+                self.paint_histogram_channel(ui.painter(), rect, &hist.luma, Color32::GRAY);
+            });
+    }
+
+    /// Paint single channel histogram.
+    fn paint_histogram_channel(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        data: &[f32; 256],
+        color: Color32,
+    ) {
+        // Background
+        painter.rect_filled(rect, 2.0, Color32::from_gray(30));
+
+        let w = rect.width();
+        let h = rect.height();
+        let bar_w = w / 256.0;
+
+        for (i, &val) in data.iter().enumerate() {
+            let bar_h = val.min(1.0) * h;
+            let x = rect.left() + i as f32 * bar_w;
+            let bar_rect = egui::Rect::from_min_size(
+                egui::pos2(x, rect.bottom() - bar_h),
+                Vec2::new(bar_w.max(1.0), bar_h),
+            );
+            painter.rect_filled(bar_rect, 0.0, color);
+        }
+    }
+
+    /// Paint RGB histogram overlaid.
+    fn paint_histogram_rgb(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        hist: &crate::state::Histogram,
+    ) {
+        // Background
+        painter.rect_filled(rect, 2.0, Color32::from_gray(30));
+
+        let w = rect.width();
+        let h = rect.height();
+        let bar_w = w / 256.0;
+
+        // Draw with transparency for overlap
+        let alpha = 150;
+        let r_color = Color32::from_rgba_unmultiplied(255, 0, 0, alpha);
+        let g_color = Color32::from_rgba_unmultiplied(0, 255, 0, alpha);
+        let b_color = Color32::from_rgba_unmultiplied(80, 120, 255, alpha);
+
+        for i in 0..256 {
+            let x = rect.left() + i as f32 * bar_w;
+
+            // Red
+            let bar_h = hist.r[i].min(1.0) * h;
+            let bar_rect = egui::Rect::from_min_size(
+                egui::pos2(x, rect.bottom() - bar_h),
+                Vec2::new(bar_w.max(1.0), bar_h),
+            );
+            painter.rect_filled(bar_rect, 0.0, r_color);
+
+            // Green
+            let bar_h = hist.g[i].min(1.0) * h;
+            let bar_rect = egui::Rect::from_min_size(
+                egui::pos2(x, rect.bottom() - bar_h),
+                Vec2::new(bar_w.max(1.0), bar_h),
+            );
+            painter.rect_filled(bar_rect, 0.0, g_color);
+
+            // Blue
+            let bar_h = hist.b[i].min(1.0) * h;
+            let bar_rect = egui::Rect::from_min_size(
+                egui::pos2(x, rect.bottom() - bar_h),
+                Vec2::new(bar_w.max(1.0), bar_h),
+            );
+            painter.rect_filled(bar_rect, 0.0, b_color);
+        }
+    }
+
     /// Draw bottom hints panel.
     fn draw_hints(&self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("hints").show(ctx, |ui| {
@@ -618,6 +762,7 @@ impl eframe::App for ViewerApp {
         // Draw UI
         self.draw_controls(ctx);
         self.draw_hints(ctx);
+        self.draw_histogram(ctx);
         self.draw_canvas(ctx);
 
         // Repaint when needed (events pending, dragging, or hovering image for pixel inspector)

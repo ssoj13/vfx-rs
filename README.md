@@ -27,7 +27,7 @@ OpenImageIO and OpenColorIO are industry-standard tools that power countless pro
 | **Color** | sRGB, Rec.709, Rec.2020, DCI-P3, ACEScg, ACES2065-1 |
 | **Transfer Functions** | sRGB, PQ, HLG, LogC3, LogC4, S-Log2/3, V-Log, Canon Log 2/3, Apple Log, ACEScc/cct, REDLog |
 | **LUTs** | .cube, .clf, .spi1d/.spi3d, .csp |
-| **Operations** | Resize, Crop, Rotate, Flip, Blur, Sharpen, Composite |
+| **Operations** | Resize, Crop, Rotate, Flip, Blur, Sharpen, Composite, Grade |
 | **ACES** | IDT, RRT, ODT, LMT transforms |
 | **I/O** | Streaming read/write, tiled caching, multi-layer EXR |
 | **GPU** | Auto backend selection, automatic tiling, operation fusion |
@@ -250,8 +250,11 @@ processor.composite_over(&fg, &mut bg)?;
 | `vfx aces` | - | ACES IDT/RRT/ODT |
 | `vfx lut` | - | LUT application |
 | `vfx layers` | - | List EXR layers |
-| `vfx view` | `iv` | Image viewer |
+| `vfx view` | `iv` | Image viewer with pixel inspector |
 | `vfx batch` | - | Batch processing |
+| `vfx grade` | - | CDL grading (slope/offset/power/sat) |
+| `vfx clamp` | - | Clamp pixel values |
+| `vfx premult` | - | Alpha premultiplication |
 
 ## Building from Source
 

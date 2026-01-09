@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 use egui::Color32;
 
-use crate::state::ChannelMode;
+use crate::state::{ChannelMode, Histogram};
 
 /// Generation counter for invalidating stale results.
 pub type Generation = u64;
@@ -118,4 +118,7 @@ pub enum ViewerEvent {
         /// Raw RGBA values before OCIO transform.
         rgba: [f32; 4],
     },
+
+    /// Histogram data.
+    HistogramReady(Histogram),
 }

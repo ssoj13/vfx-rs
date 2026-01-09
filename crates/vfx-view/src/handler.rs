@@ -11,7 +11,7 @@ use vfx_io::{ImageData, LayeredImage};
 use vfx_ocio::Config;
 
 use crate::messages::{Generation, ViewerEvent, ViewerMsg};
-use crate::state::{ChannelMode, DEFAULT_EXPOSURE, DEFAULT_VIEWPORT};
+use crate::state::{ChannelMode, Histogram, DEFAULT_EXPOSURE, DEFAULT_VIEWPORT};
 
 // =============================================================================
 // Constants
@@ -360,6 +360,9 @@ impl ViewerHandler {
             height: processed.height,
             pixels,
         });
+
+        // Compute histogram from raw (pre-OCIO) data
+        self.compute_histogram(&processed);
     }
 
     /// Applies channel isolation.
@@ -580,5 +583,54 @@ impl ViewerHandler {
         self.zoom = 1.0;
         self.pan = [0.0, 0.0];
         self.sync_view_state();
+    }
+
+    /// Computes histogram from raw image data.
+    fn compute_histogram(&self, img: &ImageData) {
+        let pixels = img.to_f32();
+        let channels = img.channels as usize;
+        let pixel_count = img.pixel_count();
+
+        let mut hist = Histogram::default();
+        let mut counts_r = [0u32; 256];
+        let mut counts_g = [0u32; 256];
+        let mut counts_b = [0u32; 256];
+        let mut counts_l = [0u32; 256];
+
+        for i in 0..pixel_count {
+            let r = pixels[i * channels];
+            let g = if channels > 1 { pixels[i * channels + 1] } else { r };
+            let b = if channels > 2 { pixels[i * channels + 2] } else { r };
+
+            // Clamp to [0,1] and map to bin
+            let bin_r = (r.clamp(0.0, 1.0) * 255.0) as usize;
+            let bin_g = (g.clamp(0.0, 1.0) * 255.0) as usize;
+            let bin_b = (b.clamp(0.0, 1.0) * 255.0) as usize;
+
+            // Rec.709 luminance
+            let luma = LUMA_R * r + LUMA_G * g + LUMA_B * b;
+            let bin_l = (luma.clamp(0.0, 1.0) * 255.0) as usize;
+
+            counts_r[bin_r.min(255)] += 1;
+            counts_g[bin_g.min(255)] += 1;
+            counts_b[bin_b.min(255)] += 1;
+            counts_l[bin_l.min(255)] += 1;
+        }
+
+        // Find max for normalization (ignore extreme bins for better viz)
+        let max_r = counts_r[1..255].iter().copied().max().unwrap_or(1).max(1) as f32;
+        let max_g = counts_g[1..255].iter().copied().max().unwrap_or(1).max(1) as f32;
+        let max_b = counts_b[1..255].iter().copied().max().unwrap_or(1).max(1) as f32;
+        let max_l = counts_l[1..255].iter().copied().max().unwrap_or(1).max(1) as f32;
+
+        // Normalize to [0,1]
+        for i in 0..256 {
+            hist.r[i] = counts_r[i] as f32 / max_r;
+            hist.g[i] = counts_g[i] as f32 / max_g;
+            hist.b[i] = counts_b[i] as f32 / max_b;
+            hist.luma[i] = counts_l[i] as f32 / max_l;
+        }
+
+        self.send(ViewerEvent::HistogramReady(hist));
     }
 }

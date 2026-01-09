@@ -147,8 +147,27 @@ pub struct ViewerState {
     // Pixel inspector
     /// Cursor position in image coordinates (None = outside image).
     pub cursor_pixel: Option<(u32, u32)>,
-    /// Pixel value under cursor [R,G,B,A] - raw values before OCIO.
+    /// Pixel value under cursor \[R,G,B,A\] - raw values before OCIO.
     pub cursor_color: Option<[f32; 4]>,
+
+    // Histogram/Waveform
+    /// Histogram data (256 bins per RGB channel).
+    pub histogram: Option<Histogram>,
+    /// Show histogram panel.
+    pub show_histogram: bool,
+}
+
+/// RGB histogram data.
+#[derive(Debug, Clone, Default)]
+pub struct Histogram {
+    /// Red channel bins (256 values, normalized 0-1).
+    pub r: [f32; 256],
+    /// Green channel bins.
+    pub g: [f32; 256],
+    /// Blue channel bins.
+    pub b: [f32; 256],
+    /// Luminance bins.
+    pub luma: [f32; 256],
 }
 
 impl Default for ViewerState {
@@ -172,6 +191,8 @@ impl Default for ViewerState {
             image_path: None,
             cursor_pixel: None,
             cursor_color: None,
+            histogram: None,
+            show_histogram: false,
         }
     }
 }
