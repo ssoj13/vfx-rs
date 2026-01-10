@@ -1,278 +1,133 @@
-# VFX-RS Project Status Report
+# VFX-RS Project Status & Architecture
 
 **Last Updated:** 2026-01-09
-**Overall Progress:** ~92% Complete
+**Status:** Active Refactoring & Cleanup
 
 ---
 
-## Quick Status
+## 🏗 Architecture & Data Flow
 
-| Component | Status | Progress |
-|-----------|--------|----------|
-| EXR (vfx-exr) | PRODUCTION-READY | 100% |
-| Deep Data | PRODUCTION-READY | 100% |
-| Transfer Functions | PRODUCTION-READY | 85% |
-| LUT Formats | COMPLETE | 100% |
-| Color Ops | PRODUCTION-READY | 92% |
-| OCIO Config | GOOD | 85% |
-| ImageBufAlgo | COMPLETE | 100% |
-| GPU Compute | PARTIAL | 80% |
-| Primaries | PRODUCTION-READY | 82% |
+The project is structured as a workspace of crates, with `vfx-core` acting as the foundation.
 
----
-
-## Architecture Overview
-
-```
-vfx-core         - Core types (Pixel, ImageSpec, BitDepth)
-     |
-     +---> vfx-math       - Mat3, Vec3, SIMD, chromatic adaptation
-     |
-     +---> vfx-primaries  - RGB primaries, rgb_to_xyz matrices
-     |
-     +---> vfx-transfer   - Transfer functions (OETF/EOTF)
-     |
-     +---> vfx-lut        - LUT formats (15 formats complete)
-     |
-     +---> vfx-color      - ACES2, CDL, color conversions
-     |
-     +---> vfx-exr        - OpenEXR I/O (fork of exrs with deep data)
-     |
-     +---> vfx-ops        - Image operations (grading, composite, FFT)
-     |
-     +---> vfx-io         - Image I/O (11+ formats, uses vfx-exr)
-     |
-     +---> vfx-ocio       - OCIO config parser, transforms, processor
-     |
-     +---> vfx-compute    - GPU/CPU compute (WGSL shaders, rayon)
-     |
-     +---> vfx-icc        - ICC profile support (basic)
-     |
-     +---> vfx-rs-py      - Python bindings (pyo3)
-     |
-     +---> vfx-cli        - Command-line tool
-     |
-     +---> vfx-view       - GUI viewer (iced)
+```mermaid
+graph TD
+    %% Core Foundation
+    Core[vfx-core] --> Math[vfx-math]
+    Core --> Primaries[vfx-primaries]
+    
+    %% Color Science
+    Math --> Transfer[vfx-transfer]
+    Core --> Lut[vfx-lut]
+    Transfer --> Color[vfx-color]
+    Lut --> Color
+    Primaries --> Color
+    
+    %% Execution & Compute
+    Core --> Compute[vfx-compute]
+    Color -.-> Compute %% Optional dependency for acceleration
+    
+    %% I/O and Formats
+    Core --> Exr[vfx-exr]
+    Exr --> IO[vfx-io]
+    Color --> IO
+    
+    %% Application Layer
+    Color --> Ops[vfx-ops]
+    Compute --> Ops
+    IO --> Ops
+    
+    %% Consumers
+    Ops --> Cli[vfx-cli]
+    Ops --> View[vfx-view]
+    Ops --> Py[vfx-rs-py]
 ```
 
----
+### Key Crates
 
-## vfx-exr (OpenEXR Support)
-
-**Full fork of exrs 1.74.0** with complete deep data support.
-
-### Features
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Deep Data (read) | COMPLETE | Full scanline deep decompression |
-| Deep Data (write) | COMPLETE | Scanline and image writers |
-| Multi-layer | COMPLETE | Unlimited layers per file |
-| Mip Maps | COMPLETE | Full resolution pyramid |
-| Rip Maps | COMPLETE | Anisotropic resolution |
-| Tiled Images | COMPLETE | Arbitrary tile sizes |
-| Parallel I/O | COMPLETE | rayon-based compression |
-| Memory Mapping | COMPLETE | Via std::io traits |
-
-### Compression Support
-
-| Method | Read | Write | Notes |
-|--------|------|-------|-------|
-| None | Yes | Yes | Uncompressed |
-| RLE | Yes | Yes | Lossless |
-| ZIP | Yes | Yes | Lossless, scanline |
-| ZIPS | Yes | Yes | Lossless, block |
-| PIZ | Yes | Yes | Lossless, wavelet |
-| PXR24 | Yes | Yes | Lossless for f16/u32 |
-| B44 | Yes | Yes | Lossy, fixed rate |
-| B44A | Yes | Yes | Lossy, adaptive |
-| DWAA | No | No | Help wanted |
-| DWAB | No | No | Help wanted |
-
-### Binaries
-
-- `exrs-gen` - Test image generator (patterns, shapes, deep data)
-- `exrs-view` - EXR viewer with 2D/3D visualization (feature: `view`)
-
-### Test Assets
-
-Workspace-wide test assets in `test/assets-exr/`:
-- `valid/` - OpenEXR test suite images
-- `invalid/` - Malformed files for fuzz testing
-- `fuzzed/` - Auto-generated fuzz test cases
+| Crate | Responsibility | Status |
+|-------|----------------|--------|
+| `vfx-core` | Base types (`Image`, `Pixel`, `Rect`). Strongly typed. | Stable |
+| `vfx-color` | Color science (Transforms, CDL, ACES). Source of truth for color logic. | Stable |
+| `vfx-compute` | GPU/CPU executor. Runtime typed. **Duplication Risk**. | Needs Refactor |
+| `vfx-exr` | OpenEXR implementation. | **High Debt** |
+| `vfx-cli` | Command-line interface. Glue code. | Stable |
 
 ---
 
-## Completed Features
+## 🛠 Technical Debt & Known Issues
 
-### Transfer Functions (17/20)
-- sRGB, Rec.709, Gamma 2.2/2.4/2.6
-- PQ (ST.2084), HLG
-- ARRI LogC3, LogC4
-- Sony S-Log2, S-Log3
-- Panasonic V-Log
-- ACEScc, ACEScct
-- RED REDLogFilm, REDLog3G10
-- Blackmagic Film Gen5
-- Canon Log 2, Canon Log 3
-- Apple Log
+### 1. Code Duplication (`vfx-compute`)
+- **CDL:** `vfx-compute` redefines `Cdl` struct instead of using `vfx-color`.
+- **Image:** `ComputeImage` uses `Vec<f32>` while `vfx-core` uses `Arc<Vec<T>>`. This prevents zero-copy sharing between CPU and GPU pipelines.
 
-### LUT Formats (15/15 - COMPLETE)
-- .cube, .spi1d, .spi3d, .3dl
-- .clf, .ctf (ACES)
-- .csp (Cinespace)
-- .cdl (ASC-CDL)
-- .1dl (Autodesk Discreet)
-- .hdl (Houdini)
-- .itx, .look (Iridas)
-- .mga/.m3d (Pandora)
-- .spimtx (SPI Matrix)
-- .cub (Truelight)
-- .vf (Nuke VF)
+### 2. vfx-exr TODOs
+The `vfx-exr` crate is feature-complete but contains ~200 `TODO` and `FIXME` markers:
+- **Optimization:** Missing caching for level calculations and deep data blocks.
+- **Safety:** Loose integer casting (needs `try_from`).
+- **Cleanup:** Redundant clones and naming inconsistencies.
 
-### Color Ops (12/13)
-- CDL (ASC-CDL with SOP, saturation)
-- ExposureContrast (Linear, Video, Logarithmic)
-- GradingPrimary (lift/gamma/gain)
-- GradingTone (5-zone tonal correction)
-- GradingRGBCurve (B-spline curves)
-- Range (clamping, remapping)
-- Allocation (Uniform, Lg2)
-- LogOp (generic log transform)
-- Exponent (per-channel, mirror mode)
-- FixedFunction (19+ ACES styles)
-- FFT (forward/inverse)
-- Composite (Porter-Duff, blend modes)
-
-### OCIO (28/33 features)
-- Config YAML parsing
-- ColorSpaces, Roles, Displays, Views, Looks
-- Context variables
-- FileRules, NamedTransforms, SharedViews
-- All major transforms (Matrix, CDL, Exponent, Log, Range, Builtin, Group, Allocation, Grading*)
-
-### ImageBufAlgo (18/18 modules - COMPLETE)
-- patterns, channels, geometry, arithmetic
-- color, composite, stats, ocio
-- deep, filters, fft, drawing
-- warp, demosaic, texture, fillholes, text
-
-### GPU Compute
-- WGSL shaders: matrix, CDL, LUT1D, LUT3D, resize, blur, composite, blend, crop, flip, rotate
-- CPU backend with rayon parallelization
-- GpuPrimitives trait architecture
-- TiledExecutor, AnyExecutor
-- Cross-platform VRAM detection
+### 3. Missing Integrations
+- `vfx-io`: Unpremult support is missing for OCIO transforms.
+- `vfx-compute`: Shader caching is not fully integrated.
 
 ---
 
-## Remaining Work
+## 🔄 Refactoring Plan
 
-### HIGH Priority
-1. **BUG-003:** Matrix inversion for inverse direction in processor
-2. **BUG-004:** View transform dual-reference logic
+See `plan1.md` for the current execution strategy.
 
-### MEDIUM Priority
-3. Moncurve gamma (full implementation with mirror mode)
-4. Canon Log (original, not Log2/Log3)
-5. LookTransform processor wiring
-6. DisplayViewTransform processor wiring
-7. WgpuPrimitives full integration
-8. CudaPrimitives full integration
-
-### LOW Priority
-9. DJI D-Log transfer function
-10. GradingHueCurve op
-11. viewing_rules (OCIO v2.0+)
-12. Blackmagic Wide Gamut primaries
-13. D75, F-series illuminants
-14. DWA/DWAB compression for EXR
+1. **Unify Data Types:** Make `vfx-color` and `vfx-core` the single source of truth.
+2. **Optimize Storage:** Align `ComputeImage` memory layout with `vfx-core` to enable zero-copy.
+3. **Pay Down Debt:** Systematically address `vfx-exr` TODOs.
 
 ---
 
-## Test Coverage
+## Dataflow & Codepaths (High-Level)
 
-**Total: 1200+ tests, ALL PASSING**
+### 1) CLI / Batch Pipeline
 
-| Crate | Tests |
-|-------|-------|
-| vfx-exr | 100+ (deep, roundtrip, fuzz) |
-| vfx-transfer | 51+ |
-| vfx-lut | 60+ |
-| vfx-ops | 50+ |
-| vfx-io | 100+ |
-| vfx-ocio | 20+ |
-| vfx-compute | 10+ |
-
----
-
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `PLAN7.md` | Detailed implementation plan with all items |
-| `PARITY.md` | OCIO parity checklist |
-| `GPU.md` | GPU backend architecture documentation |
-| `TODO.md` | Completed phases summary |
-| `README.md` | Project overview |
-
----
-
-## Build Notes
-
-### Dependencies
-- Rust 1.61+ for vfx-exr (edition 2018)
-- Rust 1.85+ for other crates (edition 2024)
-- vcpkg for C libraries (libheif, etc.)
-- Optional: CUDA toolkit for GPU backend
-
-### Features
-```toml
-[features]
-default = ["hdr", "heif", "webp"]
-wgpu = ["dep:wgpu"]
-cuda = ["dep:cudarc"]
-text = ["dep:rusttype"]
+```
+vfx-cli
+  └─ commands/* -> vfx-io::read(...)
+                   └─ format dispatch (exr/png/tiff/...)
+                       └─ ImageBuf / ImageData
+                          ├─ vfx-ops (filters, resize, composite, fft)
+                          ├─ vfx-color (ACES, grading ops)
+                          └─ vfx-ocio (Config + Processor)
+                                   └─ ProcessorOp chain (CPU/GPU)
+                   └─ vfx-io::write(...)
 ```
 
-### macOS
-`.cargo/config.toml` configured with `-undefined dynamic_lookup` for pyo3 linking.
+### 2) OCIO Processor Build/Apply
 
----
+```
+Config::processor(src, dst)
+  └─ ColorSpace(src).to_reference()
+  └─ ColorSpace(dst).from_reference() or inverse(to_reference)
+  └─ GroupTransform -> Processor::from_transform
+        └─ compile_transform()
+             └─ ProcessorOp list (Matrix, Range, LUT, Transfer, ...)
+        └─ apply_rgb() / apply()
+```
 
-## Recent Changes (2026-01-09)
+### 3) EXR Deep Data Read Path
 
-### vfx-exr Integration
-- Full fork of exrs 1.74.0 integrated as `vfx-exr`
-- Complete deep data support (read/write)
-- All imports updated from `exr::` to `vfx_exr::`
-- Test assets moved to `test/assets-exr/` (workspace-wide)
-- vfx-io now uses vfx-exr for all EXR operations
-- Exposed deep API: `read_exr_deep`, `write_exr_deep`, `DeepImage`, etc.
+```
+vfx-io::exr::read_*()
+  └─ vfx-exr::image::read::ReadImage
+       └─ meta::read_headers()
+       └─ block::reader::ChunksReader
+            └─ compression::decompress_*
+                 └─ block::UncompressedBlock
+                      └─ image::read::SpecificChannels/AnyChannels
+                           └─ Image / Layer / Pixels
+```
 
-### Files Changed
-- `crates/vfx-exr/` - New crate (full exrs fork)
-- `crates/vfx-io/Cargo.toml` - Updated to use vfx-exr
-- `crates/vfx-io/src/exr_deep.rs` - Re-exports vfx-exr deep types
-- `test/assets-exr/` - Workspace-wide EXR test assets
+### 4) Viewer (vfx-view) Runtime Loop
 
----
-
-## Conclusion
-
-VFX-RS is **production-ready** for:
-- Color management pipelines
-- Image I/O operations (including deep EXR)
-- LUT processing
-- OCIO config compatibility
-- Deep compositing workflows
-
-**Needs completion** for:
-- Full GPU acceleration (shaders exist, integration needed)
-- OCIO processor edge cases
-- Minor transfer functions
-- DWA/DWAB compression
-
----
-
-*Report generated: 2026-01-09*
+```
+UI thread (egui) <-> Worker thread (ViewerHandler)
+  └─ load_image() -> vfx-io read -> layers -> apply_channel_mode()
+       └─ ColorConfig::display_processor(...) -> apply_rgb()
+            └─ upload texture -> draw_canvas()
+```
