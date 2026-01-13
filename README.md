@@ -206,6 +206,29 @@ Full camera gamut support verified against OCIO ColorMatrixHelpers.cpp:
 | DynamicProcessor | **Production-ready** |
 | ProcessorCache | **Production-ready** |
 
+### OCIO Algorithm Parity
+
+Numerical accuracy verified against OpenColorIO 2.5.1:
+
+| Component | Max Diff | Max ULP | Notes |
+|-----------|----------|---------|-------|
+| LUT3D Index | 0 | 0 | Blue-major order (`B + dim*G + dim²*R`) |
+| LUT3D Tetrahedral | 1.19e-07 | - | All 6 tetrahedra match OCIO |
+| LUT3D Trilinear | 0.0 | 0 | Perfect match (B→G→R order) |
+| CDL (power=1.0) | 0.0 | 0 | Bit-perfect |
+| CDL (power≠1.0) | 2.98e-07 | 8-22 | Uses OCIO-identical `fast_pow` |
+| sRGB | 2.41e-05 | - | f32 precision |
+| PQ (ST-2084) | 2.74e-06 | - | Relative error |
+| HLG | 6.66e-16 | - | Machine epsilon |
+| Canon Log 2/3 | 4.20e-05 | - | Analytical vs OCIO LUT |
+
+**Key implementation details:**
+- `fast_pow` uses identical Chebyshev polynomial coefficients as OCIO SSE.h
+- CDL saturation uses OCIO-compatible operation order (multiply then sum)
+- All constants verified against OCIO source code
+
+See [docs/OCIO_PARITY_AUDIT.md](docs/OCIO_PARITY_AUDIT.md) for full details.
+
 ### EXR Compression Support
 
 | Method | Read | Write | Type |

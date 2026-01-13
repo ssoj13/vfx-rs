@@ -319,6 +319,28 @@ The built-in ACES 1.3 config includes:
 | Python bindings | Via vfx-rs-py | Yes |
 | Nuke/Mari plugins | No | Yes |
 
+### Algorithm Parity
+
+Numerical accuracy verified against OpenColorIO 2.5.1:
+
+| Component | Max Diff | Notes |
+|-----------|----------|-------|
+| LUT3D Index | 0 | Blue-major order |
+| LUT3D Tetrahedral | 1.19e-07 | All 6 tetrahedra match |
+| LUT3D Trilinear | 0.0 | Perfect match |
+| CDL (power=1) | 0.0 | Bit-perfect |
+| CDL (power≠1) | 2.98e-07 | OCIO-identical `fast_pow` |
+| sRGB | 2.41e-05 | f32 precision |
+| PQ | 2.74e-06 | Relative error |
+| HLG | 6.66e-16 | Machine epsilon |
+
+**Key implementation details:**
+- `fast_pow` uses identical Chebyshev polynomial coefficients as OCIO SSE.h
+- LUT3D uses Blue-major indexing: `idx = B + dim*G + dim²*R`
+- CDL saturation uses OCIO-compatible operation order
+
+See [OCIO Parity Audit](../OCIO_PARITY_AUDIT.md) for full details.
+
 ### Config Version
 
 ```rust

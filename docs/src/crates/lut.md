@@ -30,7 +30,7 @@ let rgb_out = lut.apply_rgb([0.5, 0.3, 0.2]);
 
 ### Lut3D - 3D Lookup Table
 
-Full RGB cube for complex color transforms:
+Full RGB cube for complex color transforms with **OCIO-exact** implementation:
 
 ```rust
 use vfx_lut::{Lut3D, Interpolation};
@@ -44,6 +44,15 @@ let rgb_out = lut.apply([0.5, 0.3, 0.2]);
 // Apply with tetrahedral interpolation (more accurate)
 let rgb_out = lut.apply_tetrahedral([0.5, 0.3, 0.2]);
 ```
+
+#### OCIO Parity
+
+| Property | Status |
+|----------|--------|
+| Indexing | Blue-major: `idx = B + dim*G + dim²*R` |
+| Tetrahedral | All 6 tetrahedra conditions match OCIO |
+| Trilinear | B→G→R interpolation order |
+| Max diff vs OCIO | Tetrahedral: 1.19e-07, Trilinear: 0.0 |
 
 ## File Formats
 

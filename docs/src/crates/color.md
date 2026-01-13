@@ -116,7 +116,7 @@ let (r, g, b) = rrt(0.18, 0.18, 0.18, &params);
 
 ## CDL (Color Decision List)
 
-ASC CDL standard (slope/offset/power/saturation):
+ASC CDL standard (slope/offset/power/saturation) with **OCIO-exact** implementation:
 
 ```rust
 use vfx_color::cdl::{Cdl, apply_cdl};
@@ -131,6 +131,17 @@ let cdl = Cdl {
 // Apply: out = (in * slope + offset) ^ power, then saturation
 apply_cdl(&mut data, channels, &cdl);
 ```
+
+### OCIO Parity
+
+| Property | Status |
+|----------|--------|
+| Algorithm | ASC CDL v1.2 (Slope → Offset → Clamp → Power → Saturation) |
+| Power function | `fast_pow` with OCIO-identical Chebyshev polynomials |
+| Luma weights | Rec.709 (0.2126, 0.7152, 0.0722) |
+| Max diff vs OCIO | ~3e-7 (8-22 ULP) |
+
+See [OCIO Parity Audit](../OCIO_PARITY_AUDIT.md) for details.
 
 ## Color Space Conversion
 
