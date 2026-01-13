@@ -198,11 +198,19 @@ impl Cdl {
         }
 
         // Saturation (Rec. 709 luma weights)
+        // OCIO-compatible order: multiply then sum (matches CDLOpCPU.cpp ApplySaturation)
         if (self.saturation - 1.0).abs() > 1e-6 {
-            let luma = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
-            for v in rgb.iter_mut() {
-                *v = luma + (*v - luma) * self.saturation;
-            }
+            const LUMA_R: f32 = 0.2126;
+            const LUMA_G: f32 = 0.7152;
+            const LUMA_B: f32 = 0.0722;
+            let src = *rgb; // save original
+            let wr = src[0] * LUMA_R;
+            let wg = src[1] * LUMA_G;
+            let wb = src[2] * LUMA_B;
+            let luma = wr + wg + wb;
+            rgb[0] = luma + self.saturation * (src[0] - luma);
+            rgb[1] = luma + self.saturation * (src[1] - luma);
+            rgb[2] = luma + self.saturation * (src[2] - luma);
         }
 
         // Final clamp [0,1] after saturation (ASC CDL spec)
@@ -234,11 +242,19 @@ impl Cdl {
         }
 
         // Saturation (no clamp in this mode)
+        // OCIO-compatible order: multiply then sum (matches CDLOpCPU.cpp ApplySaturation)
         if (self.saturation - 1.0).abs() > 1e-6 {
-            let luma = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
-            for v in rgb.iter_mut() {
-                *v = luma + (*v - luma) * self.saturation;
-            }
+            const LUMA_R: f32 = 0.2126;
+            const LUMA_G: f32 = 0.7152;
+            const LUMA_B: f32 = 0.0722;
+            let src = *rgb; // save original
+            let wr = src[0] * LUMA_R;
+            let wg = src[1] * LUMA_G;
+            let wb = src[2] * LUMA_B;
+            let luma = wr + wg + wb;
+            rgb[0] = luma + self.saturation * (src[0] - luma);
+            rgb[1] = luma + self.saturation * (src[1] - luma);
+            rgb[2] = luma + self.saturation * (src[2] - luma);
         }
         // No final clamp in NO_CLAMP mode
     }

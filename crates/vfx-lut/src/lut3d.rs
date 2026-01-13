@@ -201,18 +201,21 @@ impl Lut3D {
         let c011 = self.get(ri, gi + 1, bi + 1);
         let c111 = self.get(ri + 1, gi + 1, bi + 1);
 
-        // Trilinear interpolation
+        // Trilinear interpolation (OCIO order: B -> G -> R)
         let mut result = [0.0f32; 3];
         for i in 0..3 {
-            let c00 = c000[i] * (1.0 - rf) + c100[i] * rf;
-            let c01 = c001[i] * (1.0 - rf) + c101[i] * rf;
-            let c10 = c010[i] * (1.0 - rf) + c110[i] * rf;
-            let c11 = c011[i] * (1.0 - rf) + c111[i] * rf;
+            // Interpolate along Blue axis first
+            let b0 = c000[i] * (1.0 - bf) + c001[i] * bf; // at (r0, g0)
+            let b1 = c010[i] * (1.0 - bf) + c011[i] * bf; // at (r0, g1)
+            let b2 = c100[i] * (1.0 - bf) + c101[i] * bf; // at (r1, g0)
+            let b3 = c110[i] * (1.0 - bf) + c111[i] * bf; // at (r1, g1)
 
-            let c0 = c00 * (1.0 - gf) + c10 * gf;
-            let c1 = c01 * (1.0 - gf) + c11 * gf;
+            // Interpolate along Green axis
+            let g0 = b0 * (1.0 - gf) + b1 * gf; // at r0
+            let g1 = b2 * (1.0 - gf) + b3 * gf; // at r1
 
-            result[i] = c0 * (1.0 - bf) + c1 * bf;
+            // Interpolate along Red axis
+            result[i] = g0 * (1.0 - rf) + g1 * rf;
         }
 
         result
@@ -258,17 +261,18 @@ impl Lut3D {
                     // T3: bf > rf > gf
                     c000[i] + bf * (c001[i] - c000[i]) + rf * (c101[i] - c001[i]) + gf * (c111[i] - c101[i])
                 }
-            } else if gf > bf {
-                if rf > bf {
-                    // T4: gf > rf > bf
-                    c000[i] + gf * (c010[i] - c000[i]) + rf * (c110[i] - c010[i]) + bf * (c111[i] - c110[i])
-                } else {
-                    // T5: gf > bf > rf
-                    c000[i] + gf * (c010[i] - c000[i]) + bf * (c011[i] - c010[i]) + rf * (c111[i] - c011[i])
-                }
             } else {
-                // T6: bf > gf > rf
-                c000[i] + bf * (c001[i] - c000[i]) + gf * (c011[i] - c001[i]) + rf * (c111[i] - c011[i])
+                // gf >= rf (G >= R)
+                if bf > gf {
+                    // T6: bf > gf >= rf (B > G >= R)
+                    c000[i] + bf * (c001[i] - c000[i]) + gf * (c011[i] - c001[i]) + rf * (c111[i] - c011[i])
+                } else if bf > rf {
+                    // T5: gf >= bf > rf (G >= B > R)
+                    c000[i] + gf * (c010[i] - c000[i]) + bf * (c011[i] - c010[i]) + rf * (c111[i] - c011[i])
+                } else {
+                    // T4: gf >= rf >= bf (G >= R >= B)
+                    c000[i] + gf * (c010[i] - c000[i]) + rf * (c110[i] - c010[i]) + bf * (c111[i] - c110[i])
+                }
             };
         }
 
