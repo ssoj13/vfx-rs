@@ -60,8 +60,13 @@ fn slice_infer_headers<'slf, Channels: 'slf + WritableChannels<'slf>>(
 ) -> Headers {
     slice
         .iter()
-        .map(|layer| layer.infer_headers(image_attributes).remove(0))
-        .collect() // TODO no array-vs-first
+        .map(|layer| {
+            layer.infer_headers(image_attributes)
+                .into_iter()
+                .next()
+                .expect("layer must produce at least one header")
+        })
+        .collect()
 }
 
 fn slice_create_writer<'slf, Channels: 'slf + WritableChannels<'slf>>(
@@ -163,7 +168,11 @@ where
 {
     fn infer_headers(&self, image_attributes: &ImageAttributes) -> Headers {
         let mut headers = self.inner.infer_headers(image_attributes);
-        headers.push(self.value.infer_headers(image_attributes).remove(0)); // TODO no unwrap
+        let layer_header = self.value.infer_headers(image_attributes)
+            .into_iter()
+            .next()
+            .expect("layer must produce at least one header");
+        headers.push(layer_header);
         headers
     }
 

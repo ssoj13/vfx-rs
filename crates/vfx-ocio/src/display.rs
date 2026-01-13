@@ -188,9 +188,22 @@ impl Display {
     }
 }
 
+/// Reference space type for view transforms (OCIO v2).
+///
+/// Determines which reference space a view transform operates in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReferenceSpaceType {
+    /// Scene-referred (ACES AP0, etc.) - default for most view transforms.
+    #[default]
+    Scene,
+    /// Display-referred (for display-to-display transforms).
+    Display,
+}
+
 /// View transform definition (OCIO v2).
 ///
 /// View transforms are shared transforms that can be reused across views.
+/// They operate in either scene-referred or display-referred space.
 #[derive(Debug, Clone)]
 pub struct ViewTransform {
     /// Name.
@@ -199,6 +212,8 @@ pub struct ViewTransform {
     family: String,
     /// Description.
     description: String,
+    /// Reference space type (scene or display).
+    reference_space_type: ReferenceSpaceType,
     /// Transform from scene reference.
     from_scene_reference: Option<Transform>,
     /// Transform to scene reference.
@@ -210,12 +225,18 @@ pub struct ViewTransform {
 }
 
 impl ViewTransform {
-    /// Creates a new view transform.
+    /// Creates a new scene-referred view transform.
     pub fn new(name: impl Into<String>) -> Self {
+        Self::with_reference_space(name, ReferenceSpaceType::Scene)
+    }
+
+    /// Creates a view transform with explicit reference space type.
+    pub fn with_reference_space(name: impl Into<String>, reference_space: ReferenceSpaceType) -> Self {
         Self {
             name: name.into(),
             family: String::new(),
             description: String::new(),
+            reference_space_type: reference_space,
             from_scene_reference: None,
             to_scene_reference: None,
             from_display_reference: None,
@@ -251,6 +272,12 @@ impl ViewTransform {
     pub fn with_description(mut self, desc: impl Into<String>) -> Self {
         self.description = desc.into();
         self
+    }
+
+    /// Returns the reference space type.
+    #[inline]
+    pub fn reference_space_type(&self) -> ReferenceSpaceType {
+        self.reference_space_type
     }
 
     /// Sets transform from scene reference.

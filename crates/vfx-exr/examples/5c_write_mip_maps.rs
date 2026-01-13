@@ -15,19 +15,19 @@ fn main() {
     let full_size = Vec2(512, 512);
     let size_rounding = RoundingMode::Up;
 
-    let mip_levels_sizes = exr::meta::mip_map_levels(size_rounding, full_size).collect::<Vec<_>>();
+    let mip_levels_sizes = vfx_exr::meta::mip_map_levels(size_rounding, full_size).collect::<Vec<_>>();
 
-    let red_mip_levels = mip_levels_sizes
+    let red_mip_levels: Vec<_> = mip_levels_sizes
         .iter()
         .map(|(_index, level_size)| FlatSamples::F32(vec![0.1_f32; level_size.area()]))
         .collect();
 
-    let green_mip_levels = mip_levels_sizes
+    let green_mip_levels: Vec<_> = mip_levels_sizes
         .iter()
         .map(|(_index, level_size)| FlatSamples::F32(vec![0.6_f32; level_size.area()]))
         .collect();
 
-    let blue_mip_levels = mip_levels_sizes
+    let blue_mip_levels: Vec<_> = mip_levels_sizes
         .iter()
         .map(|(_index, level_size)| FlatSamples::F32(vec![1.0_f32; level_size.area()]))
         .collect();

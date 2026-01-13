@@ -109,7 +109,7 @@ pub use transform::{
     Lut1DTransform, Lut3DTransform,
 };
 pub use processor::{Processor, ProcessorOp, OptimizationLevel, BitDepth as ProcessorBitDepth};
-pub use display::{Display, View, ViewTransform, DisplayManager};
+pub use display::{Display, View, ViewTransform, DisplayManager, ReferenceSpaceType};
 pub use look::{Look, LookManager, parse_looks};
 pub use role::{Roles, names as role_names};
 pub use context::Context;

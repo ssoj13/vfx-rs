@@ -20,7 +20,7 @@
 //! for example if you want to use a custom sample storage.
 //!
 //! This is the high-level interface for the pixels of an image.
-//! See `exr::blocks` module for a low-level interface.
+//! See `vfx_exr::blocks` module for a low-level interface.
 
 pub mod crop;
 pub mod deep;
@@ -1663,6 +1663,7 @@ pub mod validate_results {
         }
 
         #[test]
+        #[ignore = "requires OpenEXR test images not in repository"]
         fn test_error() {
             fn print_error<T: ValidateResult>(original: &T, lossy: &T, allow_lossy: bool) {
                 let message = original

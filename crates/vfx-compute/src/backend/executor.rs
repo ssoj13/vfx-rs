@@ -371,7 +371,7 @@ impl<G: GpuPrimitives> TiledExecutor<G> {
 
     /// Single-pass chained color operations - data stays on GPU.
     fn execute_color_chain_single(&self, img: &mut ComputeImage, ops: &[ColorOp]) -> ComputeResult<()> {
-        let mut current = self.gpu.upload(&img.data, img.width, img.height, img.channels)?;
+        let mut current = self.gpu.upload(img.data(), img.width, img.height, img.channels)?;
         let mut next = self.gpu.allocate(img.width, img.height, img.channels)?;
 
         // Chain operations, ping-ponging between buffers
@@ -380,7 +380,7 @@ impl<G: GpuPrimitives> TiledExecutor<G> {
             std::mem::swap(&mut current, &mut next);
         }
 
-        img.data = self.gpu.download(&current)?;
+        img.set_data(self.gpu.download(&current)?);
         Ok(())
     }
 
@@ -494,10 +494,10 @@ impl<G: GpuPrimitives> TiledExecutor<G> {
 
         match plan.strategy {
             ProcessingStrategy::SinglePass => {
-                let src = self.gpu.upload(&img.data, img.width, img.height, img.channels)?;
+                let src = self.gpu.upload(img.data(), img.width, img.height, img.channels)?;
                 let mut dst = self.gpu.allocate(img.width, img.height, img.channels)?;
                 self.gpu.exec_blur(&src, &mut dst, radius)?;
-                img.data = self.gpu.download(&dst)?;
+                img.set_data(self.gpu.download(&dst)?);
                 Ok(())
             }
             ProcessingStrategy::Tiled { tile_size, .. } | ProcessingStrategy::Streaming { tile_size } => {
@@ -551,7 +551,7 @@ impl<G: GpuPrimitives> TiledExecutor<G> {
     pub fn execute_resize(&self, img: &ComputeImage, width: u32, height: u32, filter: u32) -> ComputeResult<ComputeImage> {
         // Resize needs full image for proper interpolation
         // For very large images, we could use pyramid approach
-        let src = self.gpu.upload(&img.data, img.width, img.height, img.channels)?;
+        let src = self.gpu.upload(img.data(), img.width, img.height, img.channels)?;
         let mut dst = self.gpu.allocate(width, height, img.channels)?;
         self.gpu.exec_resize(&src, &mut dst, filter)?;
         let data = self.gpu.download(&dst)?;
@@ -566,23 +566,23 @@ impl<G: GpuPrimitives> TiledExecutor<G> {
 
     /// Execute flip horizontal.
     pub fn execute_flip_h(&self, img: &mut ComputeImage) -> ComputeResult<()> {
-        let mut handle = self.gpu.upload(&img.data, img.width, img.height, img.channels)?;
+        let mut handle = self.gpu.upload(img.data(), img.width, img.height, img.channels)?;
         self.gpu.exec_flip_h(&mut handle)?;
-        img.data = self.gpu.download(&handle)?;
+        img.set_data(self.gpu.download(&handle)?);
         Ok(())
     }
 
     /// Execute flip vertical.
     pub fn execute_flip_v(&self, img: &mut ComputeImage) -> ComputeResult<()> {
-        let mut handle = self.gpu.upload(&img.data, img.width, img.height, img.channels)?;
+        let mut handle = self.gpu.upload(img.data(), img.width, img.height, img.channels)?;
         self.gpu.exec_flip_v(&mut handle)?;
-        img.data = self.gpu.download(&handle)?;
+        img.set_data(self.gpu.download(&handle)?);
         Ok(())
     }
 
     /// Execute rotate 90° (n times clockwise).
     pub fn execute_rotate_90(&self, img: &ComputeImage, n: u32) -> ComputeResult<ComputeImage> {
-        let handle = self.gpu.upload(&img.data, img.width, img.height, img.channels)?;
+        let handle = self.gpu.upload(img.data(), img.width, img.height, img.channels)?;
         let rotated = self.gpu.exec_rotate_90(&handle, n)?;
         let (w, h, c) = rotated.dimensions();
         let data = self.gpu.download(&rotated)?;
@@ -595,10 +595,10 @@ impl<G: GpuPrimitives> TiledExecutor<G> {
         
         match plan.strategy {
             ProcessingStrategy::SinglePass => {
-                let fg_handle = self.gpu.upload(&fg.data, fg.width, fg.height, fg.channels)?;
-                let mut bg_handle = self.gpu.upload(&bg.data, bg.width, bg.height, bg.channels)?;
+                let fg_handle = self.gpu.upload(fg.data(), fg.width, fg.height, fg.channels)?;
+                let mut bg_handle = self.gpu.upload(bg.data(), bg.width, bg.height, bg.channels)?;
                 self.gpu.exec_composite_over(&fg_handle, &mut bg_handle)?;
-                bg.data = self.gpu.download(&bg_handle)?;
+                bg.set_data(self.gpu.download(&bg_handle)?);
                 Ok(())
             }
             ProcessingStrategy::Tiled { tile_size, .. } | ProcessingStrategy::Streaming { tile_size } => {
@@ -637,10 +637,10 @@ impl<G: GpuPrimitives> TiledExecutor<G> {
         
         match plan.strategy {
             ProcessingStrategy::SinglePass => {
-                let fg_handle = self.gpu.upload(&fg.data, fg.width, fg.height, fg.channels)?;
-                let mut bg_handle = self.gpu.upload(&bg.data, bg.width, bg.height, bg.channels)?;
+                let fg_handle = self.gpu.upload(fg.data(), fg.width, fg.height, fg.channels)?;
+                let mut bg_handle = self.gpu.upload(bg.data(), bg.width, bg.height, bg.channels)?;
                 self.gpu.exec_blend(&fg_handle, &mut bg_handle, mode, opacity)?;
-                bg.data = self.gpu.download(&bg_handle)?;
+                bg.set_data(self.gpu.download(&bg_handle)?);
                 Ok(())
             }
             ProcessingStrategy::Tiled { tile_size, .. } | ProcessingStrategy::Streaming { tile_size } => {
@@ -760,7 +760,7 @@ impl<G: GpuPrimitives> TiledExecutor<G> {
         for row in y..(y + h) {
             let start = (row as usize) * stride + (x as usize) * c;
             let end = start + (w as usize) * c;
-            data.extend_from_slice(&img.data[start..end]);
+            data.extend_from_slice(&img.data()[start..end]);
         }
 
         data
@@ -776,7 +776,7 @@ impl<G: GpuPrimitives> TiledExecutor<G> {
             let src_start = row * tile_stride;
             let dst_row = tile.y as usize + row;
             let dst_start = dst_row * img_stride + (tile.x as usize) * c;
-            img.data[dst_start..dst_start + tile_stride]
+            img.data_mut()[dst_start..dst_start + tile_stride]
                 .copy_from_slice(&data[src_start..src_start + tile_stride]);
         }
     }

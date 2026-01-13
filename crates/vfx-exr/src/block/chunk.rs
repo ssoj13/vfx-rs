@@ -371,7 +371,7 @@ impl CompressedDeepTileBlock {
 use crate::error::{i32_to_usize, u64_to_usize, usize_to_i32, Error, Result, UnitResult};
 use crate::math::Vec2;
 
-/// Validation of chunks is done while reading and writing the actual data. (For example in exr::full_image)
+/// Validation of chunks is done while reading and writing the actual data. (For example in vfx_exr::full_image)
 impl Chunk {
     /// Without validation, write this instance to the byte stream.
     pub fn write(&self, write: &mut impl Write, header_count: usize) -> UnitResult {

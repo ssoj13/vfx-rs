@@ -2,7 +2,7 @@
 //!
 //! First, call `my_image.write()`. The resulting value can be customized, like this:
 //! ```no_run
-//!     use exr::prelude::*;
+//!     use vfx_exr::prelude::*;
 //! #   let my_image: FlatImage = unimplemented!();
 //!
 //!     my_image.write()

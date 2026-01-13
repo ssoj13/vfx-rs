@@ -10,7 +10,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use exr::gen::{TestImage, PatternType, ChannelSpec};
+//! use vfx_exr::gen::{TestImage, PatternType, ChannelSpec};
 //!
 //! let img = TestImage::builder()
 //!     .size(1920, 1080)

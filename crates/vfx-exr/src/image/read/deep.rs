@@ -54,26 +54,26 @@
 //!
 //! Simple file reading:
 //! ```no_run
-//! use exr::image::read::deep::read_first_deep_layer_from_file;
+//! use vfx_exr::image::read::deep::read_first_deep_layer_from_file;
 //!
 //! let image = read_first_deep_layer_from_file("particles.exr")?;
 //! let samples = &image.layer_data.channel_data.list[0].sample_data;
 //!
 //! println!("Total samples: {}", samples.total_samples());
 //! println!("Max per pixel: {}", samples.max_samples_per_pixel());
-//! # Ok::<(), exr::error::Error>(())
+//! # Ok::<(), vfx_exr::error::Error>(())
 //! ```
 //!
 //! Builder API with options:
 //! ```no_run
-//! use exr::image::read::deep::read_deep;
+//! use vfx_exr::image::read::deep::read_deep;
 //!
 //! let image = read_deep()
 //!     .all_channels()  // All channels as DeepSamples
 //!     .first_valid_layer()  // First layer only
 //!     .all_attributes()  // Keep all metadata
 //!     .from_file("volumetric.exr")?;
-//! # Ok::<(), exr::error::Error>(())
+//! # Ok::<(), vfx_exr::error::Error>(())
 //! ```
 //!
 //! # Compression Support
@@ -125,7 +125,7 @@ pub type DeepLayersImage = Image<crate::image::Layers<AnyChannels<DeepSamples>>>
 ///
 /// # Example
 /// ```no_run
-/// use exr::image::read::deep::read_first_deep_layer_from_file;
+/// use vfx_exr::image::read::deep::read_first_deep_layer_from_file;
 /// let image = read_first_deep_layer_from_file("deep.exr").unwrap();
 /// ```
 pub fn read_first_deep_layer_from_file(path: impl AsRef<Path>) -> Result<DeepImage> {
@@ -154,7 +154,7 @@ pub fn read_all_deep_layers_from_file(path: impl AsRef<Path>) -> Result<DeepLaye
 ///
 /// # Example
 /// ```no_run
-/// use exr::image::read::deep::read_deep;
+/// use vfx_exr::image::read::deep::read_deep;
 /// let image = read_deep()
 ///     .all_channels()
 ///     .first_valid_layer()

@@ -161,6 +161,7 @@ pub mod redcode;
 pub mod exr_deep;
 
 pub mod sequence;
+pub mod cinema_dng;
 pub mod cache;
 pub mod texture;
 pub mod udim;

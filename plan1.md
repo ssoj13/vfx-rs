@@ -94,19 +94,20 @@ Not confirmed:
 
 ## Proposed Execution Plan
 
-- [ ] Fix `attempt_delete_file_on_write_error` to only delete files created by the current write attempt.
-- [ ] Implement OCIO ViewTransform reference-space type and correct selection logic in `display_processor`.
-- [ ] Wire OCIO named transforms into `ocionamedtransform` using `Config::named_transform`.
-- [ ] Add singular-matrix detection in OCIO matrix inversion path and surface errors.
-- [ ] Implement ImageBuf metadata accessors (`nsubimages`, `nmiplevels`, `contiguous`) with real data sources.
-- [ ] Implement unpremult pipeline for OCIO named transforms or remove flag and update docs.
-- [ ] Use `ColorConfig` for file LUT resolution in `ociofiletransform`.
-- [ ] Audit `Error::Aborted` usage and decide on deprecation/removal.
-- [ ] Unify compute-layer `Cdl` with `vfx-color::Cdl` to prevent drift.
-- [ ] Align `ComputeImage` memory model with `vfx-core` (Arc-backed or shared view) to enable zero-copy transitions.
-- [ ] Preserve and unify the universal compute engine (auto backend selection across CUDA/WGPU/CPU) while adding streaming and tiling as first-class paths.
-- [ ] Fix overflow-prone seek delta in `vfx-exr` Tracking::seek_read_to.
-- [ ] Replace or guard risky unwrap path in EXR layer header inference.
+- [x] Fix `attempt_delete_file_on_write_error` to only delete files created by the current write attempt. ✅ DONE
+- [x] Implement OCIO ViewTransform reference-space type and correct selection logic in `display_processor`. ✅ DONE
+- [x] Wire OCIO named transforms into `ocionamedtransform` using `Config::named_transform`. ✅ DONE
+- [x] Add singular-matrix detection in OCIO matrix inversion path and surface errors. ✅ DONE
+- [x] Implement ImageBuf metadata accessors (`nsubimages`, `nmiplevels`, `contiguous`) with real data sources. ✅ DONE
+- [x] Implement unpremult pipeline for OCIO named transforms or remove flag and update docs. ✅ DONE
+- [x] Use `ColorConfig` for file LUT resolution in `ociofiletransform`. ✅ DONE
+- [x] Audit `Error::Aborted` usage and decide on deprecation/removal. ✅ DONE (removed)
+- [x] Unify compute-layer `Cdl` with `vfx-color::Cdl` to prevent drift. ✅ DONE (vfx-ops now re-exports from vfx-color)
+- [x] Deduplicate transfer functions - use `vfx-transfer` in OCIO processor. ✅ DONE
+- [x] Align `ComputeImage` memory model with `vfx-core` (Arc-backed or shared view) to enable zero-copy transitions. ✅ DONE
+- [x] Preserve and unify the universal compute engine (auto backend selection across CUDA/WGPU/CPU) while adding streaming and tiling as first-class paths. ✅ DONE
+- [x] Fix overflow-prone seek delta in `vfx-exr` Tracking::seek_read_to. ✅ DONE
+- [x] Replace or guard risky unwrap path in EXR layer header inference. ✅ DONE
 
 ## Approval Checkpoint
 

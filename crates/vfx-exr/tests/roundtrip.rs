@@ -1,5 +1,3 @@
-extern crate exr;
-
 extern crate smallvec;
 
 use std::ffi::OsStr;
@@ -177,8 +175,6 @@ fn check_all_files_in_repo<T>(
                 Ok(Err(Error::Invalid(message))) => {
                     Result::Error(format!("Invalid: {:?}", message))
                 }
-                Ok(Err(Error::Aborted)) => panic!("a test produced `Error::Abort`"),
-
                 Err(_) => Result::Error("Panic".to_owned()),
             };
 

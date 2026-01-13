@@ -179,243 +179,251 @@ pub enum BlendMode {
     Difference = 8,
 }
 
-/// Executor type enum for dynamic dispatch.
+// =============================================================================
+// Macro for AnyExecutor dispatch (reduces ~200 lines of duplication)
+// =============================================================================
+
+/// Dispatch method to all executor variants.
+macro_rules! dispatch_executor {
+    // Simple method with no arguments (returns ref)
+    ($self:ident, $method:ident) => {
+        match $self {
+            AnyExecutor::Cpu(e) => e.$method(),
+            #[cfg(feature = "wgpu")]
+            AnyExecutor::Wgpu(e) => e.$method(),
+            #[cfg(feature = "cuda")]
+            AnyExecutor::Cuda(e) => e.$method(),
+        }
+    };
+    // Method with arguments
+    ($self:ident, $method:ident, $($arg:expr),+) => {
+        match $self {
+            AnyExecutor::Cpu(e) => e.$method($($arg),+),
+            #[cfg(feature = "wgpu")]
+            AnyExecutor::Wgpu(e) => e.$method($($arg),+),
+            #[cfg(feature = "cuda")]
+            AnyExecutor::Cuda(e) => e.$method($($arg),+),
+        }
+    };
+}
+
+/// Dispatch GPU primitive operation with upload/exec/download pattern.
+macro_rules! dispatch_gpu_op {
+    // In-place operation (upload -> exec -> download back to same image)
+    ($self:ident, $img:ident, $op:ident) => {
+        match $self {
+            AnyExecutor::Cpu(e) => {
+                let mut handle = e.gpu().upload($img.data(), $img.width, $img.height, $img.channels)?;
+                e.gpu().$op(&mut handle)?;
+                $img.set_data(e.gpu().download(&handle)?);
+                Ok(())
+            }
+            #[cfg(feature = "wgpu")]
+            AnyExecutor::Wgpu(e) => {
+                let mut handle = e.gpu().upload($img.data(), $img.width, $img.height, $img.channels)?;
+                e.gpu().$op(&mut handle)?;
+                $img.set_data(e.gpu().download(&handle)?);
+                Ok(())
+            }
+            #[cfg(feature = "cuda")]
+            AnyExecutor::Cuda(e) => {
+                let mut handle = e.gpu().upload($img.data(), $img.width, $img.height, $img.channels)?;
+                e.gpu().$op(&mut handle)?;
+                $img.set_data(e.gpu().download(&handle)?);
+                Ok(())
+            }
+        }
+    };
+    // Two-image operation (fg + bg -> bg modified)
+    ($self:ident, fg=$fg:ident, bg=$bg:ident, $op:ident $(, $arg:expr)*) => {
+        match $self {
+            AnyExecutor::Cpu(e) => {
+                let fg_h = e.gpu().upload($fg.data(), $fg.width, $fg.height, $fg.channels)?;
+                let mut bg_h = e.gpu().upload($bg.data(), $bg.width, $bg.height, $bg.channels)?;
+                e.gpu().$op(&fg_h, &mut bg_h $(, $arg)* )?;
+                $bg.set_data(e.gpu().download(&bg_h)?);
+                Ok(())
+            }
+            #[cfg(feature = "wgpu")]
+            AnyExecutor::Wgpu(e) => {
+                let fg_h = e.gpu().upload($fg.data(), $fg.width, $fg.height, $fg.channels)?;
+                let mut bg_h = e.gpu().upload($bg.data(), $bg.width, $bg.height, $bg.channels)?;
+                e.gpu().$op(&fg_h, &mut bg_h $(, $arg)* )?;
+                $bg.set_data(e.gpu().download(&bg_h)?);
+                Ok(())
+            }
+            #[cfg(feature = "cuda")]
+            AnyExecutor::Cuda(e) => {
+                let fg_h = e.gpu().upload($fg.data(), $fg.width, $fg.height, $fg.channels)?;
+                let mut bg_h = e.gpu().upload($bg.data(), $bg.width, $bg.height, $bg.channels)?;
+                e.gpu().$op(&fg_h, &mut bg_h $(, $arg)* )?;
+                $bg.set_data(e.gpu().download(&bg_h)?);
+                Ok(())
+            }
+        }
+    };
+}
+
+// =============================================================================
+// AnyExecutor - Unified executor with dynamic dispatch
+// =============================================================================
+
+/// Executor type enum for dynamic dispatch across all backends.
+///
+/// Provides a unified API for image processing regardless of backend.
+/// Use [`create_executor`] to create the best available backend.
 pub enum AnyExecutor {
+    /// CPU backend (always available).
     Cpu(TiledExecutor<CpuPrimitives>),
+    /// wgpu backend (Vulkan/Metal/DX12).
     #[cfg(feature = "wgpu")]
     Wgpu(TiledExecutor<WgpuPrimitives>),
+    /// CUDA backend (NVIDIA GPUs).
     #[cfg(feature = "cuda")]
     Cuda(TiledExecutor<CudaPrimitives>),
 }
 
 impl AnyExecutor {
+    // =========================================================================
+    // Basic Accessors
+    // =========================================================================
+
     /// Get backend name.
     pub fn name(&self) -> &'static str {
-        match self {
-            Self::Cpu(e) => e.name(),
-            #[cfg(feature = "wgpu")]
-            Self::Wgpu(e) => e.name(),
-            #[cfg(feature = "cuda")]
-            Self::Cuda(e) => e.name(),
-        }
+        dispatch_executor!(self, name)
     }
 
     /// Get GPU limits.
     pub fn limits(&self) -> &GpuLimits {
-        match self {
-            Self::Cpu(e) => e.limits(),
-            #[cfg(feature = "wgpu")]
-            Self::Wgpu(e) => e.limits(),
-            #[cfg(feature = "cuda")]
-            Self::Cuda(e) => e.limits(),
-        }
+        dispatch_executor!(self, limits)
     }
+
+    // =========================================================================
+    // Color Operations (use TiledExecutor methods directly)
+    // =========================================================================
 
     /// Execute color operation with automatic tiling.
     pub fn execute_color(&self, img: &mut crate::ComputeImage, op: &ColorOp) -> ComputeResult<()> {
-        match self {
-            Self::Cpu(e) => e.execute_color(img, op),
-            #[cfg(feature = "wgpu")]
-            Self::Wgpu(e) => e.execute_color(img, op),
-            #[cfg(feature = "cuda")]
-            Self::Cuda(e) => e.execute_color(img, op),
-        }
+        dispatch_executor!(self, execute_color, img, op)
     }
 
     /// Execute multiple color operations without GPU round-trips.
-    ///
-    /// More efficient than calling `execute_color()` multiple times.
     pub fn execute_color_chain(&self, img: &mut crate::ComputeImage, ops: &[ColorOp]) -> ComputeResult<()> {
-        match self {
-            Self::Cpu(e) => e.execute_color_chain(img, ops),
-            #[cfg(feature = "wgpu")]
-            Self::Wgpu(e) => e.execute_color_chain(img, ops),
-            #[cfg(feature = "cuda")]
-            Self::Cuda(e) => e.execute_color_chain(img, ops),
-        }
+        dispatch_executor!(self, execute_color_chain, img, ops)
     }
+
+    // =========================================================================
+    // Image Operations
+    // =========================================================================
 
     /// Execute blur with automatic tiling.
     pub fn execute_blur(&self, img: &mut crate::ComputeImage, radius: f32) -> ComputeResult<()> {
-        match self {
-            Self::Cpu(e) => e.execute_blur(img, radius),
-            #[cfg(feature = "wgpu")]
-            Self::Wgpu(e) => e.execute_blur(img, radius),
-            #[cfg(feature = "cuda")]
-            Self::Cuda(e) => e.execute_blur(img, radius),
-        }
+        dispatch_executor!(self, execute_blur, img, radius)
     }
 
     /// Execute resize.
     pub fn execute_resize(&self, img: &crate::ComputeImage, width: u32, height: u32, filter: u32) -> ComputeResult<crate::ComputeImage> {
-        match self {
-            Self::Cpu(e) => e.execute_resize(img, width, height, filter),
-            #[cfg(feature = "wgpu")]
-            Self::Wgpu(e) => e.execute_resize(img, width, height, filter),
-            #[cfg(feature = "cuda")]
-            Self::Cuda(e) => e.execute_resize(img, width, height, filter),
-        }
+        dispatch_executor!(self, execute_resize, img, width, height, filter)
     }
 
     /// Execute composite over.
     pub fn execute_composite_over(&self, fg: &crate::ComputeImage, bg: &mut crate::ComputeImage) -> ComputeResult<()> {
-        match self {
-            Self::Cpu(e) => {
-                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
-                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
-                e.gpu().exec_composite_over(&fg_handle, &mut bg_handle)?;
-                bg.data = e.gpu().download(&bg_handle)?;
-                Ok(())
-            }
-            #[cfg(feature = "wgpu")]
-            Self::Wgpu(e) => {
-                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
-                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
-                e.gpu().exec_composite_over(&fg_handle, &mut bg_handle)?;
-                bg.data = e.gpu().download(&bg_handle)?;
-                Ok(())
-            }
-            #[cfg(feature = "cuda")]
-            Self::Cuda(e) => {
-                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
-                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
-                e.gpu().exec_composite_over(&fg_handle, &mut bg_handle)?;
-                bg.data = e.gpu().download(&bg_handle)?;
-                Ok(())
-            }
-        }
+        dispatch_gpu_op!(self, fg=fg, bg=bg, exec_composite_over)
     }
 
     /// Execute blend.
     pub fn execute_blend(&self, fg: &crate::ComputeImage, bg: &mut crate::ComputeImage, mode: u32, opacity: f32) -> ComputeResult<()> {
-        match self {
-            Self::Cpu(e) => {
-                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
-                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
-                e.gpu().exec_blend(&fg_handle, &mut bg_handle, mode, opacity)?;
-                bg.data = e.gpu().download(&bg_handle)?;
-                Ok(())
-            }
-            #[cfg(feature = "wgpu")]
-            Self::Wgpu(e) => {
-                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
-                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
-                e.gpu().exec_blend(&fg_handle, &mut bg_handle, mode, opacity)?;
-                bg.data = e.gpu().download(&bg_handle)?;
-                Ok(())
-            }
-            #[cfg(feature = "cuda")]
-            Self::Cuda(e) => {
-                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
-                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
-                e.gpu().exec_blend(&fg_handle, &mut bg_handle, mode, opacity)?;
-                bg.data = e.gpu().download(&bg_handle)?;
-                Ok(())
-            }
-        }
+        dispatch_gpu_op!(self, fg=fg, bg=bg, exec_blend, mode, opacity)
     }
 
     /// Execute flip horizontal.
     pub fn execute_flip_h(&self, img: &mut crate::ComputeImage) -> ComputeResult<()> {
-        match self {
-            Self::Cpu(e) => {
-                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
-                e.gpu().exec_flip_h(&mut handle)?;
-                img.data = e.gpu().download(&handle)?;
-                Ok(())
-            }
-            #[cfg(feature = "wgpu")]
-            Self::Wgpu(e) => {
-                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
-                e.gpu().exec_flip_h(&mut handle)?;
-                img.data = e.gpu().download(&handle)?;
-                Ok(())
-            }
-            #[cfg(feature = "cuda")]
-            Self::Cuda(e) => {
-                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
-                e.gpu().exec_flip_h(&mut handle)?;
-                img.data = e.gpu().download(&handle)?;
-                Ok(())
-            }
-        }
+        dispatch_gpu_op!(self, img, exec_flip_h)
     }
 
     /// Execute flip vertical.
     pub fn execute_flip_v(&self, img: &mut crate::ComputeImage) -> ComputeResult<()> {
-        match self {
-            Self::Cpu(e) => {
-                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
-                e.gpu().exec_flip_v(&mut handle)?;
-                img.data = e.gpu().download(&handle)?;
-                Ok(())
-            }
-            #[cfg(feature = "wgpu")]
-            Self::Wgpu(e) => {
-                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
-                e.gpu().exec_flip_v(&mut handle)?;
-                img.data = e.gpu().download(&handle)?;
-                Ok(())
-            }
-            #[cfg(feature = "cuda")]
-            Self::Cuda(e) => {
-                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
-                e.gpu().exec_flip_v(&mut handle)?;
-                img.data = e.gpu().download(&handle)?;
-                Ok(())
-            }
-        }
+        dispatch_gpu_op!(self, img, exec_flip_v)
     }
 
     /// Execute rotate 90 degrees clockwise.
     pub fn execute_rotate_90(&self, img: &crate::ComputeImage, n: u32) -> ComputeResult<crate::ComputeImage> {
         match self {
-            Self::Cpu(e) => {
-                let handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
-                let rotated = e.gpu().exec_rotate_90(&handle, n)?;
-                let (w, h, c) = rotated.dimensions();
-                let data = e.gpu().download(&rotated)?;
-                crate::ComputeImage::from_f32(data, w, h, c)
-            }
+            AnyExecutor::Cpu(e) => e.execute_rotate_90(img, n),
             #[cfg(feature = "wgpu")]
-            Self::Wgpu(e) => {
-                let handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
-                let rotated = e.gpu().exec_rotate_90(&handle, n)?;
-                let (w, h, c) = rotated.dimensions();
-                let data = e.gpu().download(&rotated)?;
-                crate::ComputeImage::from_f32(data, w, h, c)
-            }
+            AnyExecutor::Wgpu(e) => e.execute_rotate_90(img, n),
             #[cfg(feature = "cuda")]
-            Self::Cuda(e) => {
-                let handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
-                let rotated = e.gpu().exec_rotate_90(&handle, n)?;
-                let (w, h, c) = rotated.dimensions();
-                let data = e.gpu().download(&rotated)?;
-                crate::ComputeImage::from_f32(data, w, h, c)
-            }
+            AnyExecutor::Cuda(e) => e.execute_rotate_90(img, n),
         }
     }
 
-    /// Crop region (CPU-only, since GpuPrimitives doesn't have exec_crop).
+    /// Crop region.
     pub fn execute_crop(&self, img: &crate::ComputeImage, x: u32, y: u32, w: u32, h: u32) -> ComputeResult<crate::ComputeImage> {
         let src_w = img.width as usize;
         let src_h = img.height as usize;
         let c = img.channels as usize;
-        
+
         if x as usize + w as usize > src_w || y as usize + h as usize > src_h {
             return Err(ComputeError::InvalidDimensions(w, h));
         }
-        
+
         let mut data = vec![0.0f32; (w as usize) * (h as usize) * c];
-        
+
         for row in 0..h as usize {
             let src_row = (y as usize + row) * src_w * c + (x as usize) * c;
             let dst_row = row * (w as usize) * c;
             data[dst_row..dst_row + (w as usize) * c]
-                .copy_from_slice(&img.data[src_row..src_row + (w as usize) * c]);
+                .copy_from_slice(&img.data()[src_row..src_row + (w as usize) * c]);
         }
-        
+
         crate::ComputeImage::from_f32(data, w, h, img.channels)
+    }
+
+    // =========================================================================
+    // Streaming Operations
+    // =========================================================================
+
+    /// Execute color operation with streaming I/O.
+    ///
+    /// Processes image tile-by-tile from source to output without
+    /// loading the entire image into memory.
+    pub fn execute_color_streaming<S, O>(
+        &self,
+        source: &mut S,
+        output: &mut O,
+        op: &ColorOp,
+    ) -> ComputeResult<()>
+    where
+        S: streaming::StreamingSource,
+        O: streaming::StreamingOutput,
+    {
+        match self {
+            AnyExecutor::Cpu(e) => e.execute_color_streaming(source, output, op),
+            #[cfg(feature = "wgpu")]
+            AnyExecutor::Wgpu(e) => e.execute_color_streaming(source, output, op),
+            #[cfg(feature = "cuda")]
+            AnyExecutor::Cuda(e) => e.execute_color_streaming(source, output, op),
+        }
+    }
+
+    /// Execute chained color operations with streaming I/O.
+    pub fn execute_color_chain_streaming<S, O>(
+        &self,
+        source: &mut S,
+        output: &mut O,
+        ops: &[ColorOp],
+    ) -> ComputeResult<()>
+    where
+        S: streaming::StreamingSource,
+        O: streaming::StreamingOutput,
+    {
+        match self {
+            AnyExecutor::Cpu(e) => e.execute_color_chain_streaming(source, output, ops),
+            #[cfg(feature = "wgpu")]
+            AnyExecutor::Wgpu(e) => e.execute_color_chain_streaming(source, output, ops),
+            #[cfg(feature = "cuda")]
+            AnyExecutor::Cuda(e) => e.execute_color_chain_streaming(source, output, ops),
+        }
     }
 }
 

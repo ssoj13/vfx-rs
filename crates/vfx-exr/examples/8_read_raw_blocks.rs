@@ -48,7 +48,7 @@ fn main() {
     // -- read the file, summing up the average pixel values --
 
     // start reading the file, extracting the meta data of the image
-    let reader = exr::block::read(file, true).unwrap();
+    let reader = vfx_exr::block::read(file, true).unwrap();
 
     // print progress only if it advances more than 1%
     let mut current_progress_percentage = 0;

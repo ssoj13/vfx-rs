@@ -99,7 +99,7 @@ pub enum AttributeValue {
         kind: Text,
 
         /// The value, stored in little-endian byte order, of the value.
-        /// Use the `exr::io::Data` trait to extract binary values from this vector.
+        /// Use the `vfx_exr::io::Data` trait to extract binary values from this vector.
         bytes: SmallVec<[u8; 16]>,
     },
 }
@@ -430,7 +430,7 @@ impl Text {
     /// Create a `Text` from an `str` reference.
     /// Panics if this string contains unsupported chars.
     pub fn new_or_panic(string: impl AsRef<str>) -> Self {
-        Self::new_or_none(string).expect("exr::Text contains unsupported characters")
+        Self::new_or_none(string).expect("vfx_exr::Text contains unsupported characters")
     }
 
     /// Create a `Text` from a slice of bytes,
@@ -630,12 +630,12 @@ impl Text {
         self.bytes.iter().map(|&byte| byte as char)
     }
 
-    /// Compare this `exr::Text` with a plain `&str`.
+    /// Compare this `vfx_exr::Text` with a plain `&str`.
     pub fn eq(&self, string: &str) -> bool {
         string.chars().eq(self.chars())
     }
 
-    /// Compare this `exr::Text` with a plain `&str` ignoring capitalization.
+    /// Compare this `vfx_exr::Text` with a plain `&str` ignoring capitalization.
     pub fn eq_case_insensitive(&self, string: &str) -> bool {
         // this is technically not working for a "turkish i", but those cannot be encoded in exr files anyways
         let self_chars = self.chars().map(|char| char.to_ascii_lowercase());
@@ -692,7 +692,7 @@ impl<'s> TryFrom<&'s str> for Text {
     fn try_from(value: &'s str) -> std::result::Result<Self, Self::Error> {
         Text::new_or_none(value)
             .ok_or_else(|| format!(
-                "exr::Text does not support all characters in the string `{}`",
+                "vfx_exr::Text does not support all characters in the string `{}`",
                 value
             ))
     }
@@ -700,7 +700,7 @@ impl<'s> TryFrom<&'s str> for Text {
 
 impl ::std::fmt::Debug for Text {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        write!(f, "exr::Text(\"{}\")", self)
+        write!(f, "vfx_exr::Text(\"{}\")", self)
     }
 }
 

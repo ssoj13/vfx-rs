@@ -32,6 +32,12 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_hdr, m)?)?;
     m.add_function(wrap_pyfunction!(write_hdr, m)?)?;
     
+    // CinemaDNG
+    m.add_function(wrap_pyfunction!(is_cinema_dng, m)?)?;
+    m.add_function(wrap_pyfunction!(open_cinema_dng, m)?)?;
+    m.add_function(wrap_pyfunction!(read_cinema_dng_frame, m)?)?;
+    m.add_class::<CinemaDng>()?;
+    
     Ok(())
 }
 
@@ -268,4 +274,168 @@ fn write_hdr(path: PathBuf, image: &Image) -> PyResult<()> {
     vfx_io::hdr::write(&path, image.as_image_data())
         .map_err(|e| PyIOError::new_err(format!("HDR write failed: {}", e)))?;
     Ok(())
+}
+
+// ============================================================================
+// CinemaDNG
+// ============================================================================
+
+/// Check if a directory contains a CinemaDNG sequence.
+///
+/// Args:
+///     path: Directory path to check
+///
+/// Returns:
+///     True if the directory contains DNG files forming a sequence
+///
+/// Example:
+///     if io.is_cinema_dng("clip/"):
+///         seq = io.open_cinema_dng("clip/")
+#[pyfunction]
+fn is_cinema_dng(path: PathBuf) -> bool {
+    vfx_io::cinema_dng::is_cinema_dng(&path)
+}
+
+/// Open a CinemaDNG sequence.
+///
+/// Args:
+///     path: Directory containing DNG files
+///
+/// Returns:
+///     CinemaDng object representing the sequence
+///
+/// Example:
+///     seq = io.open_cinema_dng("path/to/clip/")
+///     print(f"Frames: {seq.first_frame} - {seq.last_frame}")
+///     print(f"Resolution: {seq.width}x{seq.height}")
+#[pyfunction]
+fn open_cinema_dng(path: PathBuf) -> PyResult<CinemaDng> {
+    let cdng = vfx_io::cinema_dng::CinemaDng::open(&path)
+        .map_err(|e| PyIOError::new_err(format!("Failed to open CinemaDNG: {}", e)))?;
+    Ok(CinemaDng { inner: cdng })
+}
+
+/// Read a single frame from a CinemaDNG directory.
+///
+/// Convenience function for one-off frame reads.
+///
+/// Args:
+///     path: Directory containing DNG files
+///     frame: Frame number to read
+///
+/// Returns:
+///     Image object
+///
+/// Example:
+///     img = io.read_cinema_dng_frame("clip/", 1)
+#[pyfunction]
+fn read_cinema_dng_frame(path: PathBuf, frame: i32) -> PyResult<Image> {
+    let data = vfx_io::cinema_dng::read_frame(&path, frame)
+        .map_err(|e| PyIOError::new_err(format!("Failed to read CinemaDNG frame: {}", e)))?;
+    Ok(Image::from_image_data(data))
+}
+
+/// CinemaDNG sequence.
+///
+/// Represents a directory of DNG frames with metadata.
+///
+/// Example:
+///     seq = io.open_cinema_dng("clip/")
+///     for frame_num in seq.frames():
+///         img = seq.read_frame(frame_num)
+///         # process img
+#[pyclass]
+#[derive(Clone)]
+pub struct CinemaDng {
+    inner: vfx_io::cinema_dng::CinemaDng,
+}
+
+#[pymethods]
+impl CinemaDng {
+    /// Directory path containing the sequence.
+    #[getter]
+    fn dir(&self) -> String {
+        self.inner.dir().to_string_lossy().to_string()
+    }
+
+    /// First frame number.
+    #[getter]
+    fn first_frame(&self) -> i32 {
+        self.inner.first_frame()
+    }
+
+    /// Last frame number.
+    #[getter]
+    fn last_frame(&self) -> i32 {
+        self.inner.last_frame()
+    }
+
+    /// Total number of frames.
+    #[getter]
+    fn frame_count(&self) -> usize {
+        self.inner.frame_count()
+    }
+
+    /// Image width in pixels.
+    #[getter]
+    fn width(&self) -> u32 {
+        self.inner.width()
+    }
+
+    /// Image height in pixels.
+    #[getter]
+    fn height(&self) -> u32 {
+        self.inner.height()
+    }
+
+    /// Number of channels.
+    #[getter]
+    fn channels(&self) -> usize {
+        self.inner.channels()
+    }
+
+    /// Check if a specific frame exists.
+    fn has_frame(&self, frame: i32) -> bool {
+        self.inner.has_frame(frame)
+    }
+
+    /// Get list of all frame numbers.
+    fn frames(&self) -> Vec<i32> {
+        self.inner.frames().collect()
+    }
+
+    /// Get list of missing frames (gaps in sequence).
+    fn missing_frames(&self) -> Vec<i32> {
+        self.inner.missing_frames()
+    }
+
+    /// Get the file path for a specific frame.
+    fn frame_path(&self, frame: i32) -> String {
+        self.inner.frame_path(frame).to_string_lossy().to_string()
+    }
+
+    /// Read a specific frame.
+    ///
+    /// Args:
+    ///     frame: Frame number to read
+    ///
+    /// Returns:
+    ///     Image object
+    fn read_frame(&self, frame: i32) -> PyResult<Image> {
+        let reader = vfx_io::cinema_dng::CinemaDngReader::new();
+        let data = reader.read_frame(&self.inner, frame)
+            .map_err(|e| PyIOError::new_err(format!("Failed to read frame {}: {}", frame, e)))?;
+        Ok(Image::from_image_data(data))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "CinemaDng(dir='{}', frames={}-{}, resolution={}x{})",
+            self.inner.dir().display(),
+            self.inner.first_frame(),
+            self.inner.last_frame(),
+            self.inner.width(),
+            self.inner.height()
+        )
+    }
 }

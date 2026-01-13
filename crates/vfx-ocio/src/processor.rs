@@ -16,284 +16,85 @@
 //! processor.apply(&mut pixels);
 //! ```
 
-use crate::error::OcioResult;
+use crate::error::{OcioResult, OcioError};
 use crate::transform::*;
 
+// Use canonical transfer functions from vfx-transfer
+use vfx_transfer::{
+    srgb, rec709, pq, hlg, gamma,
+    acescct, acescc, log_c, log_c4,
+    s_log3, v_log, red_log, bmd_film,
+};
+
 /// Applies a transfer function to a single value.
-#[allow(clippy::excessive_precision)] // Standard color science constants
+/// Delegates to vfx-transfer for the actual math.
 fn apply_transfer(v: f32, style: TransferStyle, forward: bool) -> f32 {
     match style {
         TransferStyle::Linear => v,
         
         TransferStyle::Srgb => {
-            if forward {
-                // Linear to sRGB (OETF)
-                if v <= 0.0031308 {
-                    v * 12.92
-                } else {
-                    1.055 * v.powf(1.0 / 2.4) - 0.055
-                }
-            } else {
-                // sRGB to linear (EOTF)
-                if v <= 0.04045 {
-                    v / 12.92
-                } else {
-                    ((v + 0.055) / 1.055).powf(2.4)
-                }
-            }
+            if forward { srgb::oetf(v) } else { srgb::eotf(v) }
         }
         
         TransferStyle::Rec709 => {
-            if forward {
-                // Linear to Rec.709
-                if v < 0.018 {
-                    v * 4.5
-                } else {
-                    1.099 * v.powf(0.45) - 0.099
-                }
-            } else {
-                // Rec.709 to linear
-                if v < 0.081 {
-                    v / 4.5
-                } else {
-                    ((v + 0.099) / 1.099).powf(1.0 / 0.45)
-                }
-            }
+            if forward { rec709::oetf(v) } else { rec709::eotf(v) }
         }
         
         TransferStyle::Rec2020 => {
-            // Rec.2020 uses same formula as Rec.709 but with different constants
-            // For 12-bit: alpha = 1.0993, beta = 0.0181
-            const ALPHA: f32 = 1.09929682680944;
-            const BETA: f32 = 0.018053968510807;
-            
-            if forward {
-                // Linear to Rec.2020
-                if v < BETA {
-                    v * 4.5
-                } else {
-                    ALPHA * v.powf(0.45) - (ALPHA - 1.0)
-                }
-            } else {
-                // Rec.2020 to linear
-                if v < BETA * 4.5 {
-                    v / 4.5
-                } else {
-                    ((v + (ALPHA - 1.0)) / ALPHA).powf(1.0 / 0.45)
-                }
-            }
+            // Rec.2020 uses same formula as Rec.709
+            if forward { rec709::oetf(v) } else { rec709::eotf(v) }
         }
         
         TransferStyle::Gamma22 => {
-            if forward { v.max(0.0).powf(1.0 / 2.2) } else { v.max(0.0).powf(2.2) }
+            if forward { gamma::gamma_oetf(v, 2.2) } else { gamma::gamma_eotf(v, 2.2) }
         }
         
         TransferStyle::Gamma24 => {
-            if forward { v.max(0.0).powf(1.0 / 2.4) } else { v.max(0.0).powf(2.4) }
+            if forward { gamma::gamma_oetf(v, 2.4) } else { gamma::gamma_eotf(v, 2.4) }
         }
         
         TransferStyle::Gamma26 => {
-            if forward { v.max(0.0).powf(1.0 / 2.6) } else { v.max(0.0).powf(2.6) }
+            if forward { gamma::gamma_oetf(v, 2.6) } else { gamma::gamma_eotf(v, 2.6) }
         }
         
         TransferStyle::Pq => {
-            // PQ (ST.2084) constants
-            const M1: f32 = 0.1593017578125;
-            const M2: f32 = 78.84375;
-            const C1: f32 = 0.8359375;
-            const C2: f32 = 18.8515625;
-            const C3: f32 = 18.6875;
-            
-            if forward {
-                // Linear to PQ
-                let y = (v / 10000.0).max(0.0).powf(M1);
-                ((C1 + C2 * y) / (1.0 + C3 * y)).powf(M2)
-            } else {
-                // PQ to linear
-                let vp = v.max(0.0).powf(1.0 / M2);
-                let n = (vp - C1).max(0.0);
-                let d = C2 - C3 * vp;
-                10000.0 * (n / d.max(1e-10)).powf(1.0 / M1)
-            }
+            if forward { pq::oetf(v) } else { pq::eotf(v) }
         }
         
         TransferStyle::Hlg => {
-            const A: f32 = 0.17883277;
-            const B: f32 = 0.28466892;
-            const C: f32 = 0.55991073;
-            
-            if forward {
-                // Linear to HLG
-                if v <= 1.0 / 12.0 {
-                    (3.0 * v).sqrt()
-                } else {
-                    A * (12.0 * v - B).ln() + C
-                }
-            } else {
-                // HLG to linear
-                if v <= 0.5 {
-                    v * v / 3.0
-                } else {
-                    (((v - C) / A).exp() + B) / 12.0
-                }
-            }
+            if forward { hlg::oetf(v) } else { hlg::eotf(v) }
         }
         
         TransferStyle::AcesCct => {
-            const CUT: f32 = 0.0078125;
-            const A: f32 = 10.5402377416545;
-            const B: f32 = 0.0729055341958355;
-            
-            if forward {
-                // Linear to ACEScct
-                if v <= CUT {
-                    A * v + B
-                } else {
-                    (v.log2() + 9.72) / 17.52
-                }
-            } else {
-                // ACEScct to linear
-                if v <= 0.155251141552511 {
-                    (v - B) / A
-                } else {
-                    2.0_f32.powf(v * 17.52 - 9.72)
-                }
-            }
+            if forward { acescct::encode(v) } else { acescct::decode(v) }
         }
         
         TransferStyle::AcesCc => {
-            if forward {
-                // Linear to ACEScc
-                if v <= 0.0 {
-                    -0.3584474886
-                } else if v < 2.0_f32.powf(-15.0) {
-                    (2.0_f32.powf(-16.0) + v * 0.5).log2() / 17.52 + 9.72 / 17.52
-                } else {
-                    v.log2() / 17.52 + 9.72 / 17.52
-                }
-            } else {
-                // ACEScc to linear
-                if v <= -0.3013698630 {
-                    (2.0_f32.powf(v * 17.52 - 9.72) - 2.0_f32.powf(-16.0)) * 2.0
-                } else {
-                    2.0_f32.powf(v * 17.52 - 9.72)
-                }
-            }
+            if forward { acescc::encode(v) } else { acescc::decode(v) }
         }
         
         TransferStyle::LogC3 => {
-            // ARRI LogC3 (EI 800)
-            const CUT: f32 = 0.010591;
-            const A: f32 = 5.555556;
-            const B: f32 = 0.052272;
-            const C: f32 = 0.247190;
-            const D: f32 = 0.385537;
-            const E: f32 = 5.367655;
-            const F: f32 = 0.092809;
-            
-            if forward {
-                if v > CUT {
-                    C * (A * v + B).log10() + D
-                } else {
-                    E * v + F
-                }
-            } else if v > E * CUT + F {
-                (10.0_f32.powf((v - D) / C) - B) / A
-            } else {
-                (v - F) / E
-            }
+            if forward { log_c::encode(v) } else { log_c::decode(v) }
         }
         
         TransferStyle::LogC4 => {
-            // ARRI LogC4 - precomputed constants
-            // A = (2^18 - 16) / 117.45 = 2231.82
-            // B = (1023 - 95) / 1023 = 0.9071
-            // C = 95 / 1023 = 0.0929
-            // S = (7 * ln(2^18)) / 10 = 8.735
-            const A: f32 = 2231.82;
-            const B: f32 = 0.9071;
-            const C: f32 = 0.0929;
-            const S: f32 = 8.735;
-            
-            if forward {
-                let t = (v * A).max(0.0) + 1.0;
-                B * t.ln() / S + C
-            } else {
-                let t = ((v - C) * S / B).exp();
-                (t - 1.0) / A
-            }
+            if forward { log_c4::encode(v) } else { log_c4::decode(v) }
         }
         
         TransferStyle::SLog3 => {
-            if forward {
-                if v >= 0.01125 {
-                    (420.0 + (v * 261.5).log10() * 261.5) / 1023.0
-                } else {
-                    (v * 76.2102946929 + 95.0) / 1023.0
-                }
-            } else {
-                let x = v * 1023.0;
-                if x >= 171.2102946929 {
-                    10.0_f32.powf((x - 420.0) / 261.5) / 261.5 * 0.18
-                } else {
-                    (x - 95.0) / 76.2102946929
-                }
-            }
+            if forward { s_log3::encode(v) } else { s_log3::decode(v) }
         }
         
         TransferStyle::VLog => {
-            const CUT_F: f32 = 0.01;
-            const B: f32 = 0.00873;
-            const C: f32 = 0.241514;
-            const D: f32 = 0.598206;
-            
-            if forward {
-                if v < CUT_F {
-                    5.6 * v + 0.125
-                } else {
-                    C * (v + B).log10() + D
-                }
-            } else if v < 0.181 {
-                (v - 0.125) / 5.6
-            } else {
-                10.0_f32.powf((v - D) / C) - B
-            }
+            if forward { v_log::encode(v) } else { v_log::decode(v) }
         }
         
         TransferStyle::Log3G10 => {
-            // RED Log3G10
-            const A: f32 = 0.224282;
-            const B: f32 = 155.975327;
-            const C: f32 = 0.01;
-            #[allow(dead_code)]
-            const G: f32 = 15.1927;
-            
-            if forward {
-                let t = v.abs() * B + 1.0;
-                v.signum() * A * t.log10() + C
-            } else {
-                let t = 10.0_f32.powf((v.abs() - C) / A);
-                v.signum() * (t - 1.0) / B
-            }
+            if forward { red_log::log3g10_encode(v) } else { red_log::log3g10_decode(v) }
         }
         
         TransferStyle::BmdFilmGen5 => {
-            // Blackmagic Film Gen 5 (simplified)
-            const A: f32 = 0.09246575342;
-            const B: f32 = 0.5300133392;
-            const C: f32 = 0.1496994601;
-            
-            if forward {
-                if v < 0.005 {
-                    v * A + 0.09246575342
-                } else {
-                    B * (v + C).ln() + 0.5
-                }
-            } else if v < 0.09292915127 {
-                (v - 0.09246575342) / A
-            } else {
-                ((v - 0.5) / B).exp() - C
-            }
+            if forward { bmd_film::bmd_film_gen5_encode(v) } else { bmd_film::bmd_film_gen5_decode(v) }
         }
     }
 }
@@ -984,6 +785,15 @@ impl Processor {
                         m.matrix[2] as f32, m.matrix[6] as f32, m.matrix[10] as f32, m.matrix[14] as f32,
                         m.matrix[3] as f32, m.matrix[7] as f32, m.matrix[11] as f32, m.matrix[15] as f32,
                     ]);
+                    
+                    // Check for singular matrix before inverting
+                    let det = mat4.determinant();
+                    if det.abs() < 1e-10 {
+                        return Err(OcioError::Transform(
+                            "cannot invert singular matrix (determinant near zero)".into()
+                        ));
+                    }
+                    
                     let inv = mat4.inverse();
                     let inv_arr = inv.to_cols_array();
                     // Convert back to row-major

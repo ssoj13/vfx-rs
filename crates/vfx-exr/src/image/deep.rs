@@ -48,7 +48,7 @@
 //!
 //! Reading deep data:
 //! ```ignore
-//! let image = exr::image::read::deep::read_first_deep_layer_from_file("deep.exr")?;
+//! let image = vfx_exr::image::read::deep::read_first_deep_layer_from_file("deep.exr")?;
 //! let samples = &image.layer_data.channel_data.list[0].sample_data;
 //!
 //! for y in 0..samples.height {

@@ -276,14 +276,14 @@ pub fn ociofiletransform_into(
     src: &ImageBuf,
     filename: &str,
     inverse: bool,
-    _config: Option<&ColorConfig>,
+    config: Option<&ColorConfig>,
     roi: Option<Roi3D>,
 ) {
     let roi = roi.unwrap_or_else(|| src.roi());
 
     // Create file transform
     use vfx_ocio::{FileTransform, Interpolation, Processor, Transform, TransformDirection};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     let direction = if inverse {
         TransformDirection::Inverse
@@ -291,8 +291,32 @@ pub fn ociofiletransform_into(
         TransformDirection::Forward
     };
 
+    // Resolve the LUT file path
+    // If config is provided and has a config_path, use it as base for relative paths
+    let resolved_path = if Path::new(filename).is_absolute() {
+        PathBuf::from(filename)
+    } else if let Some(cfg) = config {
+        if let Some(cfg_path) = cfg.config_path() {
+            // Use config's directory as base for relative paths
+            if let Some(cfg_dir) = cfg_path.parent() {
+                let candidate = cfg_dir.join(filename);
+                if candidate.exists() {
+                    candidate
+                } else {
+                    PathBuf::from(filename)
+                }
+            } else {
+                PathBuf::from(filename)
+            }
+        } else {
+            PathBuf::from(filename)
+        }
+    } else {
+        PathBuf::from(filename)
+    };
+
     let transform = Transform::FileTransform(FileTransform {
-        src: PathBuf::from(filename),
+        src: resolved_path,
         ccc_id: None,
         interpolation: Interpolation::Linear,
         direction,
@@ -507,10 +531,12 @@ pub fn ocionamedtransform(
     src: &ImageBuf,
     name: &str,
     inverse: bool,
-    _unpremult: bool,  // TODO: implement unpremult support
+    unpremult: bool,
     config: Option<&ColorConfig>,
     roi: Option<Roi3D>,
 ) -> ImageBuf {
+    use super::color::{unpremult as do_unpremult, premult as do_premult};
+    
     let default_config;
     let cfg = match config {
         Some(c) => c,
@@ -519,7 +545,39 @@ pub fn ocionamedtransform(
             &default_config
         }
     };
+    
+    // If unpremult is requested and image has alpha, unpremultiply first
+    let (working_src, needs_repremult) = if unpremult && src.nchannels() >= 4 {
+        (do_unpremult(src, roi), true)
+    } else {
+        (src.clone(), false)
+    };
 
+    // FIRST: Check if this is a named transform defined in the config (OCIO v2)
+    let result = if cfg.has_named_transform(name) {
+        // Found a named transform in config - use it via processor
+        apply_named_transform_from_config(&working_src, name, inverse, cfg, roi)
+    } else {
+        // Continue with pattern-based transform
+        apply_pattern_transform(&working_src, name, inverse, cfg, roi)
+    };
+    
+    // Repremultiply if we unpremultiplied before
+    if needs_repremult {
+        do_premult(&result, roi)
+    } else {
+        result
+    }
+}
+
+/// Helper function to apply pattern-based transform.
+fn apply_pattern_transform(
+    src: &ImageBuf,
+    name: &str,
+    inverse: bool,
+    cfg: &ColorConfig,
+    roi: Option<Roi3D>,
+) -> ImageBuf {
     // Try to parse as "from_to_destination" pattern
     let name_lower = name.to_lowercase();
 
@@ -613,6 +671,58 @@ fn parse_transform_pattern(name: &str) -> Option<(String, String)> {
     }
 
     None
+}
+
+/// Applies a named transform from OCIO config to an image.
+///
+/// This function looks up the named transform in the config and applies
+/// its forward or inverse transform to the source image.
+fn apply_named_transform_from_config(
+    src: &ImageBuf,
+    name: &str,
+    inverse: bool,
+    config: &ColorConfig,
+    roi: Option<Roi3D>,
+) -> ImageBuf {
+    use vfx_ocio::{Processor, TransformDirection};
+    
+    // Get the named transform from config's inner OCIO config
+    let ocio_config = config.config();
+    let nt = match ocio_config.named_transform(name) {
+        Some(nt) => nt,
+        None => return src.clone(), // Should not happen as we checked has_named_transform
+    };
+    
+    // Get the appropriate transform (forward or inverse)
+    let transform = if inverse {
+        nt.inverse.as_ref().or(nt.forward.as_ref())
+    } else {
+        nt.forward.as_ref().or(nt.inverse.as_ref())
+    };
+    
+    let transform = match transform {
+        Some(t) => t,
+        None => return src.clone(), // No transform defined
+    };
+    
+    // Create processor from the transform
+    let direction = if inverse && nt.inverse.is_none() {
+        // Need to invert the forward transform
+        TransformDirection::Inverse
+    } else {
+        TransformDirection::Forward
+    };
+    
+    let processor = match Processor::from_transform(transform, direction) {
+        Ok(p) => p,
+        Err(_) => return src.clone(),
+    };
+    
+    // Apply the processor
+    let roi = roi.unwrap_or_else(|| src.roi());
+    let mut dst = src.clone();
+    apply_processor(&mut dst, src, &processor, roi);
+    dst
 }
 
 /// Resolves a colorspace name, handling common aliases.

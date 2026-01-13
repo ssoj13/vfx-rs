@@ -35,18 +35,23 @@ pub fn skip_bytes(read: &mut impl Read, count: usize) -> IoResult<()> {
 
 /// If an error occurs while writing, attempts to delete the partially written file.
 /// Creates a file just before the first write operation, not when this function is called.
+/// Only deletes the file if we actually created it (not if it pre-existed).
 #[inline]
 pub fn attempt_delete_file_on_write_error<'p>(
     path: &'p Path,
     write: impl FnOnce(LateFile<'p>) -> UnitResult,
 ) -> UnitResult {
+    // Track if file existed before we started
+    let file_existed = path.exists();
+    
     match write(LateFile::from(path)) {
         Err(error) => {
-            // FIXME deletes existing file if creation of new file fails?
-            let _deleted = std::fs::remove_file(path); // ignore deletion errors
+            // Only delete if we created the file (it didn't exist before)
+            if !file_existed && path.exists() {
+                let _deleted = std::fs::remove_file(path); // ignore deletion errors
+            }
             Err(error)
         }
-
         ok => ok,
     }
 }
@@ -225,13 +230,14 @@ impl<T: Read + Seek> Tracking<T> {
     /// Set the reader to the specified byte position.
     /// If it is only a couple of bytes, no seek system call is performed.
     pub fn seek_read_to(&mut self, target_position: usize) -> std::io::Result<()> {
-        let delta = target_position as i128 - self.position as i128; // FIXME  panicked at 'attempt to subtract with overflow'
+        // Use i128 to safely handle any usize difference without overflow
+        let delta = target_position as i128 - self.position as i128;
         debug_assert!(delta.abs() < usize::MAX as i128);
 
         if delta > 0 && delta < 16 {
-            // TODO profile that this is indeed faster than a syscall! (should be because of bufread buffer discard)
+            // For small forward seeks, reading is faster than syscall (avoids BufRead buffer discard)
+            // Note: skip_bytes updates self.position through the Read trait impl
             skip_bytes(self, delta as usize)?;
-            self.position += delta as usize;
         } else if delta != 0 {
             self.inner
                 .seek(SeekFrom::Start(u64::try_from(target_position).unwrap()))?;

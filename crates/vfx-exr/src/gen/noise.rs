@@ -184,7 +184,7 @@ mod tests {
             let x = i as f32 * 0.1;
             let y = i as f32 * 0.07;
             let v = value_noise(x, y, 42);
-            assert!(v >= 0.0 && v <= 1.0, "value_noise out of range: {v}");
+            assert!(v >= 0.0 && v <= 1.0, "value_noise out of range: {}", v);
         }
     }
 
@@ -194,7 +194,7 @@ mod tests {
             let x = i as f32 * 0.1;
             let y = i as f32 * 0.07;
             let v = perlin(x, y, 42);
-            assert!(v >= 0.0 && v <= 1.0, "perlin out of range: {v}");
+            assert!(v >= 0.0 && v <= 1.0, "perlin out of range: {}", v);
         }
     }
 
@@ -204,7 +204,7 @@ mod tests {
             let x = i as f32 * 0.2;
             let y = i as f32 * 0.15;
             let v = fbm(x, y, 4, 42);
-            assert!(v >= 0.0 && v <= 1.0, "fbm out of range: {v}");
+            assert!(v >= 0.0 && v <= 1.0, "fbm out of range: {}", v);
         }
     }
 
@@ -214,7 +214,7 @@ mod tests {
             let x = i as f32 * 0.2;
             let y = i as f32 * 0.15;
             let v = voronoi(x, y, 42);
-            assert!(v >= 0.0 && v <= 1.0, "voronoi out of range: {v}");
+            assert!(v >= 0.0 && v <= 1.0, "voronoi out of range: {}", v);
         }
     }
 

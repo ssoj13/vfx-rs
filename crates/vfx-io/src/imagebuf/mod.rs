@@ -148,6 +148,10 @@ struct ImageBufInner {
     subimage: i32,
     /// MIP level for mipmapped files.
     miplevel: i32,
+    /// Total number of subimages in the file.
+    nsubimages: i32,
+    /// Total number of MIP levels in the file.
+    nmiplevels: i32,
     /// Last error message.
     error: Option<String>,
     /// Associated ImageCache (if any).
@@ -178,6 +182,8 @@ impl Clone for ImageBuf {
                 name: inner.name.clone(),
                 subimage: inner.subimage,
                 miplevel: inner.miplevel,
+                nsubimages: inner.nsubimages,
+                nmiplevels: inner.nmiplevels,
                 error: None,
                 cache: inner.cache.clone(),
                 write_format: inner.write_format,
@@ -211,6 +217,8 @@ impl ImageBuf {
                 name: String::new(),
                 subimage: 0,
                 miplevel: 0,
+                nsubimages: 1,
+                nmiplevels: 1,
                 error: None,
                 cache: None,
                 write_format: None,
@@ -254,6 +262,8 @@ impl ImageBuf {
                 name: String::new(),
                 subimage: 0,
                 miplevel: 0,
+                nsubimages: 1,
+                nmiplevels: 1,
                 error: None,
                 cache: None,
                 write_format: None,
@@ -307,6 +317,8 @@ impl ImageBuf {
                 name: String::new(),
                 subimage: 0,
                 miplevel: 0,
+                nsubimages: 1,
+                nmiplevels: 1,
                 error: None,
                 cache: None,
                 write_format: None,
@@ -366,6 +378,8 @@ impl ImageBuf {
                 name,
                 subimage,
                 miplevel,
+                nsubimages: 1, // Will be updated when reading file
+                nmiplevels: 1, // Will be updated when reading file
                 error: None,
                 read_only: cache.is_some(),
                 cache,
@@ -517,14 +531,14 @@ impl ImageBuf {
 
     /// Returns the number of subimages (1 if unknown or single image).
     pub fn nsubimages(&self) -> i32 {
-        // TODO: Read from file if needed
-        1
+        self.ensure_spec_read();
+        self.inner.read().unwrap().nsubimages
     }
 
     /// Returns the number of MIP levels (1 if unknown or no mipmaps).
     pub fn nmiplevels(&self) -> i32 {
-        // TODO: Read from file if needed
-        1
+        self.ensure_spec_read();
+        self.inner.read().unwrap().nmiplevels
     }
 
     /// Returns the last error message, if any.
@@ -1494,6 +1508,18 @@ impl ImageBuf {
                 {
                     inner.spec.channels = 4;
                 }
+                
+                // Try to get subimage/miplevel counts from file
+                // For EXR files, each header is a subimage (part)
+                if name.to_lowercase().ends_with(".exr") {
+                    if let Ok(meta) = vfx_exr::meta::MetaData::read_from_file(&name, false) {
+                        inner.nsubimages = meta.headers.len() as i32;
+                        // EXR doesn't have traditional mipmaps in headers
+                        // (they're stored in tiled scanline or ripmap modes)
+                        inner.nmiplevels = 1;
+                    }
+                }
+                
                 inner.spec_valid = true;
                 true
             }

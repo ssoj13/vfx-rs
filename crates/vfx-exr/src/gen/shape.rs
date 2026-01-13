@@ -402,7 +402,7 @@ mod tests {
         for y in 0..10 {
             for x in 0..10 {
                 let d = t.depth(x * 10, y * 10, 100, 100).unwrap();
-                assert!(d >= 0.0 && d <= 1.0, "terrain depth out of range: {d}");
+                assert!(d >= 0.0 && d <= 1.0, "terrain depth out of range: {}", d);
             }
         }
     }

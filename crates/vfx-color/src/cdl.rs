@@ -154,6 +154,15 @@ impl Cdl {
         self
     }
 
+    /// Check if this CDL is identity (no-op).
+    #[inline]
+    pub fn is_identity(&self) -> bool {
+        self.slope == [1.0, 1.0, 1.0]
+            && self.offset == [0.0, 0.0, 0.0]
+            && self.power == [1.0, 1.0, 1.0]
+            && (self.saturation - 1.0).abs() < 1e-6
+    }
+
     /// Applies the CDL correction to an RGB pixel in-place.
     ///
     /// Uses the standard ASC CDL formula with clamping.
@@ -557,6 +566,36 @@ fn parse_rgb(s: &str) -> ColorResult<[f32; 3]> {
         Ok([values[0], values[1], values[2]])
     } else {
         Err(ColorError::ParseError("expected 3 RGB values".into()))
+    }
+}
+
+// ============================================================================
+// Conversions from vfx-lut types
+// ============================================================================
+
+impl From<vfx_lut::cdl::ColorCorrection> for Cdl {
+    fn from(cc: vfx_lut::cdl::ColorCorrection) -> Self {
+        Self {
+            id: cc.id,
+            description: cc.descriptions.first().cloned(),
+            slope: cc.slope,
+            offset: cc.offset,
+            power: cc.power,
+            saturation: cc.saturation,
+        }
+    }
+}
+
+impl From<&vfx_lut::cdl::ColorCorrection> for Cdl {
+    fn from(cc: &vfx_lut::cdl::ColorCorrection) -> Self {
+        Self {
+            id: cc.id.clone(),
+            description: cc.descriptions.first().cloned(),
+            slope: cc.slope,
+            offset: cc.offset,
+            power: cc.power,
+            saturation: cc.saturation,
+        }
     }
 }
 

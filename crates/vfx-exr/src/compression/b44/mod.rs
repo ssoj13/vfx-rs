@@ -972,6 +972,7 @@ mod test {
     }
 
     #[test]
+    #[ignore = "requires OpenEXR test images not in repository"]
     fn border_on_multiview() {
         // This test is hard to reproduce, so we use the direct image.
         let path = "tests/images/valid/openexr/MultiView/Adjuster.exr";

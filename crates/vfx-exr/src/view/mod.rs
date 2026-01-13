@@ -10,7 +10,7 @@
 //! # Quick Start
 //!
 //! ```ignore
-//! use exr::view::{run, ViewerConfig};
+//! use vfx_exr::view::{run, ViewerConfig};
 //!
 //! let config = ViewerConfig::default();
 //! run("image.exr", config);

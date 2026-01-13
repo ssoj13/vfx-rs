@@ -43,6 +43,9 @@ walkdir = "2.5.0"
 rand = "0.8.5"
 rayon = "1.7.0"
 
+# Self-reference to enable test-utils for integration tests
+vfx-exr = { path = ".", features = ["test-utils"] }
+
 [features]
 # Default: core functionality without GUI
 default = ["rayon", "gen"]

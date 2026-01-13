@@ -192,7 +192,7 @@ pub struct ReadBuilder;
 /// Allows you to exactly specify how to load the image, for example:
 ///
 /// ```no_run
-///     use exr::prelude::*;
+///     use vfx_exr::prelude::*;
 ///
 ///     // the type of the this image depends on the chosen options
 ///     let image = read()
@@ -228,7 +228,7 @@ impl ReadBuilder {
     ///
     /// # Example
     /// ```no_run
-    /// use exr::prelude::*;
+    /// use vfx_exr::prelude::*;
     /// let image = read()
     ///     .deep_data()
     ///     .all_channels()

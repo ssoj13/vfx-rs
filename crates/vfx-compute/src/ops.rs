@@ -224,7 +224,7 @@ impl ImageProcessor {
     pub fn resize(&self, img: &ComputeImage, width: u32, height: u32, filter: ResizeFilter) -> ComputeResult<ComputeImage> {
         match &self.executor {
             AnyExecutor::Cpu(e) => {
-                let handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let handle = e.gpu().upload(img.data(), img.width, img.height, img.channels)?;
                 let mut dst = e.gpu().allocate(width, height, img.channels)?;
                 e.gpu().exec_resize(&handle, &mut dst, filter as u32)?;
                 let data = e.gpu().download(&dst)?;
@@ -232,7 +232,7 @@ impl ImageProcessor {
             }
             #[cfg(feature = "wgpu")]
             AnyExecutor::Wgpu(e) => {
-                let handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let handle = e.gpu().upload(img.data(), img.width, img.height, img.channels)?;
                 let mut dst = e.gpu().allocate(width, height, img.channels)?;
                 e.gpu().exec_resize(&handle, &mut dst, filter as u32)?;
                 let data = e.gpu().download(&dst)?;
@@ -240,7 +240,7 @@ impl ImageProcessor {
             }
             #[cfg(feature = "cuda")]
             AnyExecutor::Cuda(e) => {
-                let handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let handle = e.gpu().upload(img.data(), img.width, img.height, img.channels)?;
                 let mut dst = e.gpu().allocate(width, height, img.channels)?;
                 e.gpu().exec_resize(&handle, &mut dst, filter as u32)?;
                 let data = e.gpu().download(&dst)?;
@@ -257,24 +257,24 @@ impl ImageProcessor {
     pub fn blur(&self, img: &mut ComputeImage, radius: f32) -> ComputeResult<()> {
         match &self.executor {
             AnyExecutor::Cpu(e) => {
-                let handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let handle = e.gpu().upload(img.data(), img.width, img.height, img.channels)?;
                 let mut dst = e.gpu().allocate(img.width, img.height, img.channels)?;
                 e.gpu().exec_blur(&handle, &mut dst, radius)?;
-                img.data = e.gpu().download(&dst)?;
+                img.set_data(e.gpu().download(&dst)?)
             }
             #[cfg(feature = "wgpu")]
             AnyExecutor::Wgpu(e) => {
-                let handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let handle = e.gpu().upload(img.data(), img.width, img.height, img.channels)?;
                 let mut dst = e.gpu().allocate(img.width, img.height, img.channels)?;
                 e.gpu().exec_blur(&handle, &mut dst, radius)?;
-                img.data = e.gpu().download(&dst)?;
+                img.set_data(e.gpu().download(&dst)?)
             }
             #[cfg(feature = "cuda")]
             AnyExecutor::Cuda(e) => {
-                let handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let handle = e.gpu().upload(img.data(), img.width, img.height, img.channels)?;
                 let mut dst = e.gpu().allocate(img.width, img.height, img.channels)?;
                 e.gpu().exec_blur(&handle, &mut dst, radius)?;
-                img.data = e.gpu().download(&dst)?;
+                img.set_data(e.gpu().download(&dst)?);
             }
         }
         Ok(())
@@ -289,17 +289,17 @@ impl ImageProcessor {
     /// * `amount` - Sharpening strength. 0.0 = no change, 1.0 = strong
     pub fn sharpen(&self, img: &mut ComputeImage, amount: f32) -> ComputeResult<()> {
         // Unsharp mask: sharp = original + amount * (original - blur)
-        let original = img.data.clone();
+        let original = img.data().to_vec();
         
         // Small blur
         self.blur(img, 1.0)?;
-        let blurred = std::mem::take(&mut img.data);
+        let blurred = img.take_data();
         
         // Apply unsharp mask
-        img.data = original.iter()
+        img.set_data(original.iter()
             .zip(blurred.iter())
             .map(|(o, b)| o + amount * (o - b))
-            .collect();
+            .collect());
         
         Ok(())
     }
@@ -323,24 +323,24 @@ impl ImageProcessor {
     pub fn composite_over(&self, fg: &ComputeImage, bg: &mut ComputeImage) -> ComputeResult<()> {
         match &self.executor {
             AnyExecutor::Cpu(e) => {
-                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
-                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
+                let fg_handle = e.gpu().upload(fg.data(), fg.width, fg.height, fg.channels)?;
+                let mut bg_handle = e.gpu().upload(bg.data(), bg.width, bg.height, bg.channels)?;
                 e.gpu().exec_composite_over(&fg_handle, &mut bg_handle)?;
-                bg.data = e.gpu().download(&bg_handle)?;
+                bg.set_data(e.gpu().download(&bg_handle)?)
             }
             #[cfg(feature = "wgpu")]
             AnyExecutor::Wgpu(e) => {
-                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
-                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
+                let fg_handle = e.gpu().upload(fg.data(), fg.width, fg.height, fg.channels)?;
+                let mut bg_handle = e.gpu().upload(bg.data(), bg.width, bg.height, bg.channels)?;
                 e.gpu().exec_composite_over(&fg_handle, &mut bg_handle)?;
-                bg.data = e.gpu().download(&bg_handle)?;
+                bg.set_data(e.gpu().download(&bg_handle)?)
             }
             #[cfg(feature = "cuda")]
             AnyExecutor::Cuda(e) => {
-                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
-                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
+                let fg_handle = e.gpu().upload(fg.data(), fg.width, fg.height, fg.channels)?;
+                let mut bg_handle = e.gpu().upload(bg.data(), bg.width, bg.height, bg.channels)?;
                 e.gpu().exec_composite_over(&fg_handle, &mut bg_handle)?;
-                bg.data = e.gpu().download(&bg_handle)?;
+                bg.set_data(e.gpu().download(&bg_handle)?);
             }
         }
         Ok(())
@@ -356,24 +356,24 @@ impl ImageProcessor {
     pub fn blend(&self, fg: &ComputeImage, bg: &mut ComputeImage, mode: BlendMode, opacity: f32) -> ComputeResult<()> {
         match &self.executor {
             AnyExecutor::Cpu(e) => {
-                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
-                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
+                let fg_handle = e.gpu().upload(fg.data(), fg.width, fg.height, fg.channels)?;
+                let mut bg_handle = e.gpu().upload(bg.data(), bg.width, bg.height, bg.channels)?;
                 e.gpu().exec_blend(&fg_handle, &mut bg_handle, mode as u32, opacity)?;
-                bg.data = e.gpu().download(&bg_handle)?;
+                bg.set_data(e.gpu().download(&bg_handle)?)
             }
             #[cfg(feature = "wgpu")]
             AnyExecutor::Wgpu(e) => {
-                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
-                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
+                let fg_handle = e.gpu().upload(fg.data(), fg.width, fg.height, fg.channels)?;
+                let mut bg_handle = e.gpu().upload(bg.data(), bg.width, bg.height, bg.channels)?;
                 e.gpu().exec_blend(&fg_handle, &mut bg_handle, mode as u32, opacity)?;
-                bg.data = e.gpu().download(&bg_handle)?;
+                bg.set_data(e.gpu().download(&bg_handle)?)
             }
             #[cfg(feature = "cuda")]
             AnyExecutor::Cuda(e) => {
-                let fg_handle = e.gpu().upload(&fg.data, fg.width, fg.height, fg.channels)?;
-                let mut bg_handle = e.gpu().upload(&bg.data, bg.width, bg.height, bg.channels)?;
+                let fg_handle = e.gpu().upload(fg.data(), fg.width, fg.height, fg.channels)?;
+                let mut bg_handle = e.gpu().upload(bg.data(), bg.width, bg.height, bg.channels)?;
                 e.gpu().exec_blend(&fg_handle, &mut bg_handle, mode as u32, opacity)?;
-                bg.data = e.gpu().download(&bg_handle)?;
+                bg.set_data(e.gpu().download(&bg_handle)?);
             }
         }
         Ok(())
@@ -408,7 +408,7 @@ impl ImageProcessor {
             let src_row = (y as usize + row) * src_w * c + (x as usize) * c;
             let dst_row = row * (w as usize) * c;
             data[dst_row..dst_row + (w as usize) * c]
-                .copy_from_slice(&img.data[src_row..src_row + (w as usize) * c]);
+                .copy_from_slice(&img.data()[src_row..src_row + (w as usize) * c]);
         }
         
         ComputeImage::from_f32(data, w, h, img.channels)
@@ -418,21 +418,21 @@ impl ImageProcessor {
     pub fn flip_h(&self, img: &mut ComputeImage) -> ComputeResult<()> {
         match &self.executor {
             AnyExecutor::Cpu(e) => {
-                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let mut handle = e.gpu().upload(img.data(), img.width, img.height, img.channels)?;
                 e.gpu().exec_flip_h(&mut handle)?;
-                img.data = e.gpu().download(&handle)?;
+                img.set_data(e.gpu().download(&handle)?)
             }
             #[cfg(feature = "wgpu")]
             AnyExecutor::Wgpu(e) => {
-                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let mut handle = e.gpu().upload(img.data(), img.width, img.height, img.channels)?;
                 e.gpu().exec_flip_h(&mut handle)?;
-                img.data = e.gpu().download(&handle)?;
+                img.set_data(e.gpu().download(&handle)?)
             }
             #[cfg(feature = "cuda")]
             AnyExecutor::Cuda(e) => {
-                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let mut handle = e.gpu().upload(img.data(), img.width, img.height, img.channels)?;
                 e.gpu().exec_flip_h(&mut handle)?;
-                img.data = e.gpu().download(&handle)?;
+                img.set_data(e.gpu().download(&handle)?);
             }
         }
         Ok(())
@@ -442,21 +442,21 @@ impl ImageProcessor {
     pub fn flip_v(&self, img: &mut ComputeImage) -> ComputeResult<()> {
         match &self.executor {
             AnyExecutor::Cpu(e) => {
-                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let mut handle = e.gpu().upload(img.data(), img.width, img.height, img.channels)?;
                 e.gpu().exec_flip_v(&mut handle)?;
-                img.data = e.gpu().download(&handle)?;
+                img.set_data(e.gpu().download(&handle)?)
             }
             #[cfg(feature = "wgpu")]
             AnyExecutor::Wgpu(e) => {
-                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let mut handle = e.gpu().upload(img.data(), img.width, img.height, img.channels)?;
                 e.gpu().exec_flip_v(&mut handle)?;
-                img.data = e.gpu().download(&handle)?;
+                img.set_data(e.gpu().download(&handle)?)
             }
             #[cfg(feature = "cuda")]
             AnyExecutor::Cuda(e) => {
-                let mut handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let mut handle = e.gpu().upload(img.data(), img.width, img.height, img.channels)?;
                 e.gpu().exec_flip_v(&mut handle)?;
-                img.data = e.gpu().download(&handle)?;
+                img.set_data(e.gpu().download(&handle)?);
             }
         }
         Ok(())
@@ -473,7 +473,7 @@ impl ImageProcessor {
     pub fn rotate_90(&self, img: &ComputeImage, n: u32) -> ComputeResult<ComputeImage> {
         match &self.executor {
             AnyExecutor::Cpu(e) => {
-                let handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let handle = e.gpu().upload(img.data(), img.width, img.height, img.channels)?;
                 let rotated = e.gpu().exec_rotate_90(&handle, n)?;
                 let (w, h, c) = rotated.dimensions();
                 let data = e.gpu().download(&rotated)?;
@@ -481,7 +481,7 @@ impl ImageProcessor {
             }
             #[cfg(feature = "wgpu")]
             AnyExecutor::Wgpu(e) => {
-                let handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let handle = e.gpu().upload(img.data(), img.width, img.height, img.channels)?;
                 let rotated = e.gpu().exec_rotate_90(&handle, n)?;
                 let (w, h, c) = rotated.dimensions();
                 let data = e.gpu().download(&rotated)?;
@@ -489,7 +489,7 @@ impl ImageProcessor {
             }
             #[cfg(feature = "cuda")]
             AnyExecutor::Cuda(e) => {
-                let handle = e.gpu().upload(&img.data, img.width, img.height, img.channels)?;
+                let handle = e.gpu().upload(img.data(), img.width, img.height, img.channels)?;
                 let rotated = e.gpu().exec_rotate_90(&handle, n)?;
                 let (w, h, c) = rotated.dimensions();
                 let data = e.gpu().download(&rotated)?;

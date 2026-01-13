@@ -44,26 +44,26 @@
 //!
 //! Write a deep image read from another file:
 //! ```no_run
-//! use exr::image::read::deep::read_first_deep_layer_from_file;
-//! use exr::image::write::deep::write_deep_image_to_file;
-//! use exr::compression::Compression;
+//! use vfx_exr::image::read::deep::read_first_deep_layer_from_file;
+//! use vfx_exr::image::write::deep::write_deep_image_to_file;
+//! use vfx_exr::compression::Compression;
 //!
 //! let image = read_first_deep_layer_from_file("input.exr")?;
 //! write_deep_image_to_file("output.exr", &image, Compression::ZIP1)?;
-//! # Ok::<(), exr::error::Error>(())
+//! # Ok::<(), vfx_exr::error::Error>(())
 //! ```
 //!
 //! Low-level writing with custom samples:
 //! ```no_run
-//! use exr::image::deep::DeepSamples;
-//! use exr::image::write::deep::write_deep_scanlines_to_file;
-//! use exr::meta::attribute::ChannelList;
-//! use exr::compression::Compression;
+//! use vfx_exr::image::deep::DeepSamples;
+//! use vfx_exr::image::write::deep::write_deep_scanlines_to_file;
+//! use vfx_exr::meta::attribute::ChannelList;
+//! use vfx_exr::compression::Compression;
 //!
 //! let samples: DeepSamples = todo!();
 //! let channels: ChannelList = todo!();
 //! write_deep_scanlines_to_file("output.exr", &samples, &channels, Compression::Uncompressed)?;
-//! # Ok::<(), exr::error::Error>(())
+//! # Ok::<(), vfx_exr::error::Error>(())
 //! ```
 //!
 //! # Compression Support

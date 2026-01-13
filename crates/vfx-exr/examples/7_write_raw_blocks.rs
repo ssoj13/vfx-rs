@@ -26,7 +26,7 @@ fn main() {
     let size = (2048 * 8, 2048 * 8);
 
     // define meta data header that will be written
-    let header = exr::meta::header::Header::new(
+    let header = vfx_exr::meta::header::Header::new(
         "test-image".try_into().unwrap(),
         size,
         smallvec![
@@ -40,7 +40,7 @@ fn main() {
     // define encoding that will be written
     let mut header = header.with_encoding(
         Compression::Uncompressed,
-        exr::meta::BlockDescription::Tiles(TileDescription {
+        vfx_exr::meta::BlockDescription::Tiles(TileDescription {
             tile_size: Vec2(64, 64),
             level_mode: LevelMode::Singular,
             rounding_mode: RoundingMode::Down,
@@ -59,7 +59,7 @@ fn main() {
     let start_time = ::std::time::Instant::now();
 
     // finally write the image
-    exr::block::write(file, headers, true, |meta_data, chunk_writer| {
+    vfx_exr::block::write(file, headers, true, |meta_data, chunk_writer| {
         let blocks = meta_data.collect_ordered_blocks(|block_index| {
             let channel_description = &meta_data.headers[block_index.layer].channels;
 

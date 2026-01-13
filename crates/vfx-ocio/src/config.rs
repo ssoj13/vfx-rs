@@ -367,11 +367,30 @@ impl Config {
 
         // Parse view transforms (v2)
         if let Some(view_transforms) = yaml_get(root, "view_transforms") {
+            use crate::display::ReferenceSpaceType;
+            
             if let Yaml::Sequence(seq) = unwrap_tagged(view_transforms) {
                 for vt_yaml in seq {
                     let vt_yaml = unwrap_tagged(vt_yaml);
                     if let Some(name) = yaml_str(vt_yaml, "name") {
-                        let mut vt = ViewTransform::new(name)
+                        // Determine reference space type from YAML or infer from transforms
+                        let ref_space = match yaml_str(vt_yaml, "reference_space_type") {
+                            Some("display") | Some("DISPLAY") => ReferenceSpaceType::Display,
+                            Some("scene") | Some("SCENE") | None => {
+                                // Infer: if display transforms present, use Display space
+                                let has_display_transforms = 
+                                    yaml_get(vt_yaml, "from_display_reference").is_some() ||
+                                    yaml_get(vt_yaml, "to_display_reference").is_some();
+                                if has_display_transforms {
+                                    ReferenceSpaceType::Display
+                                } else {
+                                    ReferenceSpaceType::Scene
+                                }
+                            }
+                            _ => ReferenceSpaceType::Scene,
+                        };
+                        
+                        let mut vt = ViewTransform::with_reference_space(name, ref_space)
                             .with_description(yaml_str(vt_yaml, "description").unwrap_or("").to_string());
 
                         if let Some(family) = yaml_str(vt_yaml, "family") {
@@ -1040,19 +1059,31 @@ impl Config {
 
         // Apply view transform (OCIO v2) if defined
         if let Some(vt_name) = v.view_transform() {
+            use crate::display::ReferenceSpaceType;
+            
             let vt = self
                 .displays
                 .view_transform(vt_name)
                 .ok_or_else(|| OcioError::Validation(format!("view transform not found: {}", vt_name)))?;
 
-            if let Some(t) = vt.from_scene_reference() {
-                transforms.push(t.clone());
-            } else if let Some(t) = vt.to_scene_reference() {
-                transforms.push(t.clone().inverse());
-            } else if let Some(t) = vt.to_display_reference() {
-                transforms.push(t.clone());
-            } else if let Some(t) = vt.from_display_reference() {
-                transforms.push(t.clone().inverse());
+            // Use transforms based on reference space type (OCIO v2 spec)
+            match vt.reference_space_type() {
+                ReferenceSpaceType::Scene => {
+                    // Scene-referred: use scene reference transforms
+                    if let Some(t) = vt.from_scene_reference() {
+                        transforms.push(t.clone());
+                    } else if let Some(t) = vt.to_scene_reference() {
+                        transforms.push(t.clone().inverse());
+                    }
+                }
+                ReferenceSpaceType::Display => {
+                    // Display-referred: use display reference transforms
+                    if let Some(t) = vt.from_display_reference() {
+                        transforms.push(t.clone());
+                    } else if let Some(t) = vt.to_display_reference() {
+                        transforms.push(t.clone().inverse());
+                    }
+                }
             }
         }
 

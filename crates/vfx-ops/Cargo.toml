@@ -19,6 +19,7 @@ vfx-core.workspace = true
 vfx-io.workspace = true
 vfx-math.workspace = true
 vfx-compute.workspace = true
+vfx-color.workspace = true
 thiserror.workspace = true
 tracing = "0.1"
 rayon = { workspace = true, optional = true }

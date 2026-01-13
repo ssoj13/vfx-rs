@@ -701,17 +701,17 @@ impl Processor {
     ///
     /// Amount 1.0 = moderate sharpening.
     pub fn sharpen(&self, img: &mut ComputeImage, amount: f32) -> ComputeResult<()> {
-        let original = img.data.clone();
+        let original = img.data().to_vec();
         
         // Small blur
         self.executor.execute_blur(img, 1.0)?;
-        let blurred = std::mem::take(&mut img.data);
+        let blurred = img.take_data();
         
         // Unsharp mask: sharp = original + amount * (original - blur)
-        img.data = original.iter()
+        img.set_data(original.iter()
             .zip(blurred.iter())
             .map(|(o, b)| o + amount * (o - b))
-            .collect();
+            .collect());
         
         Ok(())
     }
