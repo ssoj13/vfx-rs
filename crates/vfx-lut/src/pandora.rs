@@ -130,26 +130,18 @@ pub fn parse_mga<R: Read>(reader: R) -> LutResult<Lut3D> {
     }
 
     // Scale and convert to float
-    // Pandora uses blue-fastest, we need to convert to red-fastest
+    // Pandora uses blue-fastest, same as our internal Blue-major format
     let scale = 1.0 / (out_max - 1) as f32;
     let mut data = vec![[0.0f32; 3]; count];
 
-    for b in 0..size {
-        for g in 0..size {
-            for r in 0..size {
-                // Blue-fastest input index
-                let src_idx = b + g * size + r * size * size;
-                // Red-fastest output index
-                let dst_idx = r + g * size + b * size * size;
-
-                let rgb = raw_data[src_idx];
-                data[dst_idx] = [
-                    rgb[0] as f32 * scale,
-                    rgb[1] as f32 * scale,
-                    rgb[2] as f32 * scale,
-                ];
-            }
-        }
+    // Both file and memory use Blue-major: idx = B + G*size + R*size²
+    // No conversion needed, just scale
+    for (i, rgb) in raw_data.iter().enumerate() {
+        data[i] = [
+            rgb[0] as f32 * scale,
+            rgb[1] as f32 * scale,
+            rgb[2] as f32 * scale,
+        ];
     }
 
     Lut3D::from_data(data, size)

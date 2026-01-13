@@ -394,10 +394,12 @@ pub fn write_spi3d_to<W: Write>(mut writer: W, lut: &Lut3D) -> LutResult<()> {
     writeln!(writer, "{} {} {}", size, size, size)?;
 
     // Data with indices
+    // Memory is Blue-major: idx = B + dim*G + dim²*R  
     for b in 0..size {
         for g in 0..size {
             for r in 0..size {
-                let idx = b * size * size + g * size + r;
+                // Blue-major index: B + size*G + size²*R
+                let idx = b + size * (g + size * r);
                 let rgb = lut.data[idx];
                 writeln!(
                     writer,

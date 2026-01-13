@@ -153,7 +153,21 @@ pub fn parse_3d<R: BufRead>(reader: R) -> LutResult<Lut3D> {
         )));
     }
 
-    let lut = Lut3D::from_data(data, size)?
+    // Convert from file order (R-fastest) to memory order (Blue-major: B-fastest)
+    // CUBE file: idx = r + g*size + b*size²
+    // Memory: idx = b + g*size + r*size²
+    let mut reordered = vec![[0.0f32; 3]; expected];
+    for b in 0..size {
+        for g in 0..size {
+            for r in 0..size {
+                let file_idx = r + g * size + b * size * size;  // R-fastest
+                let mem_idx = b + g * size + r * size * size;   // B-fastest (Blue-major)
+                reordered[mem_idx] = data[file_idx];
+            }
+        }
+    }
+
+    let lut = Lut3D::from_data(reordered, size)?
         .with_domain(domain_min, domain_max);
 
     Ok(lut)
@@ -218,13 +232,15 @@ pub fn write_3d<P: AsRef<Path>>(path: P, lut: &Lut3D) -> LutResult<()> {
     }
     writeln!(writer)?;
 
-    // Data - iterate R fastest, then G, then B
+    // Data - iterate R fastest, then G, then B (file format requirement)
+    // Memory is Blue-major: idx = B + dim*G + dim²*R
     let data = &lut.data;
     let size = lut.size;
     for b_idx in 0..size {
         for g_idx in 0..size {
             for r_idx in 0..size {
-                let i = b_idx * size * size + g_idx * size + r_idx;
+                // Blue-major index: B + size*G + size²*R
+                let i = b_idx + size * (g_idx + size * r_idx);
                 let rgb = data[i];
                 writeln!(writer, "{:.6} {:.6} {:.6}", rgb[0], rgb[1], rgb[2])?;
             }

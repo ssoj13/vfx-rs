@@ -49,6 +49,7 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
 
+use crate::sse_math::fast_pow;
 use crate::{ColorError, ColorResult};
 
 /// ASC Color Decision List correction parameters.
@@ -182,10 +183,18 @@ impl Cdl {
     /// ```
     #[inline]
     pub fn apply(&self, rgb: &mut [f32; 3]) {
-        // SOP node: out = clamp((in * slope + offset) ^ power)
+        // ASC CDL v1.2 forward with clamp (matches OCIO CDL_V1_2_FWD)
+        // Order: Slope -> Offset -> Clamp [0,1] -> Power -> Saturation -> Clamp [0,1]
         for i in 0..3 {
             let v = rgb[i] * self.slope[i] + self.offset[i];
-            rgb[i] = v.max(0.0).powf(self.power[i]).clamp(0.0, 1.0);
+            // Clamp to [0,1] BEFORE power (ASC CDL spec)
+            let clamped = v.clamp(0.0, 1.0);
+            // Skip pow when power == 1.0 to avoid numerical error from log2->mul->exp2 chain
+            rgb[i] = if self.power[i] == 1.0 {
+                clamped
+            } else {
+                fast_pow(clamped, self.power[i])
+            };
         }
 
         // Saturation (Rec. 709 luma weights)
@@ -195,30 +204,43 @@ impl Cdl {
                 *v = luma + (*v - luma) * self.saturation;
             }
         }
+
+        // Final clamp [0,1] after saturation (ASC CDL spec)
+        for v in rgb.iter_mut() {
+            *v = v.clamp(0.0, 1.0);
+        }
     }
 
     /// Applies the CDL correction without clamping.
     ///
     /// Useful for scene-referred workflows where values can exceed [0, 1].
+    /// Matches OCIO CDL_NO_CLAMP_FWD behavior.
     #[inline]
     pub fn apply_unclamped(&self, rgb: &mut [f32; 3]) {
-        // SOP node without clamping
+        // ASC CDL forward without clamp (matches OCIO CDL_NO_CLAMP_FWD)
+        // Negative values pass through unchanged (not raised to power)
         for i in 0..3 {
             let v = rgb[i] * self.slope[i] + self.offset[i];
-            rgb[i] = if v >= 0.0 {
-                v.powf(self.power[i])
+            // NaN -> 0, negative -> pass through, positive -> power
+            rgb[i] = if v.is_nan() {
+                0.0
+            } else if v < 0.0 {
+                v // Pass through negative values unchanged (OCIO behavior)
+            } else if self.power[i] == 1.0 {
+                v // Skip pow to avoid numerical error from log2->mul->exp2 chain
             } else {
-                -(-v).powf(self.power[i])
+                fast_pow(v, self.power[i])
             };
         }
 
-        // Saturation
+        // Saturation (no clamp in this mode)
         if (self.saturation - 1.0).abs() > 1e-6 {
             let luma = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
             for v in rgb.iter_mut() {
                 *v = luma + (*v - luma) * self.saturation;
             }
         }
+        // No final clamp in NO_CLAMP mode
     }
 
     /// Applies the CDL to a buffer of pixels.

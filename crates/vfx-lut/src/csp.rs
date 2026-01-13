@@ -413,10 +413,13 @@ pub fn write_csp_3d_to<W: Write>(w: &mut W, lut: &Lut3D, metadata: Option<&str>)
     let size = lut.size;
     writeln!(w, "{} {} {}", size, size, size)?;
 
+    // CSP file format: R slowest, B fastest
+    // Memory is Blue-major: idx = B + dim*G + dim²*R
     for r in 0..size {
         for g in 0..size {
             for b in 0..size {
-                let idx = b * size * size + g * size + r;
+                // Blue-major index: B + size*G + size²*R
+                let idx = b + size * (g + size * r);
                 let rgb = lut.data[idx];
                 writeln!(w, "{} {} {}", rgb[0], rgb[1], rgb[2])?;
             }

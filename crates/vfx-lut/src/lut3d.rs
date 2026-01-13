@@ -16,7 +16,8 @@ use crate::{Interpolation, LutError, LutResult};
 /// # Structure
 ///
 /// - `size^3` entries, each containing RGB output values
-/// - Stored in R-major order: R varies fastest, then G, then B
+/// - Stored in Blue-major order (OCIO compatible): B varies fastest, then G, then R
+/// - Index formula: `index = B + dim*G + dim²*R`
 /// - Trilinear or tetrahedral interpolation for lookup
 ///
 /// # Example
@@ -32,8 +33,8 @@ use crate::{Interpolation, LutError, LutResult};
 /// ```
 #[derive(Debug, Clone)]
 pub struct Lut3D {
-    /// LUT data: [R][G][B] -> [R', G', B']
-    /// Flattened as: [(r0,g0,b0), (r1,g0,b0), ..., (rN,gN,bN)]
+    /// LUT data in Blue-major order (OCIO compatible).
+    /// Index formula: `B + dim*G + dim²*R` - Blue varies fastest.
     pub data: Vec<[f32; 3]>,
     /// Cube size (typically 17, 33, or 65)
     pub size: usize,
@@ -65,9 +66,10 @@ impl Lut3D {
         let total = size * size * size;
         let mut data = Vec::with_capacity(total);
 
-        for b in 0..size {
+        // OCIO order: R slowest (outer), B fastest (inner)
+        for r in 0..size {
             for g in 0..size {
-                for r in 0..size {
+                for b in 0..size {
                     let rf = r as f32 / (size - 1) as f32;
                     let gf = g as f32 / (size - 1) as f32;
                     let bf = b as f32 / (size - 1) as f32;
@@ -87,7 +89,7 @@ impl Lut3D {
 
     /// Creates a 3D LUT from raw data.
     ///
-    /// Data must be in R-major order with exactly `size^3` entries.
+    /// Data must be in Blue-major order (OCIO compatible) with exactly `size^3` entries.
     pub fn from_data(data: Vec<[f32; 3]>, size: usize) -> LutResult<Self> {
         let expected = size * size * size;
         if data.len() != expected {
@@ -125,9 +127,10 @@ impl Lut3D {
     }
 
     /// Returns the index for a given (r, g, b) grid position.
+    /// Uses OCIO Blue-major order: index = B + dim*G + dim²*R
     #[inline]
     fn index(&self, r: usize, g: usize, b: usize) -> usize {
-        b * self.size * self.size + g * self.size + r
+        b + self.size * (g + self.size * r)
     }
 
     /// Gets the value at grid position (r, g, b).

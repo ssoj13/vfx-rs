@@ -161,29 +161,13 @@ pub fn parse_vf<R: Read>(reader: R) -> LutResult<VfFile> {
         )));
     }
 
-    // VF uses blue-fastest, convert to red-fastest
+    // VF data is read sequentially and stored in Blue-major format
+    // (same as our internal format: B + G*size + R*size²)
     let lut_size = size[0];
-    let mut data = vec![[0.0f32; 3]; expected];
-
-    for b in 0..lut_size {
-        for g in 0..lut_size {
-            for r in 0..lut_size {
-                // Blue-fastest input index
-                let src_idx = r + g * lut_size + b * lut_size * lut_size;
-                // Red-fastest output index
-                let dst_idx = r + g * lut_size + b * lut_size * lut_size;
-
-                // Actually VF stores in same order as our internal format
-                // based on the OCIO code: getArray().getValues() = raw3d
-                // So we just copy directly
-                data[dst_idx] = raw_data[src_idx];
-            }
-        }
-    }
 
     Ok(VfFile {
         matrix,
-        lut: Lut3D::from_data(data, lut_size)?,
+        lut: Lut3D::from_data(raw_data, lut_size)?,
     })
 }
 

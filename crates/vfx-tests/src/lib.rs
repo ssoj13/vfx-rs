@@ -2,6 +2,26 @@
 //!
 //! This crate contains end-to-end tests that verify the interaction
 //! between different VFX-RS crates.
+//!
+//! # Test Categories
+//!
+//! - **Integration tests** - Verify crate interactions (this module)
+//! - **Golden tests** - Verify OCIO parity via hash comparison
+//!
+//! # Golden Parity Tests
+//!
+//! The `golden` module contains tests that verify vfx-rs output matches
+//! PyOpenColorIO exactly. To use:
+//!
+//! ```bash
+//! # Generate golden reference data
+//! python tests/parity/generate_golden.py
+//!
+//! # Run golden tests
+//! cargo test --package vfx-tests golden
+//! ```
+
+mod golden;
 
 #[cfg(test)]
 mod tests {

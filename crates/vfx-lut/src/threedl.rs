@@ -97,7 +97,21 @@ pub fn parse_3dl<R: BufRead>(reader: R) -> LutResult<Lut3D> {
         )));
     }
 
-    Lut3D::from_data(data, size)
+    // Convert from file order (R-fastest) to memory order (Blue-major: B-fastest)
+    // File: idx = r + g*size + b*size²
+    // Memory: idx = b + g*size + r*size²
+    let mut reordered = vec![[0.0f32; 3]; count];
+    for b in 0..size {
+        for g in 0..size {
+            for r in 0..size {
+                let file_idx = r + g * size + b * size * size;  // R-fastest
+                let mem_idx = b + g * size + r * size * size;   // B-fastest (Blue-major)
+                reordered[mem_idx] = data[file_idx];
+            }
+        }
+    }
+
+    Lut3D::from_data(reordered, size)
 }
 
 /// Writes a 3D LUT to a .3dl file.
@@ -133,11 +147,13 @@ pub fn write_3dl_with_depth<P: AsRef<Path>>(path: P, lut: &Lut3D, bit_depth: u32
         .collect();
     writeln!(writer, "{}", mesh.join(" "))?;
 
-    // Write LUT data - R varies fastest, then G, then B
+    // Write LUT data - R varies fastest, then G, then B (file format)
+    // Memory is Blue-major: idx = B + dim*G + dim²*R
     for b_idx in 0..size {
         for g_idx in 0..size {
             for r_idx in 0..size {
-                let idx = b_idx * size * size + g_idx * size + r_idx;
+                // Blue-major index: B + size*G + size²*R
+                let idx = b_idx + size * (g_idx + size * r_idx);
                 let rgb = lut.data[idx];
 
                 let r = (rgb[0].clamp(0.0, 1.0) * max_value as f32).round() as i32;
@@ -204,7 +220,8 @@ mod tests {
         for i in 0..4 {
             for j in 0..4 {
                 for k in 0..4 {
-                    let idx = k * 16 + j * 4 + i;
+                    // Blue-major order: idx = B + size*G + size²*R
+                    let idx = i * 16 + j * 4 + k;
                     let expected_r = i as f32 / 3.0;
                     let expected_g = j as f32 / 3.0;
                     let expected_b = k as f32 / 3.0;

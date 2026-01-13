@@ -94,6 +94,7 @@ pub mod convert;
 pub mod cdl;
 pub mod aces;
 pub mod aces2;
+pub mod sse_math;
 
 pub use error::{ColorError, ColorResult};
 pub use pipeline::{Pipeline, TransformOp};
