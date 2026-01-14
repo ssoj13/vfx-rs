@@ -5,7 +5,10 @@
 [![downloads](https://img.shields.io/crates/d/exr)](https://crates.io/crates/exr)
 [![Lines of Code](https://tokei.rs/b1/github/johannesvollmer/exrs?category=code)](https://tokei.rs)
 
-# EXRS
+# vfx-exr
+
+> **Note:** This is a fork of [exrs](https://github.com/johannesvollmer/exrs) maintained as part of the vfx-rs project.
+> It includes bug fixes, code cleanup, and enhanced deep data support.
 
 This library is a 100% Rust and 100% safe code library for
 reading and writing OpenEXR images.
@@ -26,16 +29,22 @@ Features include:
 - add arbitrary meta data to any image, including custom byte data, with full backwards compatibility
 - any number of samples per pixel ("deep data") for volumetric effects and deep compositing
 
-### Current Status
+### Current Status (vfx-rs fork)
 
-This library has matured quite a bit, but should still be considered incomplete.
-For example, DWA compression algorithms are not supported yet.
+This fork has been cleaned up and bug-fixed as of 2026-01-14:
+
+| Fix | Description |
+|-----|-------------|
+| PIZ overflow | Huffman decoding uses `saturating_sub` to prevent panic |
+| Wavelet comments | Clarified intentional wrapping arithmetic |
+| B44 comments | Updated to reflect safe implementation |
+| Block comments | Removed misleading "guessed" TODOs (impl is correct) |
+| Sorting | Optimized with `sort_unstable_by` to avoid clones |
+
+DWA compression algorithms are not supported yet.
 
 If you encounter an exr file that cannot be opened by this crate but should be,
-please leave an issue on this repository, containing the image file.
-
-The focus is set on supporting all feature and correctness;
-some performance optimizations are to be done.
+please leave an issue on the [vfx-rs repository](https://github.com/vfx-rs/vfx-rs/issues).
 
 __What we can do:__
 

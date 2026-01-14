@@ -4,7 +4,7 @@ This section documents each crate in the vfx-rs workspace.
 
 ## Crate Overview
 
-vfx-rs consists of 16 crates organized by functionality:
+vfx-rs consists of 17 crates organized by functionality:
 
 ### Foundation
 
@@ -25,6 +25,7 @@ vfx-rs consists of 16 crates organized by functionality:
 
 | Crate | Description |
 |-------|-------------|
+| [vfx-exr](exr.md) | OpenEXR I/O with deep data support |
 | [vfx-io](io.md) | Image file reading/writing |
 | [vfx-compute](compute.md) | CPU/GPU compute backends |
 

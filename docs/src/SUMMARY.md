@@ -98,6 +98,7 @@
 - [vfx-transfer](./crates/transfer.md)
 - [vfx-primaries](./crates/primaries.md)
 - [vfx-lut](./crates/lut.md)
+- [vfx-exr](./crates/exr.md)
 - [vfx-io](./crates/io.md)
 - [vfx-compute](./crates/compute.md)
 - [vfx-color](./crates/color.md)

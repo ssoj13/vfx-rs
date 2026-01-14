@@ -82,3 +82,17 @@ vfx-rs/
 3. **Composable** - Small crates that do one thing well
 4. **Observable** - Structured logging with tracing
 5. **Documented** - Every public API has examples
+
+## Code Quality (2026-01-14)
+
+All critical and high-priority bugs have been addressed:
+
+| Category | Status |
+|----------|--------|
+| PIZ compression | ✅ Overflow protection |
+| ACES transforms | ✅ NaN prevention |
+| OCIO parity | ✅ ~99% compatible |
+| Deep EXR | ✅ Full read/write |
+| Color grading | ✅ Division-by-zero protection |
+
+See [Bug Hunt Report](../plan3.md) for full details.

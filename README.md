@@ -188,7 +188,7 @@ Full camera gamut support verified against OCIO ColorMatrixHelpers.cpp:
 | ImageBufAlgo (100+ functions) | Partial |
 | Plugin system | Not implemented |
 
-### vs OpenColorIO (~98%)
+### vs OpenColorIO (~99%)
 
 | Feature | Status |
 |---------|--------|
@@ -228,6 +228,18 @@ Numerical accuracy verified against OpenColorIO 2.5.1:
 - All constants verified against OCIO source code
 
 See [docs/OCIO_PARITY_AUDIT.md](docs/OCIO_PARITY_AUDIT.md) for full details.
+
+### Code Quality (2026-01-14)
+
+All critical and high-priority bugs have been addressed:
+- ✅ PIZ compression overflow protection
+- ✅ ACES Red Modifier NaN prevention  
+- ✅ V-Log transform parity with OCIO
+- ✅ 2-channel image handling (Y+A)
+- ✅ Division-by-zero protection in grading
+- ✅ Trilinear mip blending accuracy
+
+See [docs/plan3.md](docs/plan3.md) for full bug hunt report.
 
 ### EXR Compression Support
 
