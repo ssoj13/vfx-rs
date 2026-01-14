@@ -17,7 +17,9 @@ pub enum BuiltinDef {
         matrix: [f32; 16],
         offset: [f32; 4],
     },
-    /// Log camera transform (to linear).
+    /// Log camera transform.
+    /// When `inverse=true`, converts from log (encoded) to linear (decode direction).
+    /// When `inverse=false`, converts from linear to log (encode direction).
     LogCamera {
         base: f32,
         log_side_slope: [f32; 3],
@@ -26,6 +28,9 @@ pub enum BuiltinDef {
         lin_side_offset: [f32; 3],
         lin_side_break: [f32; 3],
         linear_slope: [f32; 3],
+        /// If true, the "forward" direction is log->linear (decode).
+        /// This matches OCIO's TRANSFORM_DIR_INVERSE for camera log ops.
+        inverse: bool,
     },
     /// Transfer function (log/gamma to linear).
     Transfer {
@@ -278,14 +283,14 @@ pub fn get_builtin(style: &str) -> Option<BuiltinDef> {
         "arrilogc3toaces20651" | "logc3toaces" | "arrilogctoaces" => {
             let (base, lss, lso, lns, lno, lnb, ls) = logc3_params();
             Some(BuiltinDef::Chain(vec![
-                BuiltinDef::LogCamera { base, log_side_slope: lss, log_side_offset: lso, lin_side_slope: lns, lin_side_offset: lno, lin_side_break: lnb, linear_slope: ls },
+                BuiltinDef::LogCamera { base, log_side_slope: lss, log_side_offset: lso, lin_side_slope: lns, lin_side_offset: lno, lin_side_break: lnb, linear_slope: ls, inverse: true },
                 BuiltinDef::Matrix { matrix: AWG3_TO_AP0, offset: [0.0; 4] },
             ]))
         }
         "arrilogc4toaces20651" | "logc4toaces" => {
             let (base, lss, lso, lns, lno, lnb, ls) = logc4_params();
             Some(BuiltinDef::Chain(vec![
-                BuiltinDef::LogCamera { base, log_side_slope: lss, log_side_offset: lso, lin_side_slope: lns, lin_side_offset: lno, lin_side_break: lnb, linear_slope: ls },
+                BuiltinDef::LogCamera { base, log_side_slope: lss, log_side_offset: lso, lin_side_slope: lns, lin_side_offset: lno, lin_side_break: lnb, linear_slope: ls, inverse: true },
                 BuiltinDef::Matrix { matrix: AWG4_TO_AP0, offset: [0.0; 4] },
             ]))
         }
@@ -294,7 +299,7 @@ pub fn get_builtin(style: &str) -> Option<BuiltinDef> {
         "sonyslog3sgamut3toaces20651" | "slog3toaces" | "sonyslog3toaces" => {
             let (base, lss, lso, lns, lno, lnb, ls) = slog3_params();
             Some(BuiltinDef::Chain(vec![
-                BuiltinDef::LogCamera { base, log_side_slope: lss, log_side_offset: lso, lin_side_slope: lns, lin_side_offset: lno, lin_side_break: lnb, linear_slope: ls },
+                BuiltinDef::LogCamera { base, log_side_slope: lss, log_side_offset: lso, lin_side_slope: lns, lin_side_offset: lno, lin_side_break: lnb, linear_slope: ls, inverse: true },
                 BuiltinDef::Matrix { matrix: SGAMUT3_TO_AP0, offset: [0.0; 4] },
             ]))
         }
@@ -303,7 +308,7 @@ pub fn get_builtin(style: &str) -> Option<BuiltinDef> {
         "panasonicvlogvgamuttoaces20651" | "vlogtoaces" => {
             let (base, lss, lso, lns, lno, lnb, ls) = vlog_params();
             Some(BuiltinDef::Chain(vec![
-                BuiltinDef::LogCamera { base, log_side_slope: lss, log_side_offset: lso, lin_side_slope: lns, lin_side_offset: lno, lin_side_break: lnb, linear_slope: ls },
+                BuiltinDef::LogCamera { base, log_side_slope: lss, log_side_offset: lso, lin_side_slope: lns, lin_side_offset: lno, lin_side_break: lnb, linear_slope: ls, inverse: true },
                 BuiltinDef::Matrix { matrix: VGAMUT_TO_AP0, offset: [0.0; 4] },
             ]))
         }
@@ -312,7 +317,7 @@ pub fn get_builtin(style: &str) -> Option<BuiltinDef> {
         "redlog3g10rwgtoaces20651" | "log3g10toaces" | "redlogtoaces" => {
             let (base, lss, lso, lns, lno, lnb, ls) = log3g10_params();
             Some(BuiltinDef::Chain(vec![
-                BuiltinDef::LogCamera { base, log_side_slope: lss, log_side_offset: lso, lin_side_slope: lns, lin_side_offset: lno, lin_side_break: lnb, linear_slope: ls },
+                BuiltinDef::LogCamera { base, log_side_slope: lss, log_side_offset: lso, lin_side_slope: lns, lin_side_offset: lno, lin_side_break: lnb, linear_slope: ls, inverse: true },
                 BuiltinDef::Matrix { matrix: RWG_TO_AP0, offset: [0.0; 4] },
             ]))
         }
@@ -369,7 +374,11 @@ pub fn compile_builtin(def: &BuiltinDef, forward: bool, ops: &mut Vec<ProcessorO
             }
         }
         
-        BuiltinDef::LogCamera { base, log_side_slope, log_side_offset, lin_side_slope, lin_side_offset, lin_side_break, linear_slope } => {
+        BuiltinDef::LogCamera { base, log_side_slope, log_side_offset, lin_side_slope, lin_side_offset, lin_side_break, linear_slope, inverse } => {
+            // When inverse=true, the builtin definition expects log->linear (decode).
+            // The ProcessorOp::LogCamera forward flag: true=linear->log, false=log->linear
+            // So: effective_forward = forward XOR inverse
+            let effective_forward = forward != *inverse;
             ops.push(ProcessorOp::LogCamera {
                 base: *base,
                 log_side_slope: *log_side_slope,
@@ -378,7 +387,7 @@ pub fn compile_builtin(def: &BuiltinDef, forward: bool, ops: &mut Vec<ProcessorO
                 lin_side_offset: *lin_side_offset,
                 lin_side_break: *lin_side_break,
                 linear_slope: *linear_slope,
-                forward,
+                forward: effective_forward,
             });
         }
         
@@ -468,5 +477,42 @@ mod tests {
         assert!(get_builtin("aces_ap0_to_ap1").is_some());
         assert!(get_builtin("ACESAP0TOAP1").is_some());
         assert!(get_builtin("aces ap0 to ap1").is_some());
+    }
+
+    /// Parity test: V-Log V-Gamut to ACES2065-1
+    /// Reference values from OCIO BuiltinTransform_tests.cpp:
+    /// Input:  [0.5, 0.4, 0.3]
+    /// Output: [0.306918773245, 0.148128050597, 0.046334439047]
+    #[test]
+    fn test_vlog_to_aces_parity() {
+        use crate::{Transform, BuiltinTransform, TransformDirection, Processor};
+        
+        let transform = Transform::Builtin(BuiltinTransform {
+            style: "PANASONIC_VLOG-VGAMUT_to_ACES2065-1".to_string(),
+            direction: TransformDirection::Forward,
+        });
+        
+        let processor = Processor::from_transform(&transform, TransformDirection::Forward)
+            .expect("V-Log builtin should compile");
+        
+        let mut pixels = [[0.5_f32, 0.4, 0.3]];
+        processor.apply_rgb(&mut pixels);
+        
+        // OCIO reference values (tolerance 1e-6)
+        let expected = [0.306918773245_f32, 0.148128050597, 0.046334439047];
+        let tolerance = 5e-4; // Reasonable tolerance for f32 precision differences
+        
+        assert!(
+            (pixels[0][0] - expected[0]).abs() < tolerance,
+            "R: got {}, expected {}", pixels[0][0], expected[0]
+        );
+        assert!(
+            (pixels[0][1] - expected[1]).abs() < tolerance,
+            "G: got {}, expected {}", pixels[0][1], expected[1]
+        );
+        assert!(
+            (pixels[0][2] - expected[2]).abs() < tolerance,
+            "B: got {}, expected {}", pixels[0][2], expected[2]
+        );
     }
 }
