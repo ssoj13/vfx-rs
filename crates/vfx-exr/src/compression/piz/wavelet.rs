@@ -242,7 +242,8 @@ fn encode_14bit(a: u16, b: u16) -> (u16, u16) {
     let m = (a + b) >> 1;
     let d = a - b;
 
-    (m as u16, d as u16) // TODO explicitly wrap?
+    // Wrapping is intentional for wavelet transform
+    (m as u16, d as u16)
 }
 
 #[inline]
@@ -253,10 +254,11 @@ fn decode_14bit(l: u16, h: u16) -> (u16, u16) {
     let hi = h as i32;
     let ai = l as i32 + (hi & 1) + (hi >> 1);
 
-    let a = ai as i16; // TODO explicitly wrap?
-    let b = (ai - hi) as i16; // TODO explicitly wrap?
+    // Wrapping is intentional for wavelet transform inverse
+    let a = ai as i16;
+    let b = (ai - hi) as i16;
 
-    (a as u16, b as u16) // TODO explicitly wrap?
+    (a as u16, b as u16)
 }
 
 const BIT_COUNT: i32 = 16;
@@ -276,7 +278,8 @@ fn encode_16bit(a: u16, b: u16) -> (u16, u16) {
     }
     let d = d & MOD_MASK;
 
-    (m as u16, d as u16) // TODO explicitly wrap?
+    // Values are already masked to 16-bit range via MOD_MASK
+    (m as u16, d as u16)
 }
 
 #[inline]
@@ -286,7 +289,8 @@ fn decode_16bit(l: u16, h: u16) -> (u16, u16) {
     let b = (m - (d >> 1)) & MOD_MASK;
     let a = (d + b - OFFSET) & MOD_MASK;
 
-    (a as u16, b as u16) // TODO explicitly wrap?
+    // Values are already masked to 16-bit range via MOD_MASK
+    (a as u16, b as u16)
 }
 
 #[cfg(test)]

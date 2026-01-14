@@ -275,7 +275,7 @@ fn build_decoding_table(
         } else if length != 0 {
             let default_value = Code::Short(ShortCode {
                 value: code_index,
-                len: length as u8,
+                len: u8::try_from(length).map_err(|_| Error::invalid("code length too large"))?,
             });
 
             let start_index = u64_to_usize(code << (DECODE_BITS - length), "huffman start index")?;
@@ -607,7 +607,7 @@ fn pack_encoding_table(
     }
 
     if code_bit_count > 0 {
-        out.write(&[(code_bits << (8 - code_bit_count)) as u8])?;
+        out.write(&[((code_bits << (8 - code_bit_count)) & 0xff) as u8])?;
     }
 
     Ok(())

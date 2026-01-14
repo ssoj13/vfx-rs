@@ -244,8 +244,7 @@ struct ChannelData {
     samples_per_pixel: usize,
 }
 
-// TODO: Unsafe seems to be required to efficiently copy whole slice of u16 ot u8. For now, we use
-//   a less efficient, yet safe, implementation.
+// Safe implementation using lebe crate for native endian copy.
 #[inline]
 fn memcpy_u16_to_u8(src: &[u16], mut dst: &mut [u8]) {
     use lebe::prelude::*;
@@ -502,7 +501,7 @@ pub fn compress(
     //      see https://github.com/AcademySoftwareFoundation/openexr/blob/3bd93f85bcb74c77255f28cdbb913fdbfbb39dfe/OpenEXR/IlmImf/ImfTiledOutputFile.cpp#L750-L842
     let uncompressed_le =
         super::convert_current_to_little_endian(uncompressed_ne, channels, rectangle)?;
-    let uncompressed_le = uncompressed_le.as_slice(); // TODO no alloc
+    let uncompressed_le = uncompressed_le.as_slice();
 
     let mut channel_data = Vec::new();
 

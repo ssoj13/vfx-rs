@@ -40,7 +40,7 @@ pub fn compress(channels: &ChannelList, bytes_ne: ByteVec, area: IntegerBounds) 
         return Ok(Vec::new());
     }
 
-    let mut remaining_bytes_ne = bytes_ne.as_slice(); // TODO less allocation
+    let mut remaining_bytes_ne = bytes_ne.as_slice();
 
     let bytes_per_pixel: usize = channels
         .list

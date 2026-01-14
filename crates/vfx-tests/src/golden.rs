@@ -21,147 +21,148 @@
 //! cargo test --package vfx-tests golden
 //! ```
 
+// Test utilities are only compiled when running tests
+#[cfg(test)]
 use sha2::{Sha256, Digest};
+#[cfg(test)]
 use std::path::PathBuf;
 
-/// Precision for hash comparison (number of decimal places).
-/// Using 5 instead of 6 to accommodate SSE vs scalar float differences.
-const HASH_PRECISION: i32 = 5;
-
 // ---------------------------------------------------------------------------
-// Test input generators (must match Python exactly)
+// Test-only utilities (compiled only for #[cfg(test)])
 // ---------------------------------------------------------------------------
 
-/// Generate gray ramp from 0.0 to 1.0 (256 values).
-fn gray_ramp_256() -> Vec<f32> {
-    (0..256).map(|i| i as f32 / 255.0).collect()
-}
-
-/// Generate gray ramp for HDR (0.0 to 100.0).
-#[allow(dead_code)]
-fn gray_ramp_hdr() -> Vec<f32> {
-    (0..256).map(|i| i as f32 / 255.0 * 100.0).collect()
-}
-
-/// Generate RGB color cube (8x8x8 = 512 colors).
-fn rgb_cube_8() -> Vec<[f32; 3]> {
-    let size = 8;
-    let mut cube = Vec::with_capacity(size * size * size);
+#[cfg(test)]
+mod test_utils {
+    use super::*;
     
-    for r in 0..size {
-        for g in 0..size {
-            for b in 0..size {
-                cube.push([
-                    r as f32 / (size - 1) as f32,
-                    g as f32 / (size - 1) as f32,
-                    b as f32 / (size - 1) as f32,
-                ]);
+    /// Precision for hash comparison (number of decimal places).
+    /// Using 5 instead of 6 to accommodate SSE vs scalar float differences.
+    pub const HASH_PRECISION: i32 = 5;
+
+    /// Generate gray ramp from 0.0 to 1.0 (256 values).
+    pub fn gray_ramp_256() -> Vec<f32> {
+        (0..256).map(|i| i as f32 / 255.0).collect()
+    }
+
+    /// Generate gray ramp for HDR (0.0 to 100.0).
+    #[allow(dead_code)]
+    pub fn gray_ramp_hdr() -> Vec<f32> {
+        (0..256).map(|i| i as f32 / 255.0 * 100.0).collect()
+    }
+
+    /// Generate RGB color cube (8x8x8 = 512 colors).
+    pub fn rgb_cube_8() -> Vec<[f32; 3]> {
+        let size = 8;
+        let mut cube = Vec::with_capacity(size * size * size);
+        
+        for r in 0..size {
+            for g in 0..size {
+                for b in 0..size {
+                    cube.push([
+                        r as f32 / (size - 1) as f32,
+                        g as f32 / (size - 1) as f32,
+                        b as f32 / (size - 1) as f32,
+                    ]);
+                }
             }
         }
+        
+        cube
     }
-    
-    cube
-}
 
-// ---------------------------------------------------------------------------
-// Hash utilities
-// ---------------------------------------------------------------------------
+    /// Compute deterministic SHA256 hash of float array.
+    ///
+    /// Quantizes floats to avoid precision issues between Rust/Python.
+    pub fn compute_hash_f32(data: &[f32]) -> String {
+        let factor = 10f64.powi(HASH_PRECISION);
+        
+        // Quantize to i64 (matching Python implementation)
+        let quantized: Vec<i64> = data
+            .iter()
+            .map(|&v| (v as f64 * factor).round() as i64)
+            .collect();
+        
+        // Hash the bytes
+        let bytes: Vec<u8> = quantized
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        let result = hasher.finalize();
+        
+        super::hex::encode(result)
+    }
 
-/// Compute deterministic SHA256 hash of float array.
-///
-/// Quantizes floats to avoid precision issues between Rust/Python.
-fn compute_hash_f32(data: &[f32]) -> String {
-    let factor = 10f64.powi(HASH_PRECISION);
-    
-    // Quantize to i64 (matching Python implementation)
-    let quantized: Vec<i64> = data
-        .iter()
-        .map(|&v| (v as f64 * factor).round() as i64)
-        .collect();
-    
-    // Hash the bytes
-    let bytes: Vec<u8> = quantized
-        .iter()
-        .flat_map(|v| v.to_le_bytes())
-        .collect();
-    
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    let result = hasher.finalize();
-    
-    hex::encode(result)
-}
+    /// Compute hash for RGB array (flattened to f32 slice).
+    pub fn compute_hash_rgb(data: &[[f32; 3]]) -> String {
+        let flat: Vec<f32> = data.iter().flat_map(|rgb| rgb.iter().copied()).collect();
+        compute_hash_f32(&flat)
+    }
 
-/// Compute hash for RGB array (flattened to f32 slice).
-fn compute_hash_rgb(data: &[[f32; 3]]) -> String {
-    let flat: Vec<f32> = data.iter().flat_map(|rgb| rgb.iter().copied()).collect();
-    compute_hash_f32(&flat)
-}
+    // ---------------------------------------------------------------------------
+    // Golden data loader
+    // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Golden data loader
-// ---------------------------------------------------------------------------
+    /// Load golden hashes from JSON file.
+    #[derive(Debug, serde::Deserialize)]
+    pub struct GoldenData {
+        #[allow(dead_code)]
+        pub version: String,
+        pub ocio_version: String,
+        pub tests: GoldenTests,
+    }
 
-/// Load golden hashes from JSON file.
-#[derive(Debug, serde::Deserialize)]
-struct GoldenData {
-    #[allow(dead_code)]
-    version: String,
-    #[allow(dead_code)]
-    ocio_version: String,
-    tests: GoldenTests,
-}
+    #[derive(Debug, serde::Deserialize)]
+    pub struct GoldenTests {
+        #[serde(default)]
+        pub transfers: std::collections::HashMap<String, GoldenEntry>,
+        #[serde(default)]
+        pub matrices: std::collections::HashMap<String, GoldenEntry>,
+        #[serde(default)]
+        pub cdl: std::collections::HashMap<String, GoldenEntry>,
+    }
 
-#[derive(Debug, serde::Deserialize)]
-struct GoldenTests {
-    #[serde(default)]
-    transfers: std::collections::HashMap<String, GoldenEntry>,
-    #[serde(default)]
-    matrices: std::collections::HashMap<String, GoldenEntry>,
-    #[serde(default)]
-    cdl: std::collections::HashMap<String, GoldenEntry>,
-}
+    #[derive(Debug, serde::Deserialize)]
+    pub struct GoldenEntry {
+        pub hash: String,
+        #[allow(dead_code)]
+        pub stats: Option<GoldenStats>,
+        // CDL specific
+        pub slope: Option<Vec<f32>>,
+        pub offset: Option<Vec<f32>>,
+        pub power: Option<Vec<f32>>,
+        pub saturation: Option<f32>,
+        // Matrix specific
+        #[allow(dead_code)]
+        pub matrix: Option<Vec<f64>>,
+    }
 
-#[derive(Debug, serde::Deserialize)]
-struct GoldenEntry {
-    hash: String,
-    #[allow(dead_code)]
-    stats: Option<GoldenStats>,
-    // CDL specific
-    slope: Option<Vec<f32>>,
-    offset: Option<Vec<f32>>,
-    power: Option<Vec<f32>>,
-    saturation: Option<f32>,
-    // Matrix specific
-    matrix: Option<Vec<f64>>,
-}
+    #[derive(Debug, serde::Deserialize)]
+    pub struct GoldenStats {
+        pub min: f32,
+        pub max: f32,
+        pub mean: f32,
+    }
 
-#[derive(Debug, serde::Deserialize)]
-struct GoldenStats {
-    #[allow(dead_code)]
-    min: f32,
-    #[allow(dead_code)]
-    max: f32,
-    #[allow(dead_code)]
-    mean: f32,
-}
-
-fn load_golden() -> Option<GoldenData> {
-    // Try multiple possible paths
-    let paths = [
-        PathBuf::from("../../tests/golden/hashes.json"),
-        PathBuf::from("tests/golden/hashes.json"),
-        PathBuf::from("../tests/golden/hashes.json"),
-    ];
-    
-    for path in &paths {
-        if path.exists() {
-            let content = std::fs::read_to_string(path).ok()?;
-            return serde_json::from_str(&content).ok();
+    pub fn load_golden() -> Option<GoldenData> {
+        // Try multiple possible paths
+        let paths = [
+            PathBuf::from("../../tests/golden/hashes.json"),
+            PathBuf::from("tests/golden/hashes.json"),
+            PathBuf::from("../tests/golden/hashes.json"),
+        ];
+        
+        for path in &paths {
+            if path.exists() {
+                let content = std::fs::read_to_string(path).ok()?;
+                return serde_json::from_str(&content).ok();
+            }
         }
+        
+        None
     }
-    
-    None
 }
 
 // ---------------------------------------------------------------------------
@@ -170,7 +171,7 @@ fn load_golden() -> Option<GoldenData> {
 
 #[cfg(test)]
 mod transfer_tests {
-    use super::*;
+    use super::test_utils::*;
     use vfx_transfer::*;
     
     /// Apply transfer function to gray ramp.
@@ -436,7 +437,7 @@ mod transfer_tests {
 
 #[cfg(test)]
 mod matrix_tests {
-    use super::*;
+    use super::test_utils::*;
     use vfx_math::{Mat3, Vec3};
     use vfx_primaries::{SRGB, DCI_P3, ACES_AP0, ACES_AP1, rgb_to_xyz_matrix, rgb_to_rgb_matrix};
     
@@ -578,7 +579,7 @@ mod matrix_tests {
 
 #[cfg(test)]
 mod cdl_tests {
-    use super::*;
+    use super::test_utils::*;
     use vfx_color::cdl::Cdl;
     
     /// Apply CDL to RGB cube.
@@ -727,7 +728,7 @@ mod cdl_tests {
 
 #[cfg(test)]
 mod summary_tests {
-    use super::*;
+    use super::test_utils::*;
     
     /// Print summary of all golden test results.
     #[test]
@@ -767,7 +768,8 @@ mod summary_tests {
     }
 }
 
-// Hex encoding for hashes
+// Hex encoding for hashes (test-only)
+#[cfg(test)]
 mod hex {
     const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
     

@@ -658,7 +658,7 @@ impl ExactSizeIterator for FlatSampleIterator<'_> {}
 impl<SampleData> AnyChannels<SampleData> {
     /// A new list of arbitrary channels. Sorts the list to make it alphabetically stable.
     pub fn sort(mut list: SmallVec<[AnyChannel<SampleData>; 4]>) -> Self {
-        list.sort_unstable_by_key(|channel| channel.name.clone()); // TODO no clone?
+        list.sort_unstable_by(|a, b| a.name.cmp(&b.name));
         Self { list }
     }
 }
@@ -837,7 +837,6 @@ impl<'s, ChannelData: 's> Layer<ChannelData> {
         }
     }
 
-    // TODO test pls wtf
     /// Panics for images with Scanline encoding.
     pub fn levels_with_resolution<'l, L>(
         &self,

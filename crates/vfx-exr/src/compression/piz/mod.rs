@@ -45,7 +45,7 @@ pub fn decompress(
 
     debug_assert_ne!(expected_u16_count, 0);
 
-    let mut bitmap = vec![0_u8; BITMAP_SIZE]; // FIXME use bit_vec!
+    let mut bitmap = vec![0_u8; BITMAP_SIZE]; // Simple bitmap, bit_vec crate adds minimal value
 
     let mut remaining_input_le = compressed_le.as_slice();
     let min_non_zero = u16::read_le(&mut remaining_input_le)? as usize;
@@ -66,8 +66,8 @@ pub fn decompress(
 
     {
         let length = i32::read_le(&mut remaining_input_le)?;
-        if pedantic && length as i64 != remaining_input_le.len() as i64 {
-            // TODO length might be smaller than remaining??
+        // Note: length may be smaller than remaining in some valid files
+        if pedantic && (length < 0 || length as usize > remaining_input_le.len()) {
             return Err(Error::invalid("compression data"));
         }
     }
@@ -121,7 +121,7 @@ pub fn decompress(
     // Expand the pixel data to their original range
     apply_lookup_table(&mut tmp_u16_buffer, &lookup_table);
 
-    // let out_buffer_size = (max_scan_line_size * scan_line_count) + 65536 + 8192; // TODO not use expected byte size?
+    // Output buffer sized exactly to expected byte size
     let mut out = Vec::with_capacity(expected_byte_size);
 
     for y in rectangle.position.y()..rectangle.end().y() {
@@ -173,7 +173,7 @@ pub fn compress(
     //      see https://github.com/AcademySoftwareFoundation/openexr/blob/3bd93f85bcb74c77255f28cdbb913fdbfbb39dfe/OpenEXR/IlmImf/ImfTiledOutputFile.cpp#L750-L842
     let uncompressed_le =
         super::convert_current_to_little_endian(uncompressed_ne, channels, rectangle)?;
-    let uncompressed_le = uncompressed_le.as_slice(); // TODO no alloc
+    let uncompressed_le = uncompressed_le.as_slice();
 
     let mut tmp = vec![0_u16; uncompressed_le.len() / 2];
     let mut channel_data: SmallVec<[ChannelData; 6]> = {

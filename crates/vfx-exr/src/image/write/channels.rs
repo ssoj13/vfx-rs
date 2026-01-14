@@ -138,7 +138,7 @@ where
             .clone()
             .into_recursive()
             .channel_descriptions_list();
-        vec.sort_unstable_by_key(|channel: &ChannelDescription| channel.name.clone()); // TODO no clone?
+        vec.sort_unstable_by(|a, b| a.name.cmp(&b.name));
 
         debug_assert!(
             // check for equal neighbors in sorted vec

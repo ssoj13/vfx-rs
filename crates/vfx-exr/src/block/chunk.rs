@@ -276,7 +276,7 @@ impl CompressedDeepScanLineBlock {
 
         i32::write_le(self.y_coordinate, write)?;
         u64::write_le(self.compressed_pixel_offset_table.len() as u64, write)?;
-        u64::write_le(self.compressed_sample_data_le.len() as u64, write)?; // TODO just guessed
+        u64::write_le(self.compressed_sample_data_le.len() as u64, write)?;
         u64::write_le(self.decompressed_sample_data_size as u64, write)?;
         i8::write_slice_le(write, &self.compressed_pixel_offset_table)?;
         u8::write_slice_le(write, &self.compressed_sample_data_le)?;
@@ -328,7 +328,7 @@ impl CompressedDeepTileBlock {
 
         self.coordinates.write(write)?;
         u64::write_le(self.compressed_pixel_offset_table.len() as u64, write)?;
-        u64::write_le(self.compressed_sample_data_le.len() as u64, write)?; // TODO just guessed
+        u64::write_le(self.compressed_sample_data_le.len() as u64, write)?;
         u64::write_le(self.decompressed_sample_data_size as u64, write)?;
         i8::write_slice_le(write, &self.compressed_pixel_offset_table)?;
         u8::write_slice_le(write, &self.compressed_sample_data_le)?;

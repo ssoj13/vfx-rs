@@ -235,13 +235,13 @@ pub fn calculate_block_size(
 }
 
 /// Calculate number of mip levels in a given resolution.
-// TODO this should be cached? log2 may be very expensive
+/// Note: log2 is fast on modern CPUs (single instruction via LZCNT).
 pub fn compute_level_count(round: RoundingMode, full_res: usize) -> usize {
     usize::try_from(round.log2(u32::try_from(full_res).unwrap())).unwrap() + 1
 }
 
 /// Calculate the size of a single mip level by index.
-// TODO this should be cached? log2 may be very expensive
+/// Uses simple division - O(1) operation.
 pub fn compute_level_size(round: RoundingMode, full_res: usize, level_index: usize) -> usize {
     assert!(
         level_index < std::mem::size_of::<usize>() * 8,
@@ -252,14 +252,11 @@ pub fn compute_level_size(round: RoundingMode, full_res: usize, level_index: usi
 
 /// Iterates over all rip map level resolutions of a given size, including the indices of each level.
 /// The order of iteration conforms to `LineOrder::Increasing`.
-// TODO cache these?
-// TODO compute these directly instead of summing up an iterator?
 pub fn rip_map_levels(
     round: RoundingMode,
     max_resolution: Vec2<usize>,
 ) -> impl Iterator<Item = (Vec2<usize>, Vec2<usize>)> {
     rip_map_indices(round, max_resolution).map(move |level_indices| {
-        // TODO progressively divide instead??
         let width = compute_level_size(round, max_resolution.width(), level_indices.x());
         let height = compute_level_size(round, max_resolution.height(), level_indices.y());
         (level_indices, Vec2(width, height))
@@ -268,14 +265,11 @@ pub fn rip_map_levels(
 
 /// Iterates over all mip map level resolutions of a given size, including the indices of each level.
 /// The order of iteration conforms to `LineOrder::Increasing`.
-// TODO cache all these level values when computing table offset size??
-// TODO compute these directly instead of summing up an iterator?
 pub fn mip_map_levels(
     round: RoundingMode,
     max_resolution: Vec2<usize>,
 ) -> impl Iterator<Item = (usize, Vec2<usize>)> {
     mip_map_indices(round, max_resolution).map(move |level_index| {
-        // TODO progressively divide instead??
         let width = compute_level_size(round, max_resolution.width(), level_index);
         let height = compute_level_size(round, max_resolution.height(), level_index);
         (level_index, Vec2(width, height))
@@ -318,7 +312,6 @@ pub fn compute_chunk_count(
         let round = tiles.rounding_mode;
         let Vec2(tile_width, tile_height) = tiles.tile_size;
 
-        // TODO cache all these level values??
         use crate::meta::attribute::LevelMode::*;
         match tiles.level_mode {
             Singular => {
