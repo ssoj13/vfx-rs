@@ -414,7 +414,8 @@ pub fn aces_red_mod_10_inv(rgb: &mut [f32; 3]) {
         let c = f_h * PIVOT * min_chan * ONE_MINUS_SCALE;
         
         // Use negative root: (-b - sqrt(b^2 - 4ac)) / 2a
-        let discriminant = b * b - 4.0 * a * c;
+        // Clamp discriminant to 0 to avoid NaN from sqrt of negative value
+        let discriminant = (b * b - 4.0 * a * c).max(0.0);
         rgb[0] = (-b - discriminant.sqrt()) / (2.0 * a);
     }
 }

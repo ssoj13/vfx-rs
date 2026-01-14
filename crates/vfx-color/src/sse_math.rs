@@ -76,12 +76,9 @@ pub fn fast_exp2(x: f32) -> f32 {
     }
     
     // Split into integer and fractional parts
-    // floor_x = floor(x) with proper handling for negative numbers
-    let floor_x = if x >= 0.0 {
-        x as i32
-    } else {
-        x as i32 - 1
-    };
+    // Use proper floor to handle negative numbers correctly
+    // (x as i32 truncates toward zero, not floor)
+    let floor_x = x.floor() as i32;
     
     let fraction = x - floor_x as f32;
     

@@ -46,6 +46,54 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::ops::{Add, Mul, Sub};
 
+// ============================================================================
+// Rec.709 Luminance Constants
+// ============================================================================
+
+/// Rec.709 luminance coefficient for red channel.
+///
+/// Used in the standard luminance formula: `Y = 0.2126*R + 0.7152*G + 0.0722*B`
+pub const REC709_LUMA_R: f32 = 0.2126;
+
+/// Rec.709 luminance coefficient for green channel.
+pub const REC709_LUMA_G: f32 = 0.7152;
+
+/// Rec.709 luminance coefficient for blue channel.
+pub const REC709_LUMA_B: f32 = 0.0722;
+
+/// Rec.709 luminance coefficients as an array [R, G, B].
+///
+/// # Example
+/// ```
+/// use vfx_core::pixel::REC709_LUMA;
+/// let rgb = [0.5, 0.3, 0.2];
+/// let luma = rgb[0] * REC709_LUMA[0] + rgb[1] * REC709_LUMA[1] + rgb[2] * REC709_LUMA[2];
+/// ```
+pub const REC709_LUMA: [f32; 3] = [REC709_LUMA_R, REC709_LUMA_G, REC709_LUMA_B];
+
+/// Calculate Rec.709 luminance from RGB values.
+///
+/// This is the standard luminance calculation for sRGB/Rec.709 primaries:
+/// `Y = 0.2126*R + 0.7152*G + 0.0722*B`
+///
+/// # Arguments
+/// * `rgb` - RGB values as [R, G, B] array
+///
+/// # Returns
+/// The luminance value
+///
+/// # Example
+/// ```
+/// use vfx_core::pixel::luminance_rec709;
+/// let luma = luminance_rec709([0.5, 0.3, 0.2]);
+/// // 0.5 * 0.2126 + 0.3 * 0.7152 + 0.2 * 0.0722 = 0.3353
+/// assert!((luma - 0.3353).abs() < 0.0001);
+/// ```
+#[inline]
+pub fn luminance_rec709(rgb: [f32; 3]) -> f32 {
+    rgb[0] * REC709_LUMA_R + rgb[1] * REC709_LUMA_G + rgb[2] * REC709_LUMA_B
+}
+
 /// Trait for pixel data types.
 ///
 /// Implemented for standard numeric types used in image processing:
@@ -405,8 +453,7 @@ impl<C: ColorSpace, T: PixelFormat> Rgb<C, T> {
     /// For other color spaces, use proper luminance matrices.
     #[inline]
     pub fn luminance_rec709(self) -> f32 {
-        let [r, g, b] = self.to_f32_array();
-        0.2126 * r + 0.7152 * g + 0.0722 * b
+        luminance_rec709(self.to_f32_array())
     }
 }
 

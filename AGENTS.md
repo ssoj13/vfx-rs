@@ -1,7 +1,7 @@
 # VFX-RS Project Status & Architecture
 
-**Last Updated:** 2026-01-09
-**Status:** Active Refactoring & Cleanup
+**Last Updated:** 2026-01-13
+**Status:** Bug Hunt Completed - Ready for Fixes
 
 ---
 
@@ -131,3 +131,39 @@ UI thread (egui) <-> Worker thread (ViewerHandler)
        └─ ColorConfig::display_processor(...) -> apply_rgb()
             └─ upload texture -> draw_canvas()
 ```
+
+---
+
+## 🐛 Bug Hunt Results (2026-01-13)
+
+See `docs/plan3.md` for the full report. Summary:
+
+### Critical Issues (P0)
+| Issue | Location | Status |
+|-------|----------|--------|
+| PIZ huffman overflow | vfx-exr/compression/piz/huffman.rs:213 | Open |
+| Fake streaming impl | vfx-compute/streaming.rs:193 | Open |
+| Cache thread safety | vfx-compute/cache.rs | Open |
+
+### High Priority (P1)
+| Issue | Location | Status |
+|-------|----------|--------|
+| ACES Red Mod NaN | vfx-ops/fixed_function.rs:418 | Open |
+| fast_exp2 floor bug | vfx-color/sse_math.rs:80 | Open |
+| 2-channel images | vfx-io/source.rs:131 | Open |
+| Deep tile assertion | vfx-exr/block/chunk.rs:323 | Open |
+| Unused quality arg | vfx-cli/main.rs:287 | Open |
+| V-Log returns Identity | vfx-ocio/builtin_transforms.rs:295 | Open |
+
+### Code Duplication Found
+- **CDL struct**: 6 locations (use vfx_color::Cdl)
+- **Rec.709 luma**: 15+ files (add to vfx-core)
+- **sRGB→XYZ matrix**: 6 locations (use vfx_primaries)
+
+### Architecture Diagrams
+See `DIAGRAMS.md` for visual documentation including:
+- Crate dependency graph
+- CLI processing flow
+- OCIO processor pipeline
+- Deep EXR read path
+- Memory model comparison

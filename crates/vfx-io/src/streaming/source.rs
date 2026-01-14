@@ -124,51 +124,87 @@ impl MemorySource {
     }
 
     /// Reads a single pixel at the given index and converts to RGBA F32.
+    ///
+    /// Channel mapping:
+    /// - 1 channel: grayscale -> R=G=B=Y, A=1.0
+    /// - 2 channels: Y+A -> R=G=B=Y, A from second channel
+    /// - 3 channels: RGB -> R, G, B, A=1.0
+    /// - 4+ channels: RGBA
     #[inline]
     fn read_pixel_f32(&self, idx: usize, channels: usize) -> [f32; 4] {
+        // For 2-channel (Y+A) images, use grayscale + alpha mapping
+        // instead of the generic min() approach which would incorrectly
+        // use alpha channel for G and B
+        let is_gray_alpha = channels == 2;
+        
         match &self.image.data {
             PixelData::U8(data) => {
                 let r = data.get(idx).copied().unwrap_or(0) as f32 / U8_MAX_F32;
-                let g = data.get(idx + 1.min(channels - 1)).copied().unwrap_or(0) as f32 / U8_MAX_F32;
-                let b = data.get(idx + 2.min(channels - 1)).copied().unwrap_or(0) as f32 / U8_MAX_F32;
-                let a = if channels >= MIN_ALPHA_CHANNELS {
-                    data.get(idx + 3).copied().unwrap_or(u8::MAX) as f32 / U8_MAX_F32
+                let (g, b, a) = if is_gray_alpha {
+                    // 2-channel Y+A: R=G=B=Y, A from channel 1
+                    let alpha = data.get(idx + 1).copied().unwrap_or(u8::MAX) as f32 / U8_MAX_F32;
+                    (r, r, alpha)
                 } else {
-                    ALPHA_OPAQUE
+                    let g = data.get(idx + 1.min(channels - 1)).copied().unwrap_or(0) as f32 / U8_MAX_F32;
+                    let b = data.get(idx + 2.min(channels - 1)).copied().unwrap_or(0) as f32 / U8_MAX_F32;
+                    let a = if channels >= MIN_ALPHA_CHANNELS {
+                        data.get(idx + 3).copied().unwrap_or(u8::MAX) as f32 / U8_MAX_F32
+                    } else {
+                        ALPHA_OPAQUE
+                    };
+                    (g, b, a)
                 };
                 [r, g, b, a]
             }
             PixelData::U16(data) => {
                 let r = data.get(idx).copied().unwrap_or(0) as f32 / U16_MAX_F32;
-                let g = data.get(idx + 1.min(channels - 1)).copied().unwrap_or(0) as f32 / U16_MAX_F32;
-                let b = data.get(idx + 2.min(channels - 1)).copied().unwrap_or(0) as f32 / U16_MAX_F32;
-                let a = if channels >= MIN_ALPHA_CHANNELS {
-                    data.get(idx + 3).copied().unwrap_or(u16::MAX) as f32 / U16_MAX_F32
+                let (g, b, a) = if is_gray_alpha {
+                    let alpha = data.get(idx + 1).copied().unwrap_or(u16::MAX) as f32 / U16_MAX_F32;
+                    (r, r, alpha)
                 } else {
-                    ALPHA_OPAQUE
+                    let g = data.get(idx + 1.min(channels - 1)).copied().unwrap_or(0) as f32 / U16_MAX_F32;
+                    let b = data.get(idx + 2.min(channels - 1)).copied().unwrap_or(0) as f32 / U16_MAX_F32;
+                    let a = if channels >= MIN_ALPHA_CHANNELS {
+                        data.get(idx + 3).copied().unwrap_or(u16::MAX) as f32 / U16_MAX_F32
+                    } else {
+                        ALPHA_OPAQUE
+                    };
+                    (g, b, a)
                 };
                 [r, g, b, a]
             }
             PixelData::F32(data) => {
                 let r = data.get(idx).copied().unwrap_or(ALPHA_TRANSPARENT);
-                let g = data.get(idx + 1.min(channels - 1)).copied().unwrap_or(ALPHA_TRANSPARENT);
-                let b = data.get(idx + 2.min(channels - 1)).copied().unwrap_or(ALPHA_TRANSPARENT);
-                let a = if channels >= MIN_ALPHA_CHANNELS {
-                    data.get(idx + 3).copied().unwrap_or(ALPHA_OPAQUE)
+                let (g, b, a) = if is_gray_alpha {
+                    let alpha = data.get(idx + 1).copied().unwrap_or(ALPHA_OPAQUE);
+                    (r, r, alpha)
                 } else {
-                    ALPHA_OPAQUE
+                    let g = data.get(idx + 1.min(channels - 1)).copied().unwrap_or(ALPHA_TRANSPARENT);
+                    let b = data.get(idx + 2.min(channels - 1)).copied().unwrap_or(ALPHA_TRANSPARENT);
+                    let a = if channels >= MIN_ALPHA_CHANNELS {
+                        data.get(idx + 3).copied().unwrap_or(ALPHA_OPAQUE)
+                    } else {
+                        ALPHA_OPAQUE
+                    };
+                    (g, b, a)
                 };
                 [r, g, b, a]
             }
             PixelData::U32(data) => {
                 // U32 is typically used for IDs, not colors - just cast
                 let r = data.get(idx).copied().unwrap_or(0) as f32;
-                let g = data.get(idx + 1.min(channels - 1)).copied().unwrap_or(0) as f32;
-                let b = data.get(idx + 2.min(channels - 1)).copied().unwrap_or(0) as f32;
-                let a = if channels >= MIN_ALPHA_CHANNELS {
-                    data.get(idx + 3).copied().unwrap_or(1) as f32
+                let (g, b, a) = if is_gray_alpha {
+                    let alpha = data.get(idx + 1).copied().unwrap_or(1) as f32;
+                    (r, r, alpha)
                 } else {
-                    ALPHA_OPAQUE
+                    let g = data.get(idx + 1.min(channels - 1)).copied().unwrap_or(0) as f32;
+                    let b = data.get(idx + 2.min(channels - 1)).copied().unwrap_or(0) as f32;
+                    let a = if channels >= MIN_ALPHA_CHANNELS {
+                        data.get(idx + 3).copied().unwrap_or(1) as f32
+                    } else {
+                        ALPHA_OPAQUE
+                    };
+                    (g, b, a)
                 };
                 [r, g, b, a]
             }

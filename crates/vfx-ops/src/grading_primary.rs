@@ -15,10 +15,10 @@
 //! - Linear: For scene-linear footage
 //! - Video: For video/display-referred footage
 
-/// Rec.709 luminance weights for saturation.
-const LUM_R: f32 = 0.2126;
-const LUM_G: f32 = 0.7152;
-const LUM_B: f32 = 0.0722;
+use vfx_core::{REC709_LUMA_B, REC709_LUMA_G, REC709_LUMA_R};
+
+/// Minimum value to prevent division by zero in contrast/exposure/slope.
+const MIN_DIVISOR: f32 = 1e-6;
 
 /// Grading style determines the math used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -242,18 +242,27 @@ impl GradingPrimary {
         // Inverse saturation
         out = self.apply_saturation_inv(out);
         
-        // Inverse gamma
+        // Inverse gamma (clamp to avoid division by zero)
         if !self.is_gamma_identity() {
             let range = self.pivot_white - self.pivot_black;
+            let inv_gamma = [
+                1.0 / gamma[0].abs().max(MIN_DIVISOR),
+                1.0 / gamma[1].abs().max(MIN_DIVISOR),
+                1.0 / gamma[2].abs().max(MIN_DIVISOR),
+            ];
             out = [
-                self.apply_gamma_channel(out[0], 1.0 / gamma[0], range),
-                self.apply_gamma_channel(out[1], 1.0 / gamma[1], range),
-                self.apply_gamma_channel(out[2], 1.0 / gamma[2], range),
+                self.apply_gamma_channel(out[0], inv_gamma[0], range),
+                self.apply_gamma_channel(out[1], inv_gamma[1], range),
+                self.apply_gamma_channel(out[2], inv_gamma[2], range),
             ];
         }
         
-        // Inverse contrast
-        let inv_contrast = [1.0 / contrast[0], 1.0 / contrast[1], 1.0 / contrast[2]];
+        // Inverse contrast (clamp to avoid division by zero)
+        let inv_contrast = [
+            1.0 / contrast[0].abs().max(MIN_DIVISOR),
+            1.0 / contrast[1].abs().max(MIN_DIVISOR),
+            1.0 / contrast[2].abs().max(MIN_DIVISOR),
+        ];
         out[0] = (out[0] - actual_pivot) * inv_contrast[0] + actual_pivot;
         out[1] = (out[1] - actual_pivot) * inv_contrast[1] + actual_pivot;
         out[2] = (out[2] - actual_pivot) * inv_contrast[2] + actual_pivot;
@@ -321,16 +330,24 @@ impl GradingPrimary {
         // Inverse saturation
         out = self.apply_saturation_inv(out);
         
-        // Inverse contrast
+        // Inverse contrast (clamp to avoid division by zero)
         if !self.is_contrast_identity() {
-            let inv_contrast = [1.0 / contrast[0], 1.0 / contrast[1], 1.0 / contrast[2]];
+            let inv_contrast = [
+                1.0 / contrast[0].abs().max(MIN_DIVISOR),
+                1.0 / contrast[1].abs().max(MIN_DIVISOR),
+                1.0 / contrast[2].abs().max(MIN_DIVISOR),
+            ];
             out[0] = (out[0] / actual_pivot).abs().powf(inv_contrast[0]) * out[0].signum() * actual_pivot;
             out[1] = (out[1] / actual_pivot).abs().powf(inv_contrast[1]) * out[1].signum() * actual_pivot;
             out[2] = (out[2] / actual_pivot).abs().powf(inv_contrast[2]) * out[2].signum() * actual_pivot;
         }
         
-        // Inverse exposure
-        let inv_exposure = [1.0 / exposure[0], 1.0 / exposure[1], 1.0 / exposure[2]];
+        // Inverse exposure (clamp to avoid division by zero)
+        let inv_exposure = [
+            1.0 / exposure[0].abs().max(MIN_DIVISOR),
+            1.0 / exposure[1].abs().max(MIN_DIVISOR),
+            1.0 / exposure[2].abs().max(MIN_DIVISOR),
+        ];
         out[0] *= inv_exposure[0];
         out[1] *= inv_exposure[1];
         out[2] *= inv_exposure[2];
@@ -400,18 +417,27 @@ impl GradingPrimary {
         // Inverse saturation
         out = self.apply_saturation_inv(out);
         
-        // Inverse gamma
+        // Inverse gamma (clamp to avoid division by zero)
         if !self.is_gamma_identity() {
             let range = self.pivot_white - self.pivot_black;
+            let inv_gamma = [
+                1.0 / gamma[0].abs().max(MIN_DIVISOR),
+                1.0 / gamma[1].abs().max(MIN_DIVISOR),
+                1.0 / gamma[2].abs().max(MIN_DIVISOR),
+            ];
             out = [
-                self.apply_gamma_channel(out[0], 1.0 / gamma[0], range),
-                self.apply_gamma_channel(out[1], 1.0 / gamma[1], range),
-                self.apply_gamma_channel(out[2], 1.0 / gamma[2], range),
+                self.apply_gamma_channel(out[0], inv_gamma[0], range),
+                self.apply_gamma_channel(out[1], inv_gamma[1], range),
+                self.apply_gamma_channel(out[2], inv_gamma[2], range),
             ];
         }
         
-        // Inverse slope
-        let inv_slope = [1.0 / slope[0], 1.0 / slope[1], 1.0 / slope[2]];
+        // Inverse slope (clamp to avoid division by zero)
+        let inv_slope = [
+            1.0 / slope[0].abs().max(MIN_DIVISOR),
+            1.0 / slope[1].abs().max(MIN_DIVISOR),
+            1.0 / slope[2].abs().max(MIN_DIVISOR),
+        ];
         out[0] = (out[0] - self.pivot_black) * inv_slope[0] + self.pivot_black;
         out[1] = (out[1] - self.pivot_black) * inv_slope[1] + self.pivot_black;
         out[2] = (out[2] - self.pivot_black) * inv_slope[2] + self.pivot_black;
@@ -482,8 +508,10 @@ impl GradingPrimary {
     fn apply_gamma_channel(&self, val: f32, gamma: f32, range: f32) -> f32 {
         let shifted = val - self.pivot_black;
         let sign = shifted.signum();
-        let normalized = shifted.abs() / range;
-        normalized.powf(gamma) * sign * range + self.pivot_black
+        // Clamp range to avoid division by zero
+        let safe_range = range.abs().max(MIN_DIVISOR);
+        let normalized = shifted.abs() / safe_range;
+        normalized.powf(gamma) * sign * safe_range + self.pivot_black
     }
 
     #[inline]
@@ -492,7 +520,7 @@ impl GradingPrimary {
             return rgb;
         }
         
-        let lum = rgb[0] * LUM_R + rgb[1] * LUM_G + rgb[2] * LUM_B;
+        let lum = rgb[0] * REC709_LUMA_R + rgb[1] * REC709_LUMA_G + rgb[2] * REC709_LUMA_B;
         [
             lum + self.saturation * (rgb[0] - lum),
             lum + self.saturation * (rgb[1] - lum),
@@ -507,7 +535,7 @@ impl GradingPrimary {
         }
         
         let inv_sat = 1.0 / self.saturation;
-        let lum = rgb[0] * LUM_R + rgb[1] * LUM_G + rgb[2] * LUM_B;
+        let lum = rgb[0] * REC709_LUMA_R + rgb[1] * REC709_LUMA_G + rgb[2] * REC709_LUMA_B;
         [
             lum + inv_sat * (rgb[0] - lum),
             lum + inv_sat * (rgb[1] - lum),
@@ -659,7 +687,7 @@ mod tests {
         let result = gp.apply(rgb);
 
         // Should be grey (luminance of red)
-        let expected_lum = LUM_R;
+        let expected_lum = REC709_LUMA_R;
         assert!((result[0] - expected_lum).abs() < EPSILON);
         assert!((result[1] - expected_lum).abs() < EPSILON);
         assert!((result[2] - expected_lum).abs() < EPSILON);

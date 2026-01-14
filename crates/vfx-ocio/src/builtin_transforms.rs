@@ -128,6 +128,15 @@ pub const RWG_TO_AP0: [f32; 16] = [
     0.0, 0.0, 0.0, 1.0,
 ];
 
+/// Panasonic V-Gamut to ACES AP0 (with Bradford D65->D60 adaptation).
+/// Computed via: V-Gamut(D65) -> XYZ -> Bradford -> AP0(D60)
+pub const VGAMUT_TO_AP0: [f32; 16] = [
+    0.7245869636, 0.1661761999, 0.1092368365, 0.0,
+    0.0219097584, 0.9843355417, -0.0062452999, 0.0,
+    -0.0096276887, -0.0004312588, 1.0100589475, 0.0,
+    0.0, 0.0, 0.0, 1.0,
+];
+
 // ============================================================================
 // Log Camera Parameters
 // ============================================================================
@@ -253,7 +262,6 @@ pub fn get_builtin(style: &str) -> Option<BuiltinDef> {
         
         // ACEScct/ACEScc to ACES2065-1
         "acesccttoaces20651" | "acesccttoaces2065" => {
-            let _ = logc3_params(); // ACEScct uses Transfer style directly
             Some(BuiltinDef::Chain(vec![
                 BuiltinDef::Transfer { style: TransferStyle::AcesCct },
                 BuiltinDef::Matrix { matrix: AP1_TO_AP0, offset: [0.0; 4] },
@@ -296,8 +304,7 @@ pub fn get_builtin(style: &str) -> Option<BuiltinDef> {
             let (base, lss, lso, lns, lno, lnb, ls) = vlog_params();
             Some(BuiltinDef::Chain(vec![
                 BuiltinDef::LogCamera { base, log_side_slope: lss, log_side_offset: lso, lin_side_slope: lns, lin_side_offset: lno, lin_side_break: lnb, linear_slope: ls },
-                // V-Gamut to AP0 matrix would go here
-                BuiltinDef::Identity, // Placeholder - V-Gamut matrix needed
+                BuiltinDef::Matrix { matrix: VGAMUT_TO_AP0, offset: [0.0; 4] },
             ]))
         }
         

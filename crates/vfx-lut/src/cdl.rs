@@ -27,6 +27,8 @@
 //! - ASC CDL v1.01 Specification
 //! - OpenColorIO CDLParser
 
+use vfx_core::luminance_rec709;
+
 use crate::{LutError, LutResult};
 use quick_xml::events::Event;
 use quick_xml::Reader;
@@ -92,7 +94,7 @@ impl ColorCorrection {
             rgb[i] = v.max(0.0).powf(self.power[i]);
         }
         if (self.saturation - 1.0).abs() > 1e-6 {
-            let luma = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+            let luma = luminance_rec709(*rgb);
             for v in rgb.iter_mut() {
                 *v = luma + (*v - luma) * self.saturation;
             }
@@ -623,7 +625,7 @@ mod tests {
         };
         let mut rgb = [1.0, 0.5, 0.0];
         cc.apply(&mut rgb);
-        let luma = 0.2126 * 1.0 + 0.7152 * 0.5 + 0.0722 * 0.0;
+        let luma = luminance_rec709([1.0, 0.5, 0.0]);
         assert!((rgb[0] - luma).abs() < 1e-6);
         assert!((rgb[1] - luma).abs() < 1e-6);
         assert!((rgb[2] - luma).abs() < 1e-6);

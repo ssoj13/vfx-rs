@@ -60,7 +60,7 @@ pub use colorspace::*;
 pub use error::*;
 pub use format::*;
 pub use image::*;
-pub use pixel::*;
+pub use pixel::{luminance_rec709, PixelFormat, Rgb, Rgba, REC709_LUMA, REC709_LUMA_B, REC709_LUMA_G, REC709_LUMA_R};
 pub use rect::*;
 pub use spec::*;
 
@@ -81,7 +81,10 @@ pub mod prelude {
         Aggregate, BaseType, BitDepth, DataFormat, TypeDesc, VecSemantics,
     };
     pub use crate::image::{Image, ImageView, ImageViewMut};
-    pub use crate::pixel::{PixelFormat, Rgb, Rgba};
+    pub use crate::pixel::{
+        luminance_rec709, PixelFormat, Rgb, Rgba, REC709_LUMA, REC709_LUMA_B,
+        REC709_LUMA_G, REC709_LUMA_R,
+    };
     pub use crate::rect::{Rect, Roi, Roi3D};
     pub use crate::spec::ImageSpec;
 }

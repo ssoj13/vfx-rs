@@ -84,7 +84,7 @@ impl Format {
     /// Detects format from file magic bytes.
     pub fn from_magic_bytes<P: AsRef<Path>>(path: P) -> IoResult<Self> {
         let mut file = File::open(path)?;
-        let mut header = [0u8; 8];
+        let mut header = [0u8; 12];  // 12 bytes needed for HEIF/JP2 detection
         
         let bytes_read = file.read(&mut header)?;
         if bytes_read < 4 {

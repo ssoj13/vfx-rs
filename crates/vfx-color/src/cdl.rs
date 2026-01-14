@@ -49,6 +49,8 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
 
+use vfx_core::{REC709_LUMA_B, REC709_LUMA_G, REC709_LUMA_R};
+
 use crate::sse_math::fast_pow;
 use crate::{ColorError, ColorResult};
 
@@ -200,13 +202,10 @@ impl Cdl {
         // Saturation (Rec. 709 luma weights)
         // OCIO-compatible order: multiply then sum (matches CDLOpCPU.cpp ApplySaturation)
         if (self.saturation - 1.0).abs() > 1e-6 {
-            const LUMA_R: f32 = 0.2126;
-            const LUMA_G: f32 = 0.7152;
-            const LUMA_B: f32 = 0.0722;
             let src = *rgb; // save original
-            let wr = src[0] * LUMA_R;
-            let wg = src[1] * LUMA_G;
-            let wb = src[2] * LUMA_B;
+            let wr = src[0] * REC709_LUMA_R;
+            let wg = src[1] * REC709_LUMA_G;
+            let wb = src[2] * REC709_LUMA_B;
             let luma = wr + wg + wb;
             rgb[0] = luma + self.saturation * (src[0] - luma);
             rgb[1] = luma + self.saturation * (src[1] - luma);
@@ -244,13 +243,10 @@ impl Cdl {
         // Saturation (no clamp in this mode)
         // OCIO-compatible order: multiply then sum (matches CDLOpCPU.cpp ApplySaturation)
         if (self.saturation - 1.0).abs() > 1e-6 {
-            const LUMA_R: f32 = 0.2126;
-            const LUMA_G: f32 = 0.7152;
-            const LUMA_B: f32 = 0.0722;
             let src = *rgb; // save original
-            let wr = src[0] * LUMA_R;
-            let wg = src[1] * LUMA_G;
-            let wb = src[2] * LUMA_B;
+            let wr = src[0] * REC709_LUMA_R;
+            let wg = src[1] * REC709_LUMA_G;
+            let wb = src[2] * REC709_LUMA_B;
             let luma = wr + wg + wb;
             rgb[0] = luma + self.saturation * (src[0] - luma);
             rgb[1] = luma + self.saturation * (src[1] - luma);

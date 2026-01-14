@@ -189,9 +189,11 @@ mod exr_streaming {
 
     /// Streaming source for EXR files.
     ///
-    /// Reads tiles/scanlines on demand without loading entire file.
+    /// **Note:** Currently loads entire file into memory. True streaming
+    /// (tile/scanline on-demand loading) is planned for a future version.
+    /// For very large files, consider using `vfx_io::read_tiled()` instead.
     pub struct ExrStreamingSource {
-        // For now, we load the full image but could optimize later
+        // TODO: Implement true streaming with tile/scanline on-demand loading
         data: Vec<f32>,
         width: u32,
         height: u32,

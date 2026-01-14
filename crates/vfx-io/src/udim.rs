@@ -172,11 +172,6 @@ impl UdimResolver {
             return Ok(());
         }
 
-        // Build regex pattern for matching
-        let _pattern_regex = UDIM_MARKERS
-            .iter()
-            .fold(filename.clone(), |acc, m| acc.replace(m, r"(\d{4})"));
-
         // Scan directory
         for entry in std::fs::read_dir(parent)? {
             let entry = entry?;

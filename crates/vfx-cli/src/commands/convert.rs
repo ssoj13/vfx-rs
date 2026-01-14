@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 #[allow(unused_imports)]
 use tracing::{debug, info, trace};
 use vfx_io::exr::{Compression, ExrReader, ExrWriter, ExrWriterOptions};
+use vfx_io::jpeg::{JpegWriter, JpegWriterOptions};
 use vfx_io::{Format, FormatWriter, PixelFormat};
 
 /// Runs the convert command.
@@ -56,7 +57,19 @@ pub fn run(args: ConvertArgs, verbose: u8) -> Result<()> {
         image = image.convert_to(target_format);
     }
 
-    super::save_image(&args.output, &image)?;
+    // Use JPEG with quality setting if specified
+    if output_format == Format::Jpeg && args.quality.is_some() {
+        let quality = args.quality.unwrap();
+        debug!(quality, "Writing JPEG with custom quality");
+        let writer = JpegWriter::with_options(JpegWriterOptions {
+            quality,
+            ..Default::default()
+        });
+        writer.write(&args.output, &image)
+            .with_context(|| format!("Failed to write JPEG: {}", args.output.display()))?;
+    } else {
+        super::save_image(&args.output, &image)?;
+    }
 
     if verbose > 0 {
         println!("Done.");

@@ -85,6 +85,19 @@ pub struct CachedRegion<T> {
 /// LRU cache for GPU regions.
 ///
 /// Generic over handle type `T` (e.g., CpuImage, WgpuImage).
+///
+/// # Thread Safety
+///
+/// This cache is **NOT thread-safe**. If you need concurrent access from
+/// multiple threads, wrap it in `std::sync::Mutex` or `parking_lot::RwLock`.
+///
+/// ```ignore
+/// use std::sync::Mutex;
+/// let cache = Mutex::new(RegionCache::new());
+/// // Access from multiple threads:
+/// let mut guard = cache.lock().unwrap();
+/// guard.get(&key);
+/// ```
 pub struct RegionCache<T> {
     /// Cached regions by key.
     regions: HashMap<RegionKey, CachedRegion<T>>,

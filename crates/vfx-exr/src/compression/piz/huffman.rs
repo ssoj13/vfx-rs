@@ -210,8 +210,9 @@ fn decode_with_tables(
         if let Code::Short(short_code) = code {
             if short_code.len() > code_bit_count {
                 return Err(Error::invalid("code"));
-            }; // FIXME why does this happen??
-            code_bit_count -= short_code.len(); // FIXME may throw "attempted to subtract with overflow"
+            }
+            // Safe: checked above that short_code.len() <= code_bit_count
+            code_bit_count = code_bit_count.saturating_sub(short_code.len());
 
             read_code_into_vec(
                 short_code.value,

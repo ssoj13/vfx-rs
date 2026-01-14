@@ -166,8 +166,8 @@ impl TextureSystem {
         let mip_level = compute_mip_level(&info, dsdx, dtdx, dsdy, dtdy);
 
         match opts.filter {
-            FilterMode::Nearest => self.sample_nearest(path, &info, s, t, mip_level, opts),
-            FilterMode::Bilinear => self.sample_bilinear(path, &info, s, t, mip_level, opts),
+            FilterMode::Nearest => self.sample_nearest(path, &info, s, t, mip_level as u32, opts),
+            FilterMode::Bilinear => self.sample_bilinear(path, &info, s, t, mip_level as u32, opts),
             FilterMode::Trilinear => self.sample_trilinear(path, &info, s, t, mip_level, opts),
             FilterMode::Anisotropic => {
                 // Simplified: use trilinear for now
@@ -227,20 +227,21 @@ impl TextureSystem {
 
     /// Trilinear interpolation (bilinear + MIP blending).
     fn sample_trilinear(&self, path: &Path, info: &CachedImageInfo, s: f32, t: f32,
-                        mip_f: u32, opts: &TextureOptions) -> IoResult<[f32; 4]> {
-        // For proper trilinear, mip should be f32; we'll use fractional part
-        let mip0 = mip_f;
+                        mip_f: f32, opts: &TextureOptions) -> IoResult<[f32; 4]> {
+        // Floor and ceiling MIP levels
+        let mip0 = mip_f.floor() as u32;
         let mip1 = (mip0 + 1).min(info.mip_levels.saturating_sub(1));
 
-        if mip0 == mip1 {
+        // If at the highest level, just do bilinear
+        if mip0 == mip1 || mip0 >= info.mip_levels.saturating_sub(1) {
             return self.sample_bilinear(path, info, s, t, mip0, opts);
         }
 
         let c0 = self.sample_bilinear(path, info, s, t, mip0, opts)?;
         let c1 = self.sample_bilinear(path, info, s, t, mip1, opts)?;
 
-        // Blend factor (would be fractional part of mip level)
-        let blend = 0.5; // Simplified
+        // Blend factor is fractional part of mip level
+        let blend = mip_f.fract();
 
         let mut result = [0.0f32; 4];
         for i in 0..4 {
@@ -636,7 +637,8 @@ fn wrap_coord(coord: i32, size: i32, mode: WrapMode) -> i32 {
 }
 
 /// Computes MIP level from texture derivatives.
-fn compute_mip_level(info: &CachedImageInfo, dsdx: f32, dtdx: f32, dsdy: f32, dtdy: f32) -> u32 {
+/// Returns fractional mip level for trilinear interpolation.
+fn compute_mip_level(info: &CachedImageInfo, dsdx: f32, dtdx: f32, dsdy: f32, dtdy: f32) -> f32 {
     // Compute the maximum rate of change in texture space
     let dudx = dsdx * info.width as f32;
     let dvdx = dtdx * info.height as f32;
@@ -648,9 +650,9 @@ fn compute_mip_level(info: &CachedImageInfo, dsdx: f32, dtdx: f32, dsdy: f32, dt
     let len_y = (dudy * dudy + dvdy * dvdy).sqrt();
     let max_len = len_x.max(len_y);
 
-    // MIP level is log2 of texel footprint
+    // MIP level is log2 of texel footprint (fractional for trilinear)
     let level = max_len.max(1.0).log2();
-    (level.round() as u32).min(info.mip_levels.saturating_sub(1))
+    level.clamp(0.0, (info.mip_levels.saturating_sub(1)) as f32)
 }
 
 #[cfg(test)]
