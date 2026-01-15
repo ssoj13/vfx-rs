@@ -320,11 +320,10 @@ impl CompressedDeepScanLineBlock {
 impl CompressedDeepTileBlock {
     /// Without validation, write this instance to the byte stream.
     pub fn write<W: Write>(&self, write: &mut W) -> UnitResult {
-        debug_assert_ne!(
-            self.compressed_sample_data_le.len(),
-            0,
-            "empty blocks should not be put in the file bug"
-        );
+        // Validate that sample data is not empty - empty data corrupts the EXR file
+        if self.compressed_sample_data_le.is_empty() {
+            return Err(Error::invalid("empty deep sample data cannot be written to file"));
+        }
 
         self.coordinates.write(write)?;
         u64::write_le(self.compressed_pixel_offset_table.len() as u64, write)?;

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Args;
 
+use vfx_core::pixel::{REC709_LUMA_R, REC709_LUMA_G, REC709_LUMA_B};
 use vfx_io::ImageData;
 
 use super::{load_image_layer, save_image_layer, ensure_color_processing};
@@ -89,7 +90,7 @@ pub fn run(args: GradeArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
 
         // Apply saturation
         if (saturation - 1.0).abs() > 0.001 {
-            let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            let luma = REC709_LUMA_R * r + REC709_LUMA_G * g + REC709_LUMA_B * b;
             chunk[0] = luma + (r - luma) * saturation;
             if channels > 1 { chunk[1] = luma + (g - luma) * saturation; }
             if channels > 2 { chunk[2] = luma + (b - luma) * saturation; }

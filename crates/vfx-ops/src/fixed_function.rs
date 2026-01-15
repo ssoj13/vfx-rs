@@ -8,6 +8,8 @@
 //! - ACES Glow (1.0) - glow effect based on saturation
 //! - REC.2100 Surround - HDR surround correction
 
+use vfx_core::pixel::{REC709_LUMA_R, REC709_LUMA_G, REC709_LUMA_B};
+
 // ============================================================================
 // XYZ <-> xyY (CIE 1931 chromaticity)
 // ============================================================================
@@ -1465,10 +1467,6 @@ pub enum HsyVariant {
     Vid,
 }
 
-/// BT.709 luma coefficients
-const LUMA_R: f32 = 0.2126;
-const LUMA_G: f32 = 0.7152;
-const LUMA_B: f32 = 0.0722;
 
 /// Convert RGB to HSY (Hue-Saturation-Luma).
 /// 
@@ -1484,7 +1482,7 @@ pub fn rgb_to_hsy(rgb: [f32; 3], variant: HsyVariant) -> [f32; 3] {
     let rgb_max = red.max(grn).max(blu);
     
     // BT.709 luma
-    let luma = LUMA_R * red + LUMA_G * grn + LUMA_B * blu;
+    let luma = REC709_LUMA_R * red + REC709_LUMA_G * grn + REC709_LUMA_B * blu;
     
     // Distance from luma (chroma-like)
     let rm = red - luma;
@@ -1557,7 +1555,7 @@ pub fn hsy_to_rgb(hsy: [f32; 3], variant: HsyVariant) -> [f32; 3] {
     let blu = (2.0 - (hue - 4.0).abs()).clamp(0.0, 1.0);
     
     // Scale to match target luma
-    let curr_y = LUMA_R * red + LUMA_G * grn + LUMA_B * blu;
+    let curr_y = REC709_LUMA_R * red + REC709_LUMA_G * grn + REC709_LUMA_B * blu;
     let scale = if curr_y.abs() > 1e-10 { luma / curr_y } else { 0.0 };
     let (red, grn, blu) = (red * scale, grn * scale, blu * scale);
     

@@ -97,7 +97,8 @@ fn shuffle_channels(input: &ImageData, pattern: &str) -> Result<ImageData> {
             '0' => None, // Black
             '1' => None, // White (handled separately)
             c if c.is_ascii_digit() => {
-                let idx = c.to_digit(10).unwrap() as usize;
+                let idx = c.to_digit(10)
+                    .ok_or_else(|| anyhow::anyhow!("Invalid channel digit: '{}'", c))? as usize;
                 if idx >= in_channels {
                     bail!("Channel index {} out of range (image has {} channels)", idx, in_channels);
                 }

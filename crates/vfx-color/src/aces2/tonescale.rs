@@ -37,12 +37,31 @@ pub struct TonescaleParams {
     pub log_peak: f32,
 }
 
+/// Minimum allowed peak luminance (cd/m²).
+/// Below this value, tonescale calculations become numerically unstable.
+const MIN_PEAK_LUMINANCE: f32 = 1.0;
+
+/// Maximum allowed peak luminance (cd/m²).
+/// Above this value is beyond any practical display capability.
+const MAX_PEAK_LUMINANCE: f32 = 100_000.0;
+
 impl TonescaleParams {
     /// Initialize tonescale parameters for given peak luminance.
     ///
     /// # Arguments
-    /// * `peak_luminance` - Display peak luminance in cd/m² (nits)
+    /// * `peak_luminance` - Display peak luminance in cd/m² (nits).
+    ///   Must be in range [1.0, 100000.0].
+    ///
+    /// # Panics
+    /// Panics if `peak_luminance` is outside the valid range.
     pub fn new(peak_luminance: f32) -> Self {
+        // Validate input to prevent division by zero and numerical instability
+        assert!(
+            peak_luminance >= MIN_PEAK_LUMINANCE && peak_luminance <= MAX_PEAK_LUMINANCE,
+            "peak_luminance must be in range [{}, {}], got {}",
+            MIN_PEAK_LUMINANCE, MAX_PEAK_LUMINANCE, peak_luminance
+        );
+        
         // Normalized peak
         let n = peak_luminance / REFERENCE_LUMINANCE;
         let n_r = REFERENCE_LUMINANCE / peak_luminance;
@@ -120,9 +139,25 @@ pub fn aces_tonescale_fwd(y: f32, p: &TonescaleParams) -> f32 {
 pub fn aces_tonescale_inv(y: f32, p: &TonescaleParams) -> f32 {
     let y_ts_norm = y / REFERENCE_LUMINANCE;
     let z = y_ts_norm.max(0.0).min(p.inverse_limit);
+    
+    // Protect against division by zero when z is very small
+    if z < 1e-10 {
+        return 0.0;
+    }
+    
     let f = (z + (z * (4.0 * p.t_1 + z)).sqrt()) / 2.0;
-    let y_out = p.s_2 / ((p.m_2 / f).powf(1.0 / p.g) - 1.0);
-    y_out
+    
+    // Protect against division by zero in the final calculation
+    // This can happen when f approaches m_2 (denominator approaches 0)
+    let ratio = p.m_2 / f.max(1e-10);
+    let denom = ratio.powf(1.0 / p.g) - 1.0;
+    
+    if denom.abs() < 1e-10 {
+        // At the limit, return a large but finite value
+        return p.s_2 * 1e6;
+    }
+    
+    p.s_2 / denom
 }
 
 /// Apply tonescale to J (lightness) forward.
@@ -233,5 +268,45 @@ mod tests {
         // HDR should have higher peak
         assert!(hdr.n > sdr.n, "HDR peak should be higher than SDR");
         assert!(hdr.m_2 > sdr.m_2, "HDR m_2 should be higher");
+    }
+
+    #[test]
+    fn test_tonescale_inv_zero_input() {
+        let p = TonescaleParams::sdr();
+        // Should not panic, should return 0
+        let result = aces_tonescale_inv(0.0, &p);
+        assert!(result.is_finite(), "Inverse tonescale should return finite value for zero input");
+        assert!(result.abs() < 1e-6, "Inverse tonescale of zero should be near zero");
+    }
+
+    #[test]
+    fn test_tonescale_inv_near_limit() {
+        let p = TonescaleParams::sdr();
+        // Test near the inverse limit - should not panic or return NaN/Inf
+        let near_limit = p.inverse_limit * REFERENCE_LUMINANCE * 0.9999;
+        let result = aces_tonescale_inv(near_limit, &p);
+        assert!(result.is_finite(), "Inverse tonescale should return finite value near limit");
+    }
+
+    #[test]
+    #[should_panic(expected = "peak_luminance must be in range")]
+    fn test_invalid_peak_luminance_zero() {
+        let _ = TonescaleParams::new(0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "peak_luminance must be in range")]
+    fn test_invalid_peak_luminance_negative() {
+        let _ = TonescaleParams::new(-100.0);
+    }
+
+    #[test]
+    fn test_valid_peak_luminance_boundary() {
+        // Should not panic at valid boundaries
+        let min_valid = TonescaleParams::new(1.0);
+        assert!(min_valid.n > 0.0);
+        
+        let max_valid = TonescaleParams::new(100_000.0);
+        assert!(max_valid.n > 0.0);
     }
 }

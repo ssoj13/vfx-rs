@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 
 use egui::Color32;
+use vfx_core::pixel::{REC709_LUMA_R, REC709_LUMA_G, REC709_LUMA_B};
 use vfx_io::{ImageData, LayeredImage};
 use vfx_ocio::Config;
 
@@ -27,10 +28,6 @@ const FIT_MARGIN: f32 = 0.95;
 const ZOOM_MIN: f32 = 0.1;
 const ZOOM_MAX: f32 = 100.0;
 
-/// Rec.709 luminance coefficients
-const LUMA_R: f32 = 0.2126;
-const LUMA_G: f32 = 0.7152;
-const LUMA_B: f32 = 0.0722;
 
 /// Worker thread handler.
 pub struct ViewerHandler {
@@ -411,7 +408,7 @@ impl ViewerHandler {
                     let g = if channels > 1 { src[i * channels + 1] } else { r };
                     let b = if channels > 2 { src[i * channels + 2] } else { r };
                     // Rec.709 luminance
-                    let luma = LUMA_R * r + LUMA_G * g + LUMA_B * b;
+                    let luma = REC709_LUMA_R * r + REC709_LUMA_G * g + REC709_LUMA_B * b;
                     out[i * 3] = luma;
                     out[i * 3 + 1] = luma;
                     out[i * 3 + 2] = luma;
@@ -612,7 +609,7 @@ impl ViewerHandler {
             let bin_b = (b.clamp(0.0, 1.0) * 255.0) as usize;
 
             // Rec.709 luminance
-            let luma = LUMA_R * r + LUMA_G * g + LUMA_B * b;
+            let luma = REC709_LUMA_R * r + REC709_LUMA_G * g + REC709_LUMA_B * b;
             let bin_l = (luma.clamp(0.0, 1.0) * 255.0) as usize;
 
             counts_r[bin_r.min(255)] += 1;
@@ -658,7 +655,7 @@ impl ViewerHandler {
                 let r = pixels[i * channels];
                 let g = if channels > 1 { pixels[i * channels + 1] } else { r };
                 let b = if channels > 2 { pixels[i * channels + 2] } else { r };
-                let luma = LUMA_R * r + LUMA_G * g + LUMA_B * b;
+                let luma = REC709_LUMA_R * r + REC709_LUMA_G * g + REC709_LUMA_B * b;
 
                 // Map x to waveform column
                 let col = (x * WAVEFORM_WIDTH / w).min(WAVEFORM_WIDTH - 1);

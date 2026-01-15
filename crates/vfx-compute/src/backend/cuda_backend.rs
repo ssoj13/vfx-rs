@@ -81,7 +81,7 @@ __global__ void cdl_kernel(
     float g = powf(fmaxf(src[base + 1] * slope_g + offset_g, 0.0f), power_g);
     float b = powf(fmaxf(src[base + 2] * slope_b + offset_b, 0.0f), power_b);
 
-    // Saturation
+    // Saturation (Rec.709 luma coefficients - see vfx_core::pixel::REC709_LUMA_*)
     if (saturation != 1.0f) {
         float luma = 0.2126f * r + 0.7152f * g + 0.0722f * b;
         r = luma + saturation * (r - luma);

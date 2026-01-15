@@ -52,6 +52,8 @@
 //! - [CLF Specification](https://acescentral.com/clf/)
 //! - [S-2014-006 Common LUT Format](https://github.com/ampas/CLF)
 
+use vfx_core::pixel::{REC709_LUMA_R, REC709_LUMA_G, REC709_LUMA_B};
+
 use crate::{Interpolation, Lut1D, Lut3D, LutError, LutResult};
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::{Reader, Writer};
@@ -135,7 +137,7 @@ impl CdlParams {
 
         // Saturation (Rec. 709 luma)
         if (self.saturation - 1.0).abs() > 1e-6 {
-            let luma = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+            let luma = REC709_LUMA_R * rgb[0] + REC709_LUMA_G * rgb[1] + REC709_LUMA_B * rgb[2];
             for v in rgb.iter_mut() {
                 *v = luma + (*v - luma) * self.saturation;
             }

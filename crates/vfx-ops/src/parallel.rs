@@ -34,7 +34,21 @@ pub fn box_blur(
     channels: usize,
     radius: usize,
 ) -> OpsResult<Vec<f32>> {
-    let expected = width * height * channels;
+    // Validate dimensions
+    if width == 0 || height == 0 || channels == 0 {
+        return Err(OpsError::InvalidDimensions(
+            "width, height, and channels must be > 0".into(),
+        ));
+    }
+    
+    // Check for overflow in size calculation
+    let expected = width
+        .checked_mul(height)
+        .and_then(|v| v.checked_mul(channels))
+        .ok_or_else(|| OpsError::InvalidDimensions(
+            "image dimensions overflow".into(),
+        ))?;
+    
     if src.len() != expected {
         return Err(OpsError::InvalidDimensions(format!(
             "expected {} pixels, got {}",
@@ -42,6 +56,14 @@ pub fn box_blur(
             src.len()
         )));
     }
+    
+    // Validate radius - kernel_size = 2 * radius + 1, must not overflow
+    let _kernel_size = radius
+        .checked_mul(2)
+        .and_then(|v| v.checked_add(1))
+        .ok_or_else(|| OpsError::InvalidDimensions(
+            "radius too large, causes overflow".into(),
+        ))?;
 
     let temp = blur_horizontal_par(src, width, height, channels, radius);
     let result = blur_vertical_par(&temp, width, height, channels, radius);
@@ -90,6 +112,8 @@ fn blur_horizontal_par(
 }
 
 /// Parallel vertical blur pass.
+/// 
+/// Uses transpose-blur-transpose approach for safe parallel processing.
 fn blur_vertical_par(
     src: &[f32],
     width: usize,
@@ -97,39 +121,37 @@ fn blur_vertical_par(
     channels: usize,
     radius: usize,
 ) -> Vec<f32> {
-    let kernel_size = 2 * radius + 1;
-    let inv_size = 1.0 / kernel_size as f32;
+    // Transpose so columns become rows (enables safe parallel row processing)
+    let transposed = transpose(src, width, height, channels);
+    
+    // Apply horizontal blur on transposed data (effectively vertical blur)
+    let blurred = blur_horizontal_par(&transposed, height, width, channels, radius);
+    
+    // Transpose back to original orientation
+    transpose(&blurred, height, width, channels)
+}
 
-    let dst = vec![0.0f32; width * height * channels];
-
-    // Process columns in parallel
-    (0..width).into_par_iter().for_each(|x| {
-        for c in 0..channels {
-            let mut sum = 0.0f32;
-
-            // Initialize window
-            for ky in 0..=radius {
-                let sy = ky.min(height - 1);
-                sum += src[(sy * width + x) * channels + c];
-            }
-            sum += src[x * channels + c] * radius as f32;
-
+/// Transpose image data: rows become columns.
+/// 
+/// For image of size (width, height) with C channels:
+/// Input:  pixel at (x, y) is at index (y * width + x) * C
+/// Output: pixel at (x, y) is at index (x * height + y) * C
+fn transpose(src: &[f32], width: usize, height: usize, channels: usize) -> Vec<f32> {
+    let mut dst = vec![0.0f32; width * height * channels];
+    
+    // Process rows in parallel
+    dst.par_chunks_mut(height * channels)
+        .enumerate()
+        .for_each(|(x, col)| {
             for y in 0..height {
-                // SAFETY: Each column is processed independently
-                unsafe {
-                    let ptr = dst.as_ptr() as *mut f32;
-                    *ptr.add((y * width + x) * channels + c) = sum * inv_size;
+                let src_idx = (y * width + x) * channels;
+                let dst_idx = y * channels;
+                for c in 0..channels {
+                    col[dst_idx + c] = src[src_idx + c];
                 }
-
-                let top = (y as isize - radius as isize).max(0) as usize;
-                let bottom = (y + radius + 1).min(height - 1);
-
-                sum -= src[(top * width + x) * channels + c];
-                sum += src[(bottom * width + x) * channels + c];
             }
-        }
-    });
-
+        });
+    
     dst
 }
 

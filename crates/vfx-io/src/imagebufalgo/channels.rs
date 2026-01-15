@@ -192,9 +192,10 @@ pub fn channel_append_into(dst: &mut ImageBuf, a: &ImageBuf, b: &ImageBuf, roi: 
 ///
 /// ```ignore
 /// use vfx_io::imagebufalgo::channel_sum;
+/// use vfx_core::pixel::REC709_LUMA;  // [0.2126, 0.7152, 0.0722]
 ///
-/// // Compute luminance from RGB
-/// let luma = channel_sum(&rgb, &[0.2126, 0.7152, 0.0722], None);
+/// // Compute luminance from RGB using Rec.709 coefficients
+/// let luma = channel_sum(&rgb, &REC709_LUMA, None);
 /// ```
 pub fn channel_sum(src: &ImageBuf, weights: &[f32], roi: Option<Roi3D>) -> ImageBuf {
     let roi = roi.unwrap_or_else(|| src.roi());

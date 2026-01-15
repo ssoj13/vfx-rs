@@ -22,6 +22,7 @@ categories = ["graphics", "multimedia::images", "visualization"]
 
 [dependencies]
 # Internal crates
+vfx-core = { path = "../vfx-core" }
 vfx-io = { path = "../vfx-io" }
 vfx-ocio = { path = "../vfx-ocio" }
 

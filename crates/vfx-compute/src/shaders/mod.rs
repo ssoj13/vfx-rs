@@ -63,7 +63,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var g = pow(max(src[base + 1] * cdl.slope.y + cdl.offset.y, 0.0), cdl.power.y);
     var b = pow(max(src[base + 2] * cdl.slope.z + cdl.offset.z, 0.0), cdl.power.z);
 
-    // Saturation
+    // Saturation (Rec.709 luma coefficients - see vfx_core::pixel::REC709_LUMA_*)
     if cdl.saturation != 1.0 {
         let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
         r = luma + cdl.saturation * (r - luma);

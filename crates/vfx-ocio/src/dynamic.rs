@@ -23,6 +23,8 @@
 //! dynamic.apply_rgb(&mut pixels);
 //! ```
 
+use vfx_core::pixel::{REC709_LUMA_R, REC709_LUMA_G, REC709_LUMA_B};
+
 use crate::processor::Processor;
 
 /// Dynamic property types that can be adjusted at runtime.
@@ -199,7 +201,7 @@ impl DynamicProcessor {
 
         // Saturation
         if (self.saturation - 1.0).abs() > 1e-6 {
-            let luma = 0.2126 * pixel[0] + 0.7152 * pixel[1] + 0.0722 * pixel[2];
+            let luma = REC709_LUMA_R * pixel[0] + REC709_LUMA_G * pixel[1] + REC709_LUMA_B * pixel[2];
             pixel[0] = luma + (pixel[0] - luma) * self.saturation;
             pixel[1] = luma + (pixel[1] - luma) * self.saturation;
             pixel[2] = luma + (pixel[2] - luma) * self.saturation;
@@ -423,8 +425,8 @@ mod tests {
         let mut pixels = [[1.0_f32, 0.0, 0.0]];
         dynamic.apply_rgb(&mut pixels);
 
-        // All channels should be equal (luma value)
-        let luma = 0.2126;
+        // All channels should be equal (luma value of pure red)
+        let luma = REC709_LUMA_R;
         assert!((pixels[0][0] - luma).abs() < 0.001);
         assert!((pixels[0][1] - luma).abs() < 0.001);
         assert!((pixels[0][2] - luma).abs() < 0.001);

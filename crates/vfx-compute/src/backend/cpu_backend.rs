@@ -2,6 +2,8 @@
 
 use rayon::prelude::*;
 
+use vfx_core::pixel::{REC709_LUMA_R, REC709_LUMA_G, REC709_LUMA_B};
+
 use super::GpuLimits;
 use super::gpu_primitives::{ImageHandle, GpuPrimitives, AsAny};
 use crate::{ComputeError, ComputeResult};
@@ -119,7 +121,7 @@ impl GpuPrimitives for CpuPrimitives {
                 let mut b = (inp[2] * slope[2] + offset[2]).max(0.0).powf(power[2]);
 
                 if sat != 1.0 {
-                    let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    let luma = REC709_LUMA_R * r + REC709_LUMA_G * g + REC709_LUMA_B * b;
                     r = luma + sat * (r - luma);
                     g = luma + sat * (g - luma);
                     b = luma + sat * (b - luma);

@@ -13,6 +13,7 @@
 
 use crate::imagebuf::{ImageBuf, InitializePixels, WrapMode};
 use vfx_core::{ImageSpec, Roi3D};
+use vfx_core::pixel::{REC709_LUMA_R, REC709_LUMA_G, REC709_LUMA_B};
 
 // ============================================================================
 // Premultiply / Unpremultiply
@@ -185,10 +186,6 @@ pub fn saturate_into(
     let roi = roi.unwrap_or_else(|| src.roi());
     let nch = dst.nchannels() as usize;
 
-    // Luminance weights (Rec. 709)
-    const LUM_R: f32 = 0.2126;
-    const LUM_G: f32 = 0.7152;
-    const LUM_B: f32 = 0.0722;
 
     let mut pixel = vec![0.0f32; nch];
 
@@ -202,7 +199,7 @@ pub fn saturate_into(
                 let g = pixel.get(firstchannel + 1).copied().unwrap_or(0.0);
                 let b = pixel.get(firstchannel + 2).copied().unwrap_or(0.0);
 
-                let lum = r * LUM_R + g * LUM_G + b * LUM_B;
+                let lum = r * REC709_LUMA_R + g * REC709_LUMA_G + b * REC709_LUMA_B;
 
                 // Interpolate between luminance and original color
                 if firstchannel < nch {
@@ -411,10 +408,6 @@ pub fn color_map_into(
     let roi = roi.unwrap_or_else(|| src.roi());
     let src_nch = src.nchannels() as usize;
 
-    // Luminance weights for computing grayscale
-    const LUM_R: f32 = 0.2126;
-    const LUM_G: f32 = 0.7152;
-    const LUM_B: f32 = 0.0722;
 
     let mut src_pixel = vec![0.0f32; src_nch];
     let mut dst_pixel = [0.0f32; 3];
@@ -430,7 +423,7 @@ pub fn color_map_into(
                     let r = src_pixel.first().copied().unwrap_or(0.0);
                     let g = src_pixel.get(1).copied().unwrap_or(r);
                     let b = src_pixel.get(2).copied().unwrap_or(r);
-                    r * LUM_R + g * LUM_G + b * LUM_B
+                    r * REC709_LUMA_R + g * REC709_LUMA_G + b * REC709_LUMA_B
                 } else {
                     src_pixel.get(srcchannel as usize).copied().unwrap_or(0.0)
                 };
@@ -693,11 +686,6 @@ pub fn rangecompress_into(
     let roi = roi.unwrap_or_else(|| src.roi());
     let nch = dst.nchannels() as usize;
 
-    // Luminance weights
-    const LUM_R: f32 = 0.2126;
-    const LUM_G: f32 = 0.7152;
-    const LUM_B: f32 = 0.0722;
-
     let mut pixel = vec![0.0f32; nch];
 
     for z in roi.zbegin..roi.zend {
@@ -710,7 +698,7 @@ pub fn rangecompress_into(
                     let r = pixel[0];
                     let g = pixel[1];
                     let b = pixel[2];
-                    let lum = r * LUM_R + g * LUM_G + b * LUM_B;
+                    let lum = r * REC709_LUMA_R + g * REC709_LUMA_G + b * REC709_LUMA_B;
 
                     if lum > 0.0 {
                         let compressed_lum = range_compress_value(lum);
@@ -751,10 +739,6 @@ pub fn rangeexpand_into(
     let roi = roi.unwrap_or_else(|| src.roi());
     let nch = dst.nchannels() as usize;
 
-    const LUM_R: f32 = 0.2126;
-    const LUM_G: f32 = 0.7152;
-    const LUM_B: f32 = 0.0722;
-
     let mut pixel = vec![0.0f32; nch];
 
     for z in roi.zbegin..roi.zend {
@@ -766,7 +750,7 @@ pub fn rangeexpand_into(
                     let r = pixel[0];
                     let g = pixel[1];
                     let b = pixel[2];
-                    let lum = r * LUM_R + g * LUM_G + b * LUM_B;
+                    let lum = r * REC709_LUMA_R + g * REC709_LUMA_G + b * REC709_LUMA_B;
 
                     if lum > 0.0 && lum < 1.0 {
                         let expanded_lum = range_expand_value(lum);

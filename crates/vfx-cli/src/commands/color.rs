@@ -7,6 +7,7 @@ use crate::ColorArgs;
 #[allow(unused_imports)]
 use tracing::{debug, info, trace};
 use anyhow::Result;
+use vfx_core::pixel::{REC709_LUMA_R, REC709_LUMA_G, REC709_LUMA_B};
 use vfx_io::ImageData;
 
 pub fn run(args: ColorArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
@@ -83,7 +84,7 @@ fn apply_saturation(data: &mut [f32], width: usize, height: usize, channels: usi
             let b = data[idx + 2];
 
             // Luminance (Rec.709)
-            let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            let lum = REC709_LUMA_R * r + REC709_LUMA_G * g + REC709_LUMA_B * b;
 
             // Interpolate between grayscale and color
             data[idx] = lum + (r - lum) * sat;

@@ -660,11 +660,11 @@ impl GpuProcessor {
                 )
                 .unwrap();
 
-                // Saturation
+                // Saturation (Rec.709 luma - see vfx_core::pixel::REC709_LUMA_*)
                 if (*saturation - 1.0).abs() > 1e-6 {
                     writeln!(
                         code,
-                        "    float luma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));"
+                        "    float luma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));"  // Rec.709
                     )
                     .unwrap();
                     writeln!(
@@ -996,9 +996,9 @@ impl GpuProcessor {
                     writeln!(code, "        color.rgb = {:.10} + (color.rgb - {:.10}) * {:.10};", pivot, pivot, contrast).unwrap();
                 }
                 
-                // Saturation
+                // Saturation (Rec.709 luma - see vfx_core::pixel::REC709_LUMA_*)
                 if (*saturation - 1.0).abs() > 1e-6 {
-                    writeln!(code, "        float luma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));").unwrap();
+                    writeln!(code, "        float luma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));").unwrap();  // Rec.709
                     writeln!(code, "        color.rgb = luma + (color.rgb - luma) * {:.10};", saturation).unwrap();
                 }
                 
@@ -1016,6 +1016,7 @@ impl GpuProcessor {
                 highlight_pivot,
             } => {
                 writeln!(code, "    {{ // GradingTone").unwrap();
+                // Rec.709 luma - see vfx_core::pixel::REC709_LUMA_*
                 writeln!(code, "        float luma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));").unwrap();
                 
                 // Shadow weight

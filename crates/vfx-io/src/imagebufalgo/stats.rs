@@ -10,6 +10,8 @@
 //! - [`maxchan`] / [`minchan`] - Max/min across all channels
 //! - [`color_range_check`] - Check if colors are within range
 
+use vfx_core::pixel::{REC709_LUMA_R, REC709_LUMA_G, REC709_LUMA_B};
+
 use crate::imagebuf::{ImageBuf, WrapMode};
 use vfx_core::Roi3D;
 
@@ -1222,12 +1224,12 @@ pub fn compare_yee(
 
                 // Convert to luminance (simple approximation)
                 let lum_a = if nch >= 3 {
-                    0.2126 * pixel_a[0] + 0.7152 * pixel_a[1] + 0.0722 * pixel_a[2]
+                    REC709_LUMA_R * pixel_a[0] + REC709_LUMA_G * pixel_a[1] + REC709_LUMA_B * pixel_a[2]
                 } else {
                     pixel_a[0]
                 };
                 let lum_b = if nch >= 3 {
-                    0.2126 * pixel_b[0] + 0.7152 * pixel_b[1] + 0.0722 * pixel_b[2]
+                    REC709_LUMA_R * pixel_b[0] + REC709_LUMA_G * pixel_b[1] + REC709_LUMA_B * pixel_b[2]
                 } else {
                     pixel_b[0]
                 };

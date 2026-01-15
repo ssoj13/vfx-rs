@@ -16,6 +16,8 @@
 //! processor.apply(&mut pixels);
 //! ```
 
+use vfx_core::pixel::{REC709_LUMA_R, REC709_LUMA_G, REC709_LUMA_B};
+
 use crate::error::{OcioResult, OcioError};
 use crate::transform::*;
 
@@ -179,8 +181,14 @@ fn invert_lut1d(lut: &[f32], size: usize, channels: usize) -> Vec<f32> {
                 idx as f32 / (size - 1) as f32
             } else {
                 let val_before = lut[(idx - 1) * channels + c];
-                let t_interp = (target - val_before) / (val_at_idx - val_before);
-                ((idx - 1) as f32 + t_interp) / (size - 1) as f32
+                let denom = val_at_idx - val_before;
+                // Protect against division by zero when LUT values are equal
+                if denom.abs() < 1e-10 {
+                    idx as f32 / (size - 1) as f32
+                } else {
+                    let t_interp = (target - val_before) / denom;
+                    ((idx - 1) as f32 + t_interp) / (size - 1) as f32
+                }
             };
             
             inverted[i * channels + c] = result.clamp(0.0, 1.0);
@@ -1489,7 +1497,7 @@ impl Processor {
                     
                     // Apply saturation
                     if *saturation != 1.0 {
-                        let luma = pixel[0] * 0.2126 + pixel[1] * 0.7152 + pixel[2] * 0.0722;
+                        let luma = pixel[0] * REC709_LUMA_R + pixel[1] * REC709_LUMA_G + pixel[2] * REC709_LUMA_B;
                         pixel[0] = luma + (pixel[0] - luma) * saturation;
                         pixel[1] = luma + (pixel[1] - luma) * saturation;
                         pixel[2] = luma + (pixel[2] - luma) * saturation;
@@ -1703,7 +1711,7 @@ impl Processor {
                         FixedFunctionStyle::AcesRedMod03 | FixedFunctionStyle::AcesRedMod10 => {
                             // ACES Red Modifier - reduce saturation in red region
                             let [r, g, b] = *pixel;
-                            let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                            let lum = REC709_LUMA_R * r + REC709_LUMA_G * g + REC709_LUMA_B * b;
                             
                             // Hue detection (simplified)
                             let max = r.max(g).max(b);
@@ -1748,7 +1756,7 @@ impl Processor {
                         FixedFunctionStyle::AcesGlow03 | FixedFunctionStyle::AcesGlow10 => {
                             // ACES Glow - add glow to bright saturated regions
                             let [r, g, b] = *pixel;
-                            let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                            let y = REC709_LUMA_R * r + REC709_LUMA_G * g + REC709_LUMA_B * b;
                             
                             // Glow parameters
                             let glow_gain = 0.05;
@@ -1844,7 +1852,7 @@ impl Processor {
                     
                     // Saturation
                     if *saturation != 1.0 {
-                        let luma = pixel[0] * 0.2126 + pixel[1] * 0.7152 + pixel[2] * 0.0722;
+                        let luma = pixel[0] * REC709_LUMA_R + pixel[1] * REC709_LUMA_G + pixel[2] * REC709_LUMA_B;
                         for v in pixel.iter_mut() {
                             *v = luma + (*v - luma) * saturation;
                         }
@@ -1895,7 +1903,7 @@ impl Processor {
 
                 ProcessorOp::GradingTone { shadows, midtones, highlights, whites, blacks, shadow_start, shadow_pivot, highlight_start, highlight_pivot } => {
                     // Compute tonal weights based on luminance
-                    let luma = pixel[0] * 0.2126 + pixel[1] * 0.7152 + pixel[2] * 0.0722;
+                    let luma = pixel[0] * REC709_LUMA_R + pixel[1] * REC709_LUMA_G + pixel[2] * REC709_LUMA_B;
                     
                     // Shadow weight (high in shadows, fades to zero)
                     let shadow_w = if luma < *shadow_start {

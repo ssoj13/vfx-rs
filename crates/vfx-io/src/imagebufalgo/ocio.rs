@@ -21,6 +21,8 @@
 //! let graded = ociolook(&src, "FilmGrade", "ACEScg", "ACEScg", Some(&config), None);
 //! ```
 
+use vfx_core::pixel::{REC709_LUMA_R, REC709_LUMA_G, REC709_LUMA_B};
+
 use crate::colorconfig::ColorConfig;
 use crate::imagebuf::{ImageBuf, InitializePixels, WrapMode};
 use vfx_core::Roi3D;
@@ -375,7 +377,7 @@ fn apply_processor(
                     let mut pixels = [[gray, gray, gray]];
                     processor.apply_rgb(&mut pixels);
                     // Take luminance
-                    dst_pixel[0] = pixels[0][0] * 0.2126 + pixels[0][1] * 0.7152 + pixels[0][2] * 0.0722;
+                    dst_pixel[0] = pixels[0][0] * REC709_LUMA_R + pixels[0][1] * REC709_LUMA_G + pixels[0][2] * REC709_LUMA_B;
                 }
 
                 // Preserve alpha if present
