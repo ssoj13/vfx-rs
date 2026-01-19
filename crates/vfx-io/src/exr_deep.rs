@@ -3,8 +3,10 @@
 //! Full deep EXR support using vfx-exr (custom exrs fork).
 
 use crate::{IoError, IoResult};
+use crate::deepdata::DeepData;
 use half::f16;
 use std::path::Path;
+use vfx_core::TypeDesc;
 
 // Re-export vfx-exr deep types for direct use
 pub use vfx_exr::image::deep::{
@@ -302,7 +304,7 @@ pub struct DeepChannelDesc {
 }
 
 // ============================================================================
-// Read/Write stubs - require low-level EXR implementation
+// Read/Write and conversions
 // ============================================================================
 
 /// Reads a deep EXR file.
@@ -347,18 +349,279 @@ pub fn read_deep_exr<P: AsRef<Path>>(path: P) -> IoResult<(DeepSamples, Vec<Deep
     Ok((samples, channels))
 }
 
+/// Converts DeepSamples (SoA) into DeepData (AoS).
+///
+/// This bridges vfx-exr's deep layout (SoA with cumulative offsets) to
+/// vfx-io's OIIO-like DeepData (AoS).
+pub fn deep_samples_to_deepdata(
+    samples: &DeepSamples,
+    channels: &[DeepChannelDesc],
+) -> IoResult<DeepData> {
+    if samples.sample_offsets.len() != samples.pixel_count() {
+        return Err(IoError::InvalidFile(format!(
+            "sample offsets length {} != pixel count {}",
+            samples.sample_offsets.len(),
+            samples.pixel_count()
+        )));
+    }
+    if channels.len() != samples.channels.len() {
+        return Err(IoError::InvalidFile(format!(
+            "channel count {} != data channels {}",
+            channels.len(),
+            samples.channels.len()
+        )));
+    }
+
+    // Convert cumulative offsets into per-pixel sample counts for DeepData.
+    let mut counts = Vec::with_capacity(samples.pixel_count());
+    let mut prev = 0u32;
+    for &cum in &samples.sample_offsets {
+        if cum < prev {
+            return Err(IoError::InvalidFile("sample offsets not monotonic".into()));
+        }
+        counts.push(cum - prev);
+        prev = cum;
+    }
+
+    let channel_types: Vec<TypeDesc> = channels
+        .iter()
+        .map(|ch| match ch.sample_type {
+            SampleType::F16 => TypeDesc::HALF,
+            SampleType::F32 => TypeDesc::FLOAT,
+            SampleType::U32 => TypeDesc::UINT32,
+        })
+        .collect();
+    let channel_names: Vec<&str> = channels.iter().map(|ch| ch.name.as_str()).collect();
+
+    let deep = DeepData::new(samples.pixel_count() as i64, &channel_types, &channel_names);
+    deep.set_all_samples(&counts);
+
+    for (ch_idx, ch_data) in samples.channels.iter().enumerate() {
+        for pixel_idx in 0..samples.pixel_count() {
+            let (start, end) = samples.sample_range(pixel_idx);
+            for (local_sample, global_sample) in (start..end).enumerate() {
+                match ch_data {
+                    DeepChannelData::F16(values) => {
+                        let value = values[global_sample].to_f32();
+                        // DeepData stores f16/f32 as f32; keep conversion in one place.
+                        deep.set_deep_value_f32(pixel_idx as i64, ch_idx, local_sample, value);
+                    }
+                    DeepChannelData::F32(values) => {
+                        deep.set_deep_value_f32(
+                            pixel_idx as i64,
+                            ch_idx,
+                            local_sample,
+                            values[global_sample],
+                        );
+                    }
+                    DeepChannelData::U32(values) => {
+                        deep.set_deep_value_u32(
+                            pixel_idx as i64,
+                            ch_idx,
+                            local_sample,
+                            values[global_sample],
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(deep)
+}
+
+/// Converts DeepData (AoS) into DeepSamples (SoA) and channel descriptors.
+///
+/// The resulting channels are sorted alphabetically to satisfy EXR header rules.
+pub fn deepdata_to_deep_samples(
+    deep: &DeepData,
+    width: usize,
+    height: usize,
+) -> IoResult<(DeepSamples, Vec<DeepChannelDesc>)> {
+    let pixel_count = width * height;
+    if deep.pixels() != pixel_count as i64 {
+        return Err(IoError::InvalidFile(format!(
+            "deep pixels {} != width*height {}",
+            deep.pixels(),
+            pixel_count
+        )));
+    }
+
+    let counts = deep.all_samples();
+    if counts.len() != pixel_count {
+        return Err(IoError::InvalidFile(format!(
+            "sample count length {} != pixel count {}",
+            counts.len(),
+            pixel_count
+        )));
+    }
+
+    // Convert per-pixel counts into cumulative offsets for SoA layout.
+    let mut sample_offsets = Vec::with_capacity(pixel_count);
+    let mut total = 0u32;
+    for count in &counts {
+        total = total
+            .checked_add(*count)
+            .ok_or_else(|| IoError::InvalidFile("sample count overflow".into()))?;
+        sample_offsets.push(total);
+    }
+
+    // Build and sort channel descriptors to meet EXR channel ordering requirements.
+    let mut channel_meta = Vec::with_capacity(deep.channels());
+    for idx in 0..deep.channels() {
+        let name = deep.channelname(idx);
+        let sample_type = match deep.channeltype(idx).basetype {
+            vfx_core::BaseType::Half => SampleType::F16,
+            vfx_core::BaseType::Float => SampleType::F32,
+            vfx_core::BaseType::UInt32 => SampleType::U32,
+            other => {
+                return Err(IoError::UnsupportedFeature(format!(
+                    "unsupported deep channel type: {:?}",
+                    other
+                )));
+            }
+        };
+        channel_meta.push((name, sample_type, idx));
+    }
+    channel_meta.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let channel_descs: Vec<DeepChannelDesc> = channel_meta
+        .iter()
+        .map(|(name, sample_type, _)| DeepChannelDesc {
+            name: name.clone(),
+            sample_type: *sample_type,
+        })
+        .collect();
+
+    let total_samples = total as usize;
+    let mut channels = Vec::with_capacity(deep.channels());
+    for (sorted_idx, ch_desc) in channel_descs.iter().enumerate() {
+        let original_idx = channel_meta[sorted_idx].2;
+        match ch_desc.sample_type {
+            SampleType::F16 => {
+                let mut data = vec![f16::ZERO; total_samples];
+                for pixel_idx in 0..pixel_count {
+                    let count = counts[pixel_idx] as usize;
+                    let start = if pixel_idx == 0 {
+                        0
+                    } else {
+                        sample_offsets[pixel_idx - 1] as usize
+                    };
+                    for sample_idx in 0..count {
+                        let value = deep.deep_value(pixel_idx as i64, original_idx, sample_idx);
+                        data[start + sample_idx] = f16::from_f32(value);
+                    }
+                }
+                channels.push(DeepChannelData::F16(data));
+            }
+            SampleType::F32 => {
+                let mut data = vec![0.0f32; total_samples];
+                for pixel_idx in 0..pixel_count {
+                    let count = counts[pixel_idx] as usize;
+                    let start = if pixel_idx == 0 {
+                        0
+                    } else {
+                        sample_offsets[pixel_idx - 1] as usize
+                    };
+                    for sample_idx in 0..count {
+                        data[start + sample_idx] =
+                            deep.deep_value(pixel_idx as i64, original_idx, sample_idx);
+                    }
+                }
+                channels.push(DeepChannelData::F32(data));
+            }
+            SampleType::U32 => {
+                let mut data = vec![0u32; total_samples];
+                for pixel_idx in 0..pixel_count {
+                    let count = counts[pixel_idx] as usize;
+                    let start = if pixel_idx == 0 {
+                        0
+                    } else {
+                        sample_offsets[pixel_idx - 1] as usize
+                    };
+                    for sample_idx in 0..count {
+                        data[start + sample_idx] =
+                            deep.deep_value_uint(pixel_idx as i64, original_idx, sample_idx);
+                    }
+                }
+                channels.push(DeepChannelData::U32(data));
+            }
+        }
+    }
+
+    Ok((
+        DeepSamples {
+            sample_offsets,
+            channels,
+            width,
+            height,
+        },
+        channel_descs,
+    ))
+}
+
 /// Writes deep samples to an EXR file.
 ///
-/// **Note**: Full implementation requires deep block compression which
-/// is not available in the current exr crate version.
+/// This expects channels to be sorted (caller should pass sorted descriptors).
 pub fn write_deep_exr<P: AsRef<Path>>(
-    _path: P,
-    _samples: &DeepSamples,
-    _channels: &[DeepChannelDesc],
+    path: P,
+    samples: &DeepSamples,
+    channels: &[DeepChannelDesc],
+    compression: vfx_exr::meta::attribute::Compression,
 ) -> IoResult<()> {
-    Err(IoError::UnsupportedFeature(
-        "Deep EXR writing requires updated exrs crate with deep data support.".into(),
-    ))
+    use vfx_exr::meta::attribute::{ChannelDescription, ChannelList, SampleType as ExrSampleType, Text};
+    use vfx_exr::image::write::deep::write_deep_scanlines_to_file;
+    use vfx_exr::prelude::SmallVec;
+
+    if channels.len() != samples.channels.len() {
+        return Err(IoError::InvalidFile(format!(
+            "channel count {} != data channels {}",
+            channels.len(),
+            samples.channels.len()
+        )));
+    }
+
+    let mut list: SmallVec<[ChannelDescription; 5]> = SmallVec::new();
+    for ch in channels {
+        let name = Text::new_or_none(&ch.name).ok_or_else(|| {
+            IoError::EncodeError(format!(
+                "EXR encode error: channel name contains unsupported characters: {}",
+                ch.name
+            ))
+        })?;
+        list.push(ChannelDescription {
+            name,
+            sample_type: match ch.sample_type {
+                SampleType::F16 => ExrSampleType::F16,
+                SampleType::F32 => ExrSampleType::F32,
+                SampleType::U32 => ExrSampleType::U32,
+            },
+            quantize_linearly: false,
+            sampling: vfx_exr::math::Vec2(1, 1),
+        });
+    }
+    let channel_list = ChannelList::new(list);
+
+    // Convert vfx-io DeepSamples to vfx-exr DeepSamples for writing.
+    let mut exr_samples = vfx_exr::image::deep::DeepSamples {
+        sample_offsets: samples.sample_offsets.clone(),
+        channels: Vec::with_capacity(samples.channels.len()),
+        width: samples.width,
+        height: samples.height,
+    };
+    for ch in &samples.channels {
+        let converted = match ch {
+            DeepChannelData::F16(v) => ExrDeepChannelData::F16(v.clone()),
+            DeepChannelData::F32(v) => ExrDeepChannelData::F32(v.clone()),
+            DeepChannelData::U32(v) => ExrDeepChannelData::U32(v.clone()),
+        };
+        exr_samples.channels.push(converted);
+    }
+
+    write_deep_scanlines_to_file(path, &exr_samples, &channel_list, compression)
+        .map_err(|e| IoError::EncodeError(format!("Deep EXR write failed: {}", e)))?;
+
+    Ok(())
 }
 
 // ============================================================================

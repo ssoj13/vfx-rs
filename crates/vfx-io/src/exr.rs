@@ -886,12 +886,9 @@ use crate::deepdata::DeepData;
 ///     deep.all_samples().iter().map(|&s| s as u64).sum::<u64>());
 /// ```
 pub fn read_deep<P: AsRef<Path>>(_path: P) -> IoResult<DeepData> {
-    // Deep EXR read requires exrs crate with deep module (not yet in crates.io)
-    // Use is_deep_exr() and probe_deep_exr() for header inspection
-    Err(IoError::UnsupportedFeature(
-        "Deep EXR read requires exrs deep module (not yet published to crates.io). \
-         Header inspection via is_deep_exr()/probe_deep_exr() is available.".into()
-    ))
+    // Read SoA deep samples and convert to AoS for the public DeepData API.
+    let (samples, channels) = crate::exr_deep::read_deep_exr(_path)?;
+    crate::exr_deep::deep_samples_to_deepdata(&samples, &channels)
 }
 
 /// Writes DeepData to a deep EXR file.
@@ -923,16 +920,26 @@ pub fn write_deep<P: AsRef<Path>>(
 
 /// Writes DeepData to a deep EXR file with specified compression.
 pub fn write_deep_with_compression<P: AsRef<Path>>(
-    _path: P,
-    _deep: &DeepData,
-    _width: u32,
-    _height: u32,
-    _compression: Compression,
+    path: P,
+    deep: &DeepData,
+    width: u32,
+    height: u32,
+    compression: Compression,
 ) -> IoResult<()> {
-    // Deep EXR write requires exrs crate with deep module (not yet in crates.io)
-    Err(IoError::UnsupportedFeature(
-        "Deep EXR write requires exrs deep module (not yet published to crates.io).".into()
-    ))
+    // Convert AoS DeepData into SoA DeepSamples for vfx-exr writer.
+    let (samples, channels) =
+        crate::exr_deep::deepdata_to_deep_samples(deep, width as usize, height as usize)?;
+    // Deep EXR supports only Uncompressed, RLE, or ZIP (ZIP1 for deep).
+    let exr_compression = match compression {
+        Compression::Zip => vfx_exr::prelude::Compression::ZIP1,
+        _ => compression.to_exr(),
+    };
+    if !exr_compression.supports_deep_data() {
+        return Err(IoError::UnsupportedFeature(
+            "Deep EXR only supports Uncompressed, RLE, or ZIP compression".into(),
+        ));
+    }
+    crate::exr_deep::write_deep_exr(path, &samples, &channels, exr_compression)
 }
 
 // is_deep_exr and probe_deep_exr are re-exported from exr_deep module above
@@ -1219,31 +1226,52 @@ mod tests {
         assert!(!reader.can_read(&[0xFF, 0xD8, 0xFF])); // JPEG
     }
 
-    /// Tests deep EXR stubs return UnsupportedFeature.
-    /// Full deep EXR support requires exrs crate with deep module (not yet in crates.io).
+    /// Tests deep EXR roundtrip using vfx-exr backend.
+    ///
+    /// Channel ordering may change due to EXR's alphabetical channel list requirement,
+    /// so the validation resolves indices by name.
     #[test]
-    fn test_deep_exr_stubs() {
-        use crate::IoError;
-
-        // read_deep should return UnsupportedFeature
-        let result = read_deep("nonexistent.exr");
-        assert!(result.is_err());
-        if let Err(IoError::UnsupportedFeature(msg)) = result {
-            assert!(msg.contains("exrs"), "Error should mention exrs crate");
-        } else {
-            panic!("Expected UnsupportedFeature error");
-        }
-
-        // write_deep should return UnsupportedFeature
+    fn test_deep_exr_roundtrip() {
         use crate::deepdata::DeepData;
         use vfx_core::TypeDesc;
-        let deep = DeepData::new(4, &[TypeDesc::FLOAT], &["Z"]);
-        let result = write_deep("test.exr", &deep, 2, 2);
-        assert!(result.is_err());
-        if let Err(IoError::UnsupportedFeature(msg)) = result {
-            assert!(msg.contains("exrs"), "Error should mention exrs crate");
-        } else {
-            panic!("Expected UnsupportedFeature error");
+
+        let width = 2u32;
+        let height = 2u32;
+        let deep = DeepData::new(4, &[TypeDesc::FLOAT, TypeDesc::UINT32], &["Z", "ID"]);
+        deep.set_all_samples(&[1, 1, 1, 1]);
+        for pixel in 0..4 {
+            deep.set_deep_value_f32(pixel, 0, 0, pixel as f32 + 0.5);
+            deep.set_deep_value_u32(pixel, 1, 0, pixel as u32 + 10);
         }
+
+        let temp_path = std::env::temp_dir().join("vfx_io_deep_roundtrip.exr");
+        write_deep(&temp_path, &deep, width, height).expect("write_deep failed");
+
+        let loaded = read_deep(&temp_path).expect("read_deep failed");
+        let _ = std::fs::remove_file(&temp_path);
+
+        assert_eq!(loaded.pixels(), deep.pixels());
+        assert_eq!(loaded.channels(), deep.channels());
+        assert_eq!(loaded.all_samples(), deep.all_samples());
+        let find_idx = |d: &DeepData, name: &str| -> usize {
+            for i in 0..d.channels() {
+                if d.channelname(i) == name {
+                    return i;
+                }
+            }
+            panic!("missing channel {}", name);
+        };
+        let z_idx_orig = find_idx(&deep, "Z");
+        let id_idx_orig = find_idx(&deep, "ID");
+        let z_idx_loaded = find_idx(&loaded, "Z");
+        let id_idx_loaded = find_idx(&loaded, "ID");
+        assert_eq!(
+            loaded.deep_value(0, z_idx_loaded, 0),
+            deep.deep_value(0, z_idx_orig, 0)
+        );
+        assert_eq!(
+            loaded.deep_value_uint(0, id_idx_loaded, 0),
+            deep.deep_value_uint(0, id_idx_orig, 0)
+        );
     }
 }
