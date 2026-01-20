@@ -2335,3 +2335,192 @@
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:174`
    - Evidence (implementation): `crates/vfx-io/src/lib.rs:152`, `crates/vfx-io/src/lib.rs:153`
    - Impact: матрица возможностей вводит в заблуждение по поддержке форматов.
+
+419) В `cli/channel-extract.md` сказано, что каналы можно задавать через запятые и через произвольные имена (`N.x`, `beauty.R`), но CLI принимает список значений `-c` и поддерживает только `R/G/B/A/Z` (или индекс); произвольные имена не парсятся.
+   - Evidence (doc claim): `docs/src/cli/channel-extract.md:26`, `docs/src/cli/channel-extract.md:57`, `docs/src/cli/channel-extract.md:72`, `docs/src/cli/channel-extract.md:118`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:653`, `crates/vfx-cli/src/commands/channels.rs:160`, `crates/vfx-cli/src/commands/channels.rs:175`, `crates/vfx-cli/src/commands/channels.rs:176`
+   - Impact: примеры с `-c R,G,B` и `N.x` не работают.
+
+420) В `cli/channel-shuffle.md` утверждается, что отсутствующие каналы по умолчанию = 1 для `A` и что операция «без пиксельной обработки», но реализация для отсутствующего канала пишет 0.0 и итерирует все пиксели.
+   - Evidence (doc claim): `docs/src/cli/channel-shuffle.md:128`, `docs/src/cli/channel-shuffle.md:130`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/channels.rs:96`, `crates/vfx-cli/src/commands/channels.rs:117`, `crates/vfx-cli/src/commands/channels.rs:120`
+   - Impact: описанное поведение по альфе/производительности не соответствует факту.
+
+421) В `cli/composite.md` перечислены режимы `subtract/overlay/softlight/hardlight/difference`, но CLI принимает только `over/add/multiply/screen`.
+   - Evidence (doc claim): `docs/src/cli/composite.md:25`, `docs/src/cli/composite.md:26`, `docs/src/cli/composite.md:27`, `docs/src/cli/composite.md:28`, `docs/src/cli/composite.md:29`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/composite.rs:32`, `crates/vfx-cli/src/commands/composite.rs:33`, `crates/vfx-cli/src/commands/composite.rs:34`, `crates/vfx-cli/src/commands/composite.rs:35`, `crates/vfx-cli/src/commands/composite.rs:36`
+   - Impact: документированные режимы приводят к ошибке «Unknown blend mode».
+
+422) В `cli/diff.md` заявлены «per-pixel warn», спец-формат diff-изображения и отдельные exit-коды, но реализация сравнивает/варнит только по `max_diff`, применяет порог только если `threshold > 0`, и diff-изображение — просто `|A-B| * 10` по общим каналам.
+   - Evidence (doc claim): `docs/src/cli/diff.md:21`, `docs/src/cli/diff.md:73`, `docs/src/cli/diff.md:103`, `docs/src/cli/diff.md:114`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/diff.rs:57`, `crates/vfx-cli/src/commands/diff.rs:62`, `crates/vfx-cli/src/commands/diff.rs:63`, `crates/vfx-cli/src/commands/diff.rs:116`
+   - Impact: поведение предупреждений/порогов и формат diff-изображения не соответствует документации.
+
+423) В `cli/grep.md` заявлены regex и поиск по метаданным/EXIF, но команда ищет только подстроки в имени файла, строке `WxH Nch` и названии формата.
+   - Evidence (doc claim): `docs/src/cli/grep.md:3`, `docs/src/cli/grep.md:15`, `docs/src/cli/grep.md:64`, `docs/src/cli/grep.md:66`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/grep.rs:19`, `crates/vfx-cli/src/commands/grep.rs:30`, `crates/vfx-cli/src/commands/grep.rs:36`, `crates/vfx-cli/src/commands/grep.rs:52`
+   - Impact: ожидания по функционалу не совпадают; примеры с regex/metadata не работают.
+
+424) В `cli/lut.md` указана поддержка `.clf/.spi1d/.spi3d/.3dl`, но CLI принимает только `.cube`.
+   - Evidence (doc claim): `docs/src/cli/lut.md:16`, `docs/src/cli/lut.md:24`, `docs/src/cli/lut.md:25`, `docs/src/cli/lut.md:26`, `docs/src/cli/lut.md:27`, `docs/src/cli/lut.md:49`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/lut.rs:25`, `crates/vfx-cli/src/commands/lut.rs:26`
+   - Impact: все примеры с `.clf/.spi/.3dl` завершаются ошибкой.
+
+425) В `cli/maketx.md` заявлены `.tx`, тайлинг, wrap и встроенные mipmap-цепочки, но реализация сохраняет только исходное изображение и не использует `tile/wrap`; встроенные mipmaps не пишутся.
+   - Evidence (doc claim): `docs/src/cli/maketx.md:17`, `docs/src/cli/maketx.md:55`, `docs/src/cli/maketx.md:136`, `docs/src/cli/maketx.md:137`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/maketx.rs:18`, `crates/vfx-cli/src/commands/maketx.rs:21`, `crates/vfx-cli/src/commands/maketx.rs:72`, `crates/vfx-cli/src/commands/maketx.rs:73`
+   - Impact: пользователи ожидают `.tx`/mipmaps/тайлинг, но получают обычный файл без mip-цепочки.
+
+426) В `cli/rotate.md` заявлена параллельная обработка через rayon, но реализация — один проход с обычными циклами без parallel.
+   - Evidence (doc claim): `docs/src/cli/rotate.md:107`
+   - Evidence (implementation): `crates/vfx-ops/src/transform.rs:520`, `crates/vfx-ops/src/transform.rs:545`
+   - Impact: ожидания по производительности не соответствуют факту.
+
+427) В `cli/transform.md` сказано, что `-r 90` — CCW, «все EXR-слои трансформируются» и «метаданные сохраняются», но код использует `rotate_90_cw`, читает один слой и создаёт `ImageData::from_f32` с `Metadata::default()`.
+   - Evidence (doc claim): `docs/src/cli/transform.md:40`, `docs/src/cli/transform.md:126`, `docs/src/cli/transform.md:128`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/transform.rs:8`, `crates/vfx-cli/src/commands/transform.rs:11`, `crates/vfx-cli/src/commands/transform.rs:37`, `crates/vfx-cli/src/commands/transform.rs:65`, `crates/vfx-io/src/lib.rs:747`, `crates/vfx-io/src/lib.rs:754`
+   - Impact: поворот идёт в другую сторону; слои и метаданные теряются при записи.
+
+428) В `cli/layers.md` описаны подкоманды `layers list/extract/merge`, но в CLI есть отдельные команды `layers`, `extract-layer`, `merge-layers`.
+   - Evidence (doc claim): `docs/src/cli/layers.md:7`, `docs/src/cli/layers.md:8`, `docs/src/cli/layers.md:9`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:200`, `crates/vfx-cli/src/main.rs:204`, `crates/vfx-cli/src/main.rs:208`
+   - Impact: команды из документации не существуют.
+
+429) В `cli/merge-layers.md` указано `--names` как «comma-separated», но CLI принимает `Vec<String>` без разделителя; нужно передавать `-n` несколько раз или перечислять значениями.
+   - Evidence (doc claim): `docs/src/cli/merge-layers.md:15`, `docs/src/cli/merge-layers.md:26`, `docs/src/cli/merge-layers.md:34`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:620`
+   - Impact: примеры с `--names beauty,diffuse,...` не работают.
+
+430) В `cli/batch.md` синтаксис и доступные операции не соответствуют реализации: в доке нет `-i/--input`, заявлены `color` и `width/height/filter`, а реально поддерживаются только `convert/resize(scale)/blur(box)/flip_h/flip_v`.
+   - Evidence (doc claim): `docs/src/cli/batch.md:8`, `docs/src/cli/batch.md:15`, `docs/src/cli/batch.md:23`, `docs/src/cli/batch.md:29`, `docs/src/cli/batch.md:71`, `docs/src/cli/batch.md:73`, `docs/src/cli/batch.md:74`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:560`, `crates/vfx-cli/src/main.rs:563`, `crates/vfx-cli/src/commands/batch.rs:117`, `crates/vfx-cli/src/commands/batch.rs:121`, `crates/vfx-cli/src/commands/batch.rs:122`, `crates/vfx-cli/src/commands/batch.rs:134`, `crates/vfx-cli/src/commands/batch.rs:143`, `crates/vfx-cli/src/commands/batch.rs:147`
+   - Impact: большая часть примеров и аргументов в batch-доках не работает.
+
+431) В `cli/resize.md` для высоты указан `-h`, но в CLI используется `-H` (так как `-h` зарезервирован под help).
+   - Evidence (doc claim): `docs/src/cli/resize.md:16`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:305`
+   - Impact: пример `-h` не работает; CLI ожидает `-H`.
+
+432) В `cli/color.md` используются короткие флаги `-e/-g/-s/-t` и заявлены `pq/hlg/log/srgb-inv`, но CLI поддерживает только длинные флаги и фактически обрабатывает только `srgb/srgb_to_linear/linear_to_srgb/rec709`.
+   - Evidence (doc claim): `docs/src/cli/color.md:15`, `docs/src/cli/color.md:16`, `docs/src/cli/color.md:17`, `docs/src/cli/color.md:18`, `docs/src/cli/color.md:28`, `docs/src/cli/color.md:29`, `docs/src/cli/color.md:30`, `docs/src/cli/color.md:31`, `docs/src/cli/color.md:32`, `docs/src/cli/color.md:33`, `docs/src/cli/color.md:51`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:448`, `crates/vfx-cli/src/main.rs:456`, `crates/vfx-cli/src/main.rs:460`, `crates/vfx-cli/src/main.rs:464`, `crates/vfx-cli/src/main.rs:468`, `crates/vfx-cli/src/commands/color.rs:74`, `crates/vfx-cli/src/commands/color.rs:115`, `crates/vfx-cli/src/commands/color.rs:125`
+   - Impact: короткие флаги и заявленные transfer-функции не работают.
+
+433) В `cli/aces.md` используется `--rrt` и варианты `alt1/filmic`, но CLI имеет только `--rrt-variant` (long) и поддерживает `default` или `high-contrast`.
+   - Evidence (doc claim): `docs/src/cli/aces.md:16`, `docs/src/cli/aces.md:49`, `docs/src/cli/aces.md:57`, `docs/src/cli/aces.md:58`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:739`, `crates/vfx-cli/src/commands/aces.rs:92`, `crates/vfx-cli/src/commands/aces.rs:93`
+   - Impact: примеры с `--rrt alt1/filmic` не работают.
+
+434) В `cli/view.md` команда описана как доступная всегда, но в CLI она включается только при фиче `viewer`.
+   - Evidence (doc claim): `docs/src/cli/view.md:1`, `docs/src/cli/view.md:5`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:237`, `crates/vfx-cli/src/main.rs:752`
+   - Impact: без сборки с `viewer` команда отсутствует, документация вводит в заблуждение.
+
+435) В `cli/sharpen.md` заявлено unsharp masking, но реализация использует свёртку с 3x3 sharpen kernel без отдельного blur-pass.
+   - Evidence (doc claim): `docs/src/cli/sharpen.md:1`, `docs/src/cli/sharpen.md:55`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/sharpen.rs:21`, `crates/vfx-ops/src/filter.rs:124`
+   - Impact: описание алгоритма не соответствует реальному поведению.
+
+436) В `cli/warp.md` приведены формулы и интерпретации параметров (например `wave` по X), но реализация для `wave` смещает X в зависимости от `y` и использует иные формулы для `twist`.
+   - Evidence (doc claim): `docs/src/cli/warp.md:90`, `docs/src/cli/warp.md:98`
+   - Evidence (implementation): `crates/vfx-ops/src/warp.rs:120`, `crates/vfx-ops/src/warp.rs:160`
+   - Impact: пользователи получают иное искажение, чем ожидают по документации.
+
+437) В `cli/extract-layer.md` говорится, что без `--layer` извлекается первый слой и «метаданные сохраняются», но реализация без `--layer` лишь выводит список и выходит, а `to_image_data` создаёт `ImageData` с `Metadata::default()`.
+   - Evidence (doc claim): `docs/src/cli/extract-layer.md:39`, `docs/src/cli/extract-layer.md:105`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/layers.rs:155`, `crates/vfx-cli/src/commands/layers.rs:156`, `crates/vfx-io/src/lib.rs:1042`, `crates/vfx-io/src/lib.rs:1068`
+   - Impact: команда без `--layer` ничего не извлекает; метаданные теряются.
+
+438) В `appendix/cli-ref.md` указан глобальный флаг `-q/--quiet`, которого нет в CLI (доступны только `-v`, `-l`, `-j`, `--allow-non-color`).
+   - Evidence (doc claim): `docs/src/appendix/cli-ref.md:9`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:131`, `crates/vfx-cli/src/main.rs:135`, `crates/vfx-cli/src/main.rs:139`, `crates/vfx-cli/src/main.rs:143`
+   - Impact: пользователи получают ошибку «unexpected argument --quiet».
+
+439) В `appendix/cli-ref.md` для `info` описаны `--layers/--channels`, но в CLI есть только `--stats/--all/--json`.
+   - Evidence (doc claim): `docs/src/appendix/cli-ref.md:24`, `docs/src/appendix/cli-ref.md:25`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:259`, `crates/vfx-cli/src/main.rs:263`, `crates/vfx-cli/src/main.rs:267`
+   - Impact: опции из справки не работают.
+
+440) В `appendix/cli-ref.md` синтаксис и параметры нескольких команд не совпадают с реальными аргументами CLI (например `-i/--input` для `convert/resize/color/blur`, `--layer` для `convert`, `--interpolation`/`--layer` для `lut`, `-a/-b` для `composite`, `--translate` для `transform`).
+   - Evidence (doc claim): `docs/src/appendix/cli-ref.md:46`, `docs/src/appendix/cli-ref.md:48`, `docs/src/appendix/cli-ref.md:63`, `docs/src/appendix/cli-ref.md:67`, `docs/src/appendix/cli-ref.md:90`, `docs/src/appendix/cli-ref.md:111`, `docs/src/appendix/cli-ref.md:153`, `docs/src/appendix/cli-ref.md:179`, `docs/src/appendix/cli-ref.md:180`, `docs/src/appendix/cli-ref.md:207`, `docs/src/appendix/cli-ref.md:232`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:271`, `crates/vfx-cli/src/main.rs:294`, `crates/vfx-cli/src/main.rs:440`, `crates/vfx-cli/src/main.rs:400`, `crates/vfx-cli/src/main.rs:478`, `crates/vfx-cli/src/main.rs:428`, `crates/vfx-cli/src/main.rs:317`, `crates/vfx-cli/src/main.rs:496`
+   - Impact: справка вводит в заблуждение; многие команды не принимают заявленные флаги.
+
+441) В `appendix/cli-ref.md` есть разделы `icc` и `ocio`, но таких команд в CLI нет.
+   - Evidence (doc claim): `docs/src/appendix/cli-ref.md:264`, `docs/src/appendix/cli-ref.md:284`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:150`, `crates/vfx-cli/src/main.rs:220`
+   - Impact: команды из справки отсутствуют.
+
+442) В `appendix/cli-ref.md` описаны exit-коды и переменные окружения `VFX_LOG`/`VFX_THREADS`, но в CLI нет явного маппинга exit-кодов, а конфигурация логирования берётся через стандартный `EnvFilter::try_from_default_env()` (без `VFX_LOG`/`VFX_THREADS`).
+   - Evidence (doc claim): `docs/src/appendix/cli-ref.md:306`, `docs/src/appendix/cli-ref.md:317`, `docs/src/appendix/cli-ref.md:320`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:84`, `crates/vfx-cli/src/main.rs:823`
+   - Impact: автоматизация на основе документации даёт неверные ожидания.
+
+443) В `appendix/cli-ref.md` заявлена поддержка последовательностей `%04d`/`####` в CLI, но команды принимают `PathBuf` и передают путь напрямую в `load_image` без разборa последовательностей.
+   - Evidence (doc claim): `docs/src/appendix/cli-ref.md:325`, `docs/src/appendix/cli-ref.md:331`, `docs/src/appendix/cli-ref.md:335`, `docs/src/appendix/cli-ref.md:340`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/info.rs:20`, `crates/vfx-cli/src/commands/info.rs:33`
+   - Impact: примеры с шаблонами последовательностей не работают в CLI.
+
+444) В `cli/udim.md` примеры конвертации используют выход `.tx`, но формат `tx` не поддерживается в `vfx-io`.
+   - Evidence (doc claim): `docs/src/cli/udim.md:86`, `docs/src/cli/udim.md:191`
+   - Evidence (implementation): `crates/vfx-io/src/lib.rs:152`, `crates/vfx-io/src/lib.rs:153`
+   - Impact: примеры с `.tx` завершаются ошибкой записи/формата.
+
+445) В `appendix/formats.md` для JPEG указано `CMYK ✗`, но JPEG-ридер поддерживает CMYK вход и конвертирует в RGB.
+   - Evidence (doc claim): `docs/src/appendix/formats.md:61`
+   - Evidence (implementation): `crates/vfx-io/src/jpeg.rs:155`, `crates/vfx-io/src/jpeg.rs:209`
+   - Impact: документация занижает реальную поддержку входных JPEG.
+
+446) В `appendix/formats.md` для CSP (`.csp`) написано `Write ✗`, но в `vfx-lut` экспортируются `write_csp_1d/3d`.
+   - Evidence (doc claim): `docs/src/appendix/formats.md:180`
+   - Evidence (implementation): `crates/vfx-lut/src/lib.rs:90`
+   - Impact: документация занижает реальную поддержку записи CSP.
+
+447) В `appendix/formats.md` для PNG указано «16-bit output when source is float», но `png::write` всегда пишет 8-bit по умолчанию (если явно не задано 16-bit в `PngWriterOptions`).
+   - Evidence (doc claim): `docs/src/appendix/formats.md:49`
+   - Evidence (implementation): `crates/vfx-io/src/png.rs:679`, `crates/vfx-io/src/png.rs:690`
+   - Impact: ожидания по глубине цвета при конвертации не соответствуют факту.
+
+448) В `appendix/color-spaces.md` пример использует `vfx_transfer::srgb_to_linear`/`linear_to_srgb`, но в `vfx-transfer` таких функций нет (есть `srgb::eotf/oetf` и `srgb_eotf/srgb_oetf`).
+   - Evidence (doc claim): `docs/src/appendix/color-spaces.md:150`, `docs/src/appendix/color-spaces.md:151`
+   - Evidence (implementation): `crates/vfx-transfer/src/lib.rs:70`, `crates/vfx-transfer/src/lib.rs:86`
+   - Impact: пример из документации не компилируется.
+
+449) `ImageBuf::contiguous()` всегда возвращает `true`, хотя реальная раскладка данных не проверяется (есть TODO).
+   - Evidence (implementation): `crates/vfx-io/src/imagebuf/mod.rs:682`
+   - Impact: пользователи могут ошибочно считать буфер непрерывным.
+
+450) В Python-обёртке `pixel_bytes(native)` игнорирует `native` и не учитывает возможные per-channel форматы (TODO), что нарушает заявленную совместимость с OIIO.
+   - Evidence (implementation): `crates/vfx-rs-py/src/core.rs:1067`
+   - Impact: размер пикселя может быть неверным для non-uniform каналов.
+
+451) В `vfx-compute` заявлены стриминг-источники, но `ExrStreamingSource` всё равно читает весь файл в память; есть TODO на истинный стриминг по тайлам/сканлайнам.
+   - Evidence (implementation): `crates/vfx-compute/src/backend/streaming.rs:156`, `crates/vfx-compute/src/backend/streaming.rs:196`
+   - Impact: поведение не соответствует ожиданиям «streaming», риск OOM на больших файлах.
+
+452) В `vfx-compute` кэширование GPU-хэндлов объявлено, но фактически не интегрировано (TODO на подключение кэша в execute).
+   - Evidence (implementation): `crates/vfx-compute/src/backend/executor.rs:193`
+   - Impact: режим viewer заявляет кэширование, но эффект не реализован.
+
+453) Конверсия `vfx_core::Image -> ComputeImage` всегда копирует данные (TODO на zero-copy), что противоречит ожиданию нулевой копии из комментария.
+   - Evidence (implementation): `crates/vfx-compute/src/image.rs:224`
+   - Impact: лишние аллокации и копии при переходе между слоями API.
+
+454) В `appendix/feature-matrix.md` для TIFF указано «tiles», но в `TiffWriterOptions` нет поддержки тайлов (только bit_depth/ compression), т.е. тайлинг не реализован.
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:170`
+   - Evidence (implementation): `crates/vfx-io/src/tiff.rs:172`
+   - Impact: матрица возможностей завышает поддержку TIFF.
+
+455) В `appendix/feature-matrix.md` заявлено, что JPEG2000 поддерживает запись, но `vfx-io` помечает JP2 как read-only и явно отказывает в write.
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:183`
+   - Evidence (implementation): `crates/vfx-io/src/jp2.rs:1`, `crates/vfx-io/src/lib.rs:333`
+   - Impact: матрица возможностей вводит в заблуждение по поддержке записи JP2.
+
+456) В `appendix/feature-matrix.md` указано, что RED Log3G12 реализован, но в `vfx-transfer` нет функций для Log3G12 (есть только REDLogFilm и Log3G10).
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:36`
+   - Evidence (implementation): `crates/vfx-transfer/src/red_log.rs:1`, `crates/vfx-transfer/src/red_log.rs:112`
+   - Impact: матрица возможностей завышает покрытие log-кривых.
+
+457) В `streaming::ExrStreamingSource` для scanline-файлов идёт lazy-load всего изображения в память (кэш), поэтому стриминг по региону не реализован.
+   - Evidence (implementation): `crates/vfx-io/src/streaming/exr.rs:188`, `crates/vfx-io/src/streaming/exr.rs:191`
+   - Impact: риск OOM на больших scanline-файлах; отсутствует ожидаемый региональный стриминг.
