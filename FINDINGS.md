@@ -1900,3 +1900,438 @@
    - Evidence (doc claim): `docs/src/cli/paste.md:128`
    - Evidence (implementation): `crates/vfx-cli/src/commands/paste.rs:37`
    - Impact: bit depth/format is not preserved as documented.
+
+332) ImageBufAlgo README claims full OIIO API coverage and shows in-place functions (`add_constant`, `resize(&mut ...)`, `blur_inplace`), but the module exports different APIs (e.g., `add`, `resize`, `blur_into`) and does not expose those in-place names.
+   - Evidence (doc claim): `docs/src/programmer/imagebufalgo/README.md:3`, `docs/src/programmer/imagebufalgo/README.md:23`, `docs/src/programmer/imagebufalgo/README.md:35`
+   - Evidence (implementation): `crates/vfx-io/src/imagebufalgo/mod.rs:48`
+   - Impact: examples do not compile and coverage is overstated.
+
+333) `InitializePixels::No` claims uninitialized pixel memory, but `PixelStorage::allocate` always zero-initializes buffers regardless of the flag.
+   - Evidence (doc claim): `crates/vfx-io/src/imagebuf/mod.rs:36`
+   - Evidence (implementation): `crates/vfx-io/src/imagebuf/storage.rs:40`
+   - Impact: callers cannot get uninitialized buffers as documented.
+
+334) `ScanlineIterator` claims to iterate over the ROI, but when advancing z it resets `y` to 0 instead of `roi.ybegin`, breaking non-zero ROI origins.
+   - Evidence (doc claim): `crates/vfx-io/src/imagebuf/iterators.rs:63`
+   - Evidence (implementation): `crates/vfx-io/src/imagebuf/iterators.rs:117`
+   - Impact: scanline iteration yields rows outside the ROI for z>0.
+
+335) Streaming format docs reference `native_bpp` and `should_use_streaming`, but the module exposes `bytes_per_pixel` and `should_stream` instead.
+   - Evidence (doc claim): `crates/vfx-io/src/streaming/format.rs:8`, `crates/vfx-io/src/streaming/format.rs:10`
+   - Evidence (implementation): `crates/vfx-io/src/streaming/format.rs:139`, `crates/vfx-io/src/streaming/format.rs:170`
+   - Impact: doc examples do not compile and APIs are misnamed.
+
+336) `estimate_memory` claims to read only header bytes, but it loads the entire file into memory via `std::fs::read`.
+   - Evidence (doc claim): `crates/vfx-io/src/streaming/format.rs:264`
+   - Evidence (implementation): `crates/vfx-io/src/streaming/format.rs:283`
+   - Impact: large files can be fully loaded despite “header-only” intent.
+
+337) Streaming module docs claim EXR true streaming, but `ExrStreamingSource` only supports random access for tiled EXR; scanline EXR falls back to full-image cache.
+   - Evidence (doc claim): `crates/vfx-io/src/streaming/mod.rs:77`
+   - Evidence (implementation): `crates/vfx-io/src/streaming/exr.rs:188`
+   - Impact: documentation overstates EXR streaming capability.
+
+338) `TiffStreamingSource::read_region` clamps `x`/`y` to the last pixel, so a region fully outside bounds returns edge pixels instead of transparent black.
+   - Evidence (contract): `crates/vfx-io/src/streaming/traits.rs:217`
+   - Evidence (implementation): `crates/vfx-io/src/streaming/tiff.rs:352`
+   - Impact: out-of-bounds reads violate `StreamingSource` contract and can leak edge pixels.
+
+339) DeepData capacity management diverges from the OIIO reference: once allocated, `set_capacity` and `set_samples` do not reallocate or move data, and `insert_samples` silently returns if capacity is insufficient. This can leave `nsamples` larger than allocated storage and break split/merge paths.
+   - Evidence (reference behavior): `_ref/OpenImageIO/src/libOpenImageIO/deepdata.cpp:506`, `_ref/OpenImageIO/src/libOpenImageIO/deepdata.cpp:536`, `_ref/OpenImageIO/src/libOpenImageIO/deepdata.cpp:591`
+   - Evidence (implementation): `crates/vfx-io/src/deepdata.rs:337`, `crates/vfx-io/src/deepdata.rs:363`, `crates/vfx-io/src/deepdata.rs:379`, `crates/vfx-io/src/deepdata.rs:409`
+   - Impact: sample insertion/merge can become no-ops or lead to out-of-bounds access in subsequent writes.
+
+340) DDS module docs claim support for cube maps/texture arrays, but `read()`/`read_all_mips()` decode a flat surface and only return the first width*height layer, dropping additional faces/layers.
+   - Evidence (doc claim): `crates/vfx-io/src/dds.rs:9`
+   - Evidence (implementation): `crates/vfx-io/src/dds.rs:199`, `crates/vfx-io/src/dds.rs:223`
+   - Impact: cubemap/array DDS reads return incomplete data without warning.
+
+341) `probe_dimensions` docs say TIFF reads only IFD tags, but implementation does a full TIFF decode via `tiff::read`.
+   - Evidence (doc claim): `crates/vfx-io/src/lib.rs:368`
+   - Evidence (implementation): `crates/vfx-io/src/lib.rs:495`
+   - Impact: dimension probing loads full TIFF image data, negating performance guarantees for large files.
+
+342) Feature matrix marks CinemaDNG as "Done", but implementation is a thin wrapper over generic TIFF decoding; no DNG-specific tags/RAW/CFA handling is present.
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:189`
+   - Evidence (implementation): `crates/vfx-io/src/cinema_dng.rs:106`, `crates/vfx-io/src/cinema_dng.rs:256`
+   - Impact: CinemaDNG support is limited to whatever the TIFF reader returns, with DNG metadata and raw semantics ignored.
+
+343) Texture module claims anisotropic filtering, but `FilterMode::Anisotropic` is implemented as trilinear without any anisotropic footprint handling.
+   - Evidence (doc claim): `crates/vfx-io/src/texture.rs:4`
+   - Evidence (implementation): `crates/vfx-io/src/texture.rs:120`
+   - Impact: anisotropic sampling is not actually implemented; quality expectations are not met.
+
+344) `TextureSystem::sample` accepts `FilterMode::Trilinear`, but without derivatives it always falls back to bilinear at mip 0.
+   - Evidence (doc claim): `crates/vfx-io/src/texture.rs:4`
+   - Evidence (implementation): `crates/vfx-io/src/texture.rs:116`
+   - Impact: callers selecting trilinear in `sample` do not get mip blending.
+
+345) Feature matrix claims Gaussian blur is separable, but the only Gaussian implementation is a full 2D kernel used with `convolve`.
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:293`
+   - Evidence (implementation): `crates/vfx-ops/src/filter.rs:65`, `crates/vfx-ops/src/filter.rs:178`
+   - Impact: performance characteristics are overstated; Gaussian blur is not separable in vfx-ops.
+
+346) vfx-color `ColorProcessor` docs обещают кэширование и предвычисление LUT/transfer, но в реализации нет ни кэша, ни LUT-precompute — только линейный проход и опциональная оптимизация матриц/scale/offset.
+   - Evidence (doc claim): `crates/vfx-color/src/processor.rs:1`, `crates/vfx-color/src/processor.rs:4`, `crates/vfx-color/src/processor.rs:41`, `crates/vfx-color/src/processor.rs:49`
+   - Evidence (implementation): `crates/vfx-color/src/processor.rs:137`, `crates/vfx-color/src/processor.rs:363`
+   - Impact: ожидания производительности/поведения расходятся с фактом; API не предоставляет заявленных оптимизаций.
+
+347) Документация по цветовым примариям использует `Primaries::SRGB`/`Primaries::ACES_AP1` и т.п., но в API это свободные константы `vfx_primaries::SRGB`, `vfx_primaries::ACES_AP1` и т.д.; ассоциированных констант в `Primaries` нет.
+   - Evidence (doc claim): `docs/src/programmer/color-management.md:22`, `docs/src/programmer/color-management.md:44`
+   - Evidence (implementation): `crates/vfx-primaries/src/lib.rs:184`, `crates/vfx-primaries/src/lib.rs:245`
+   - Impact: примеры из документации не компилируются.
+
+348) Документация по transfer functions использует имена `linear_to_srgb`, `srgb_to_linear`, `linear_to_pq`, и т.п., которых нет в API; экспортируются `*_eotf`/`*_oetf` и encode/decode функции.
+   - Evidence (doc claim): `docs/src/programmer/color-management.md:77`, `docs/src/programmer/color-management.md:93`, `docs/src/programmer/color-management.md:105`
+   - Evidence (implementation): `crates/vfx-transfer/src/lib.rs:88`, `crates/vfx-transfer/src/lib.rs:91`
+   - Impact: примеры из документации не компилируются, вводят в заблуждение по API именам.
+
+349) Документация по LUT применению ссылается на `Lut3D::from_file`, `apply_lut`, и тип `Lut`, которых в `vfx-lut` нет.
+   - Evidence (doc claim): `docs/src/programmer/color-management.md:181`, `docs/src/programmer/color-management.md:191`
+   - Evidence (implementation): `crates/vfx-lut/src/lib.rs:60`
+   - Impact: примеры из документации не компилируются; пользователям нужно использовать явные парсеры (cube/clf/spi/etc.).
+
+350) Документация `core-api.md` описывает `vfx_core::ImageData`, `ChannelType`, `classify_channel` и `CoreError/CoreResult`, но в `vfx-core` таких типов/функций нет.
+   - Evidence (doc claim): `docs/src/programmer/core-api.md:9`, `docs/src/programmer/core-api.md:141`, `docs/src/programmer/core-api.md:176`
+   - Evidence (implementation): `crates/vfx-core/src/lib.rs:37`, `crates/vfx-core/src/error.rs:21`
+   - Impact: раздел Core API не соответствует фактическому API и вводит в заблуждение.
+
+351) В обзоре модулей и программистском README `vfx-core` описан как владелец `ImageData`/`ChannelType`, но фактический `ImageData` живет в `vfx-io`, а `ChannelType` отсутствует.
+   - Evidence (doc claim): `docs/src/introduction.md:60`, `docs/src/programmer/README.md:112`
+   - Evidence (implementation): `crates/vfx-io/src/lib.rs:537`, `crates/vfx-core/src/lib.rs:37`
+   - Impact: навигация по крейтам вводит в заблуждение; пользователи ищут типы не там.
+
+352) В `crates/ocio.md` приведен `Config::from_str`, которого нет; реальная функция — `Config::from_yaml_str`.
+   - Evidence (doc claim): `docs/src/crates/ocio.md:48`
+   - Evidence (implementation): `crates/vfx-ocio/src/config.rs:202`, `crates/vfx-ocio/src/config.rs:220`
+   - Impact: пример не компилируется.
+
+353) В `crates/ocio.md` используется `config.processor_opt`, но в API есть `processor_with_opts`.
+   - Evidence (doc claim): `docs/src/crates/ocio.md:127`
+   - Evidence (implementation): `crates/vfx-ocio/src/config.rs:987`
+   - Impact: пример не компилируется.
+
+354) В `crates/ocio.md` используется `config.processor_with_look` (единственное число), но в API есть `processor_with_looks`.
+   - Evidence (doc claim): `docs/src/crates/ocio.md:198`
+   - Evidence (implementation): `crates/vfx-ocio/src/config.rs:1118`
+   - Impact: пример не компилируется.
+
+355) В `crates/ocio.md` в примере `file_rules` используется `rule.pattern`, но поле `pattern` спрятано внутри `FileRuleKind::Basic`/`Regex`; напрямую доступно только `name`, `colorspace`, `kind`.
+   - Evidence (doc claim): `docs/src/crates/ocio.md:285`
+   - Evidence (implementation): `crates/vfx-ocio/src/config.rs:96`, `crates/vfx-ocio/src/config.rs:157`
+   - Impact: пример не компилируется и неверно показывает API.
+
+356) `colorspace_from_filepath` возвращает `Option<&str>`, но в документации используется `?` как будто это `Result`.
+   - Evidence (doc claim): `docs/src/crates/ocio.md:289`
+   - Evidence (implementation): `crates/vfx-ocio/src/config.rs:1253`
+   - Impact: пример не компилируется; требуется явная обработка `Option`.
+
+357) В `crates/compute.md` используется `ComputeImage::from_image_data` и `img.to_image_data()` как методы, но в API это свободные функции `from_image_data`/`to_image_data` (feature `io`), а методов нет.
+   - Evidence (doc claim): `docs/src/crates/compute.md:41`, `docs/src/crates/compute.md:47`
+   - Evidence (implementation): `crates/vfx-compute/src/convert.rs:272`, `crates/vfx-compute/src/convert.rs:289`
+   - Impact: пример не компилируется, сигнатуры неверны.
+
+358) В `crates/compute.md` используется `img.to_vec()`, но у `ComputeImage` есть `into_vec()`; `to_vec` отсутствует.
+   - Evidence (doc claim): `docs/src/crates/compute.md:31`, `docs/src/crates/compute.md:45`
+   - Evidence (implementation): `crates/vfx-compute/src/image.rs:139`
+   - Impact: пример не компилируется.
+
+359) В `crates/compute.md` показан `apply_matrix` с `Mat3`, но API принимает 4x4 `[f32;16]`.
+   - Evidence (doc claim): `docs/src/crates/compute.md:86`
+   - Evidence (implementation): `crates/vfx-compute/src/color.rs:118`
+   - Impact: пример не компилируется и вводит в заблуждение по формату матрицы.
+
+360) В `crates/compute.md` используется `ResizeFilter::Lanczos3`, но в API вариант называется `Lanczos`.
+   - Evidence (doc claim): `docs/src/crates/compute.md:102`
+   - Evidence (implementation): `crates/vfx-compute/src/ops.rs:56`
+   - Impact: пример не компилируется.
+
+361) В `crates/compute.md` показан `ProcessorBuilder::prefer_gpu(true)`, но такого метода нет; выбор backend делается через `backend(...)`.
+   - Evidence (doc claim): `docs/src/crates/compute.md:142`
+   - Evidence (implementation): `crates/vfx-compute/src/processor.rs:334`, `crates/vfx-compute/src/processor.rs:370`
+   - Impact: пример не компилируется.
+
+362) В `crates/compute.md` показан `TileWorkflow::new(proc, 1024)` и `workflow.process(...)`, но `TileWorkflow` — это enum без конструктора и без метода `process`.
+   - Evidence (doc claim): `docs/src/crates/compute.md:156`, `docs/src/crates/compute.md:158`
+   - Evidence (implementation): `crates/vfx-compute/src/backend/tiling.rs:165`
+   - Impact: пример не компилируется; API неверно описан.
+
+363) В `crates/compute.md` используется `proc.limits()?`, но `limits()` возвращает ссылку без `Result`.
+   - Evidence (doc claim): `docs/src/crates/compute.md:169`
+   - Evidence (implementation): `crates/vfx-compute/src/processor.rs:482`
+   - Impact: пример не компилируется.
+
+364) В `crates/io.md` упомянуты `StreamReader`/`StreamWriter` в `vfx_io::streaming`, но таких типов нет; актуальный API использует `StreamingSource`/`StreamingOutput`/`StreamingPipeline`.
+   - Evidence (doc claim): `docs/src/crates/io.md:176`
+   - Evidence (implementation): `crates/vfx-io/src/streaming/mod.rs:111`, `crates/vfx-io/src/streaming/traits.rs:203`
+   - Impact: пример не компилируется, вводит в заблуждение по API стриминга.
+
+365) В `crates/cli.md` указан флаг `vfx info --layers`, но у команды `info` нет флага `--layers` (есть `--stats`, `--all`, `--json`).
+   - Evidence (doc claim): `docs/src/crates/cli.md:72`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:252`
+   - Impact: пример не работает.
+
+366) В `crates/cli.md` описан `vfx layers` с флагами `--list/--extract/--merge/--rename`, но в CLI это отдельные подкоманды `layers`, `extract-layer`, `merge-layers`; флага `--rename` нет.
+   - Evidence (doc claim): `docs/src/crates/cli.md:175`, `docs/src/crates/cli.md:179`, `docs/src/crates/cli.md:182`, `docs/src/crates/cli.md:185`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:195`, `crates/vfx-cli/src/main.rs:206`, `crates/vfx-cli/src/main.rs:210`
+   - Impact: примеры не соответствуют реальному CLI интерфейсу.
+
+367) В `crates/cli.md` для `resize` указан фильтр `bicubic`/`nearest`, но CLI принимает `box`, `bilinear`, `lanczos`, `mitchell`.
+   - Evidence (doc claim): `docs/src/crates/cli.md:101`, `docs/src/crates/cli.md:106`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:300`
+   - Impact: часть фильтров из документации не распознается.
+
+368) В `crates/cli.md` для `batch` используется `--output` с шаблоном и `--jobs`, но CLI ожидает `--output-dir`, `--op`, `--args`, `--format` и не поддерживает `--jobs`.
+   - Evidence (doc claim): `docs/src/crates/cli.md:209`, `docs/src/crates/cli.md:216`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:562`, `crates/vfx-cli/src/commands/batch.rs:34`
+   - Impact: примеры не работают.
+
+369) В `crates/cli.md` указано `vfx view ... --layer`, но у команды `view` нет флага `--layer`.
+   - Evidence (doc claim): `docs/src/crates/cli.md:240`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:754`
+   - Impact: пример не работает.
+
+370) В `core-api.md`/`programmer/README.md` примеры используют методы `ImageData::constant`, `get_pixel`, `set_pixel`, `width()/height()/channels()`, но у `vfx-io::ImageData` таких методов нет (есть только публичные поля и `from_f32`/`to_f32` и т.п.).
+   - Evidence (doc claim): `docs/src/programmer/core-api.md:18`, `docs/src/programmer/core-api.md:30`, `docs/src/programmer/README.md:68`
+   - Evidence (implementation): `crates/vfx-io/src/lib.rs:723`
+   - Impact: примеры не компилируются и вводят в заблуждение по API `ImageData`.
+
+371) В `color-management.md` используются `apply_idt`/`apply_rrt_odt`, но в `vfx_color::aces` таких функций нет (есть `apply_rrt_odt_srgb` и `apply_inverse_odt_srgb`).
+   - Evidence (doc claim): `docs/src/programmer/color-management.md:146`, `docs/src/programmer/color-management.md:164`
+   - Evidence (implementation): `crates/vfx-color/src/aces.rs:224`, `crates/vfx-color/src/aces.rs:243`
+   - Impact: примеры не компилируются и неверно описывают ACES API.
+
+372) В `crates/io.md` используется `exr::read_layer` и `exr::read_layered`, но в API есть только `exr::read_layers`.
+   - Evidence (doc claim): `docs/src/crates/io.md:68`, `docs/src/crates/io.md:119`
+   - Evidence (implementation): `crates/vfx-io/src/exr.rs:819`
+   - Impact: примеры не компилируются.
+
+373) В `programmer/imagebufalgo/README.md` примеры не соответствуют API: используется `add_constant`, `blur_inplace`, и `resize(..., "lanczos")` с строковым фильтром, но таких функций/сигнатур нет (есть `add`, `blur_into`, `resize` с `ResizeFilter`).
+   - Evidence (doc claim): `docs/src/programmer/imagebufalgo/README.md:22`, `docs/src/programmer/imagebufalgo/README.md:44`, `docs/src/programmer/imagebufalgo/README.md:73`
+   - Evidence (implementation): `crates/vfx-io/src/imagebufalgo/mod.rs:66`, `crates/vfx-io/src/imagebufalgo/filters.rs:119`, `crates/vfx-io/src/imagebufalgo/geometry.rs:315`
+   - Impact: примеры не компилируются, вводят в заблуждение по API imagebufalgo.
+
+374) В `programmer/ocio-integration.md` используются `baker.bake_1d`/`baker.bake_3d`, но реальные методы — `bake_lut_1d`/`bake_lut_3d`.
+   - Evidence (doc claim): `docs/src/programmer/ocio-integration.md:200`, `docs/src/programmer/ocio-integration.md:204`
+   - Evidence (implementation): `crates/vfx-ocio/src/baker.rs:84`, `crates/vfx-ocio/src/baker.rs:148`
+   - Impact: пример не компилируется.
+
+375) В `programmer/imagebufalgo/filters.md` примеры вызывают `blur(&image, 5.0)?`, `blur_xy`, и функции без `roi`, но API требует `roi: Option<Roi3D>`, не возвращает `Result`, и `blur_xy` отсутствует.
+   - Evidence (doc claim): `docs/src/programmer/imagebufalgo/filters.md:10`, `docs/src/programmer/imagebufalgo/filters.md:13`
+   - Evidence (implementation): `crates/vfx-io/src/imagebufalgo/filters.rs:111`, `crates/vfx-io/src/imagebufalgo/filters.rs:119`
+   - Impact: примеры не компилируются и не отражают фактические сигнатуры.
+
+376) В `crates/bench.md` описаны I/O и resize бенчмарки (io/*, resize/*), которых нет в `vfx-bench` — там только transfer/lut/cdl/simd.
+   - Evidence (doc claim): `docs/src/crates/bench.md:23`, `docs/src/crates/bench.md:31`
+   - Evidence (implementation): `crates/vfx-bench/benches/vfx_bench.rs:9`
+   - Impact: документация вводит в заблуждение по покрытию бенчмарков.
+
+377) `docs/src/aces/vfx-rs-aces.md` использует ряд несуществующих API: `Primaries::ACES_AP0`/`Primaries::ACES_AP1`, `linear_to_*`/`*_to_linear` из `vfx_transfer`, `apply_aces_idt`/`apply_aces_rrt_odt`/`apply_idt`/`apply_rrt_odt` из `vfx_color::aces`, `Config::from_env`, `config.color_spaces()`, `Processor::new`, `DisplayViewProcessor::new`.
+   - Evidence (doc claim): `docs/src/aces/vfx-rs-aces.md:45`, `docs/src/aces/vfx-rs-aces.md:92`, `docs/src/aces/vfx-rs-aces.md:147`, `docs/src/aces/vfx-rs-aces.md:183`, `docs/src/aces/vfx-rs-aces.md:187`, `docs/src/aces/vfx-rs-aces.md:200`, `docs/src/aces/vfx-rs-aces.md:214`
+   - Evidence (implementation): `crates/vfx-primaries/src/lib.rs:184`, `crates/vfx-transfer/src/lib.rs:88`, `crates/vfx-color/src/aces.rs:224`, `crates/vfx-ocio/src/config.rs:202`, `crates/vfx-ocio/src/processor.rs:642`
+   - Impact: документация по ACES не компилируется и вводит в заблуждение.
+
+378) В `docs/src/aces/color-spaces.md` и `docs/src/aces/transfer-functions.md` используются `Primaries::ACES_AP0/AP1` и `linear_to_*`/`*_to_linear` из `vfx_transfer`, которых нет в API.
+   - Evidence (doc claim): `docs/src/aces/color-spaces.md:31`, `docs/src/aces/color-spaces.md:61`, `docs/src/aces/transfer-functions.md:63`, `docs/src/aces/transfer-functions.md:170`
+   - Evidence (implementation): `crates/vfx-primaries/src/lib.rs:184`, `crates/vfx-transfer/src/lib.rs:88`
+   - Impact: ACES доп. документация не компилируется.
+
+379) В `crates/color.md` используются методы `ColorProcessor::srgb_to_linear` и `ColorProcessor::apply_srgb_to_linear`, которых нет в API.
+   - Evidence (doc claim): `docs/src/crates/color.md:53`, `docs/src/crates/color.md:57`
+   - Evidence (implementation): `crates/vfx-color/src/processor.rs:181`, `crates/vfx-color/src/processor.rs:210`
+   - Impact: пример не компилируется; нужно использовать `Pipeline` + `apply`/`apply_batch`.
+
+380) В `crates/color.md` указан `pipeline.apply_buffer(&mut data)`, но у `Pipeline` нет `apply_buffer`; есть `ColorProcessor::apply_buffer` для плоского буфера и размерности.
+   - Evidence (doc claim): `docs/src/crates/color.md:82`
+   - Evidence (implementation): `crates/vfx-color/src/pipeline.rs:129`, `crates/vfx-color/src/processor.rs:264`
+   - Impact: пример не компилируется и вводит в заблуждение по API буферной обработки.
+
+381) В `crates/color.md` используются `Pipeline::tonemap_reinhard()` и `Pipeline::lut_3d(...)`, но в API нет `tonemap_reinhard`, а метод называется `lut3d`.
+   - Evidence (doc claim): `docs/src/crates/color.md:206`, `docs/src/crates/color.md:217`
+   - Evidence (implementation): `crates/vfx-color/src/pipeline.rs:129`, `crates/vfx-color/src/pipeline.rs:173`
+   - Impact: примеры не компилируются и неверно описывают API пайплайна.
+
+382) В `crates/core.md` примеры используют `Rgb<Srgb>` и `Rgba<AcesCg>` без параметра типа пикселя, но в API требуется `Rgb<C, T>`/`Rgba<C, T>`.
+   - Evidence (doc claim): `docs/src/crates/core.md:19`, `docs/src/crates/core.md:20`
+   - Evidence (implementation): `crates/vfx-core/src/pixel.rs:340`, `crates/vfx-core/src/pixel.rs:507`
+   - Impact: примеры не компилируются, сигнатуры неверны.
+
+383) В `crates/core.md` типы `Image`, `ImageView`, `ImageViewMut` используются без параметра `const N`, но в API они определены как `Image<C, T, N>` и `ImageView<'a, C, T, N>`.
+   - Evidence (doc claim): `docs/src/crates/core.md:40`, `docs/src/crates/core.md:43`, `docs/src/crates/core.md:46`
+   - Evidence (implementation): `crates/vfx-core/src/image.rs:115`, `crates/vfx-core/src/image.rs:537`, `crates/vfx-core/src/image.rs:639`
+   - Impact: примеры не компилируются.
+
+384) В `crates/core.md` показан вызов `srgb_to_linear(...)`, но такой функции в `vfx-core` нет.
+   - Evidence (doc claim): `docs/src/crates/core.md:97`
+   - Evidence (implementation): `crates/vfx-core/src/lib.rs:53`
+   - Impact: пример не компилируется; требуется использовать функцию из `vfx-transfer` либо другой слой.
+
+385) В `crates/icc.md` используется `Profile::from_bytes`, но в API есть `Profile::from_icc`.
+   - Evidence (doc claim): `docs/src/crates/icc.md:41`, `docs/src/crates/icc.md:200`
+   - Evidence (implementation): `crates/vfx-icc/src/profile.rs:69`
+   - Impact: примеры не компилируются.
+
+386) В `crates/icc.md` указан `Profile::lab_d50()`, но в API есть `Profile::lab()`.
+   - Evidence (doc claim): `docs/src/crates/icc.md:61`
+   - Evidence (implementation): `crates/vfx-icc/src/profile.rs:193`
+   - Impact: пример не компилируется.
+
+387) В `crates/icc.md` используется `Profile::from_standard(...) ?`, но функция возвращает `Self` без `Result`.
+   - Evidence (doc claim): `docs/src/crates/icc.md:71`
+   - Evidence (implementation): `crates/vfx-icc/src/profile.rs:105`
+   - Impact: пример не компилируется и вводит в заблуждение по сигнатуре.
+
+388) В `crates/icc.md` пример `convert_rgb` использует порядок аргументов `(src, dst, intent, pixels)`, но API ожидает `(pixels, src, dst, intent)`.
+   - Evidence (doc claim): `docs/src/crates/icc.md:135`
+   - Evidence (implementation): `crates/vfx-icc/src/transform.rs:186`
+   - Impact: пример не компилируется.
+
+389) В `crates/lut.md` используется `Lut3D::apply_tetrahedral`, но этот метод не публичный; публичный API использует `apply` + `Interpolation::Tetrahedral`.
+   - Evidence (doc claim): `docs/src/crates/lut.md:45`
+   - Evidence (implementation): `crates/vfx-lut/src/lut3d.rs:224`
+   - Impact: пример не компилируется и предлагает недоступный API.
+
+390) В `crates/lut.md` матчинг `ProcessNode::Matrix(m)`/`Lut1D(lut)`/`Lut3D(lut)` не соответствует реальным вариантам enum (они struct-like с полями).
+   - Evidence (doc claim): `docs/src/crates/lut.md:89`, `docs/src/crates/lut.md:90`, `docs/src/crates/lut.md:91`, `docs/src/crates/lut.md:92`
+   - Evidence (implementation): `crates/vfx-lut/src/clf.rs:334`
+   - Impact: пример не компилируется, структура `ProcessNode` описана неверно.
+
+391) В `crates/lut.md` используется `Lut1D::from_fn`, но в API такого конструктора нет (есть `from_data`/`from_rgb`).
+   - Evidence (doc claim): `docs/src/crates/lut.md:156`, `docs/src/crates/lut.md:159`, `docs/src/crates/lut.md:162`
+   - Evidence (implementation): `crates/vfx-lut/src/lut1d.rs:112`
+   - Impact: пример не компилируется.
+
+392) В `crates/lut.md` пример использует `apply_pixel` и `Lut3D::set`, которых нет в API.
+   - Evidence (doc claim): `docs/src/crates/lut.md:180`, `docs/src/crates/lut.md:181`
+   - Evidence (implementation): `crates/vfx-lut/src/lut3d.rs:49`
+   - Impact: пример не компилируется.
+
+393) В `crates/math.md` указан `catmull_rom`, но такой функции в `vfx-math` нет.
+   - Evidence (doc claim): `docs/src/crates/math.md:78`, `docs/src/crates/math.md:87`
+   - Evidence (implementation): `crates/vfx-math/src/interp.rs:42`
+   - Impact: пример не компилируется.
+
+394) В `crates/math.md` используются `simd::process_rgba_f32x8` и `simd::apply_matrix_simd`, но таких функций в модуле `simd` нет.
+   - Evidence (doc claim): `docs/src/crates/math.md:95`, `docs/src/crates/math.md:98`
+   - Evidence (implementation): `crates/vfx-math/src/simd.rs:1`
+   - Impact: пример не компилируется.
+
+395) В `crates/math.md` указаны `rgb_to_luminance` и `linearize_srgb`, но этих функций в `vfx-math` нет.
+   - Evidence (doc claim): `docs/src/crates/math.md:109`, `docs/src/crates/math.md:112`
+   - Evidence (implementation): `crates/vfx-math/src/lib.rs:29`
+   - Impact: пример не компилируется и вводит в заблуждение по набору утилит.
+
+396) В `crates/ops.md` примеры `over`/`blend` не передают `width/height`, но API требует размеры изображения.
+   - Evidence (doc claim): `docs/src/crates/ops.md:111`, `docs/src/crates/ops.md:114`
+   - Evidence (implementation): `crates/vfx-ops/src/composite.rs:250`, `crates/vfx-ops/src/composite.rs:296`
+   - Impact: примеры не компилируются.
+
+397) В `crates/ops.md` `premultiply(&mut rgba_data)`/`unpremultiply(&mut rgba_data)` не соответствует API: `premultiply` работает с одним пикселем, а для буфера есть `premultiply_inplace`/`unpremultiply_inplace`.
+   - Evidence (doc claim): `docs/src/crates/ops.md:141`, `docs/src/crates/ops.md:144`
+   - Evidence (implementation): `crates/vfx-ops/src/composite.rs:345`, `crates/vfx-ops/src/composite.rs:451`
+   - Impact: пример не компилируется/использует неверную функцию.
+
+398) В `crates/ops.md` используются `rotate_90` и `rotate_270`, но в API есть `rotate_90_cw`/`rotate_90_ccw` и `rotate_180`; `rotate_270` отсутствует.
+   - Evidence (doc claim): `docs/src/crates/ops.md:152`, `docs/src/crates/ops.md:155`
+   - Evidence (implementation): `crates/vfx-ops/src/transform.rs:176`, `crates/vfx-ops/src/transform.rs:215`, `crates/vfx-ops/src/transform.rs:253`
+   - Impact: пример не компилируется.
+
+399) В `crates/ops.md` указаны `barrel_distort`, `pincushion_distort` и `st_map`, но в API есть `barrel`, `pincushion`; `st_map` отсутствует.
+   - Evidence (doc claim): `docs/src/crates/ops.md:180`, `docs/src/crates/ops.md:194`, `docs/src/crates/ops.md:197`
+   - Evidence (implementation): `crates/vfx-ops/src/warp.rs:69`, `crates/vfx-ops/src/warp.rs:99`
+   - Impact: примеры не компилируются.
+
+400) В `crates/ops.md` упомянуты `layer_ops::apply_to_layer` и `LayerMask`, но в `layer_ops` их нет (есть `resize_layer`, `blur_layer`, `crop_layer` и т.п.).
+   - Evidence (doc claim): `docs/src/crates/ops.md:205`, `docs/src/crates/ops.md:208`
+   - Evidence (implementation): `crates/vfx-ops/src/layer_ops.rs:1`
+   - Impact: пример не компилируется и описывает несуществующий API.
+
+401) В `crates/python.md` используются `Image.to_numpy()`/`Image.from_numpy()` и `img.data()`, но в биндингах есть `Image.numpy()` и конструктор `Image(array)`; `data()` отсутствует.
+   - Evidence (doc claim): `docs/src/crates/python.md:42`, `docs/src/crates/python.md:48`, `docs/src/crates/python.md:67`, `docs/src/crates/python.md:68`, `docs/src/crates/python.md:71`
+   - Evidence (implementation): `crates/vfx-rs-py/src/image.rs:48`, `crates/vfx-rs-py/src/image.rs:105`
+   - Impact: примеры не работают, API описан неверно.
+
+402) В `crates/python.md` показан `vfx_rs.write(..., quality=..., compression=...)`, но топ-уровневый `write` принимает только `(path, image)`.
+   - Evidence (doc claim): `docs/src/crates/python.md:88`, `docs/src/crates/python.md:89`
+   - Evidence (implementation): `crates/vfx-rs-py/src/lib.rs:75`
+   - Impact: примеры не работают; форматные опции доступны только в `vfx_rs.io`.
+
+403) В `crates/python.md` используется модуль `vfx_rs.color` и функции `apply_srgb_eotf`/`rgb_to_rgb_matrix`, но такого подмодуля в биндингах нет.
+   - Evidence (doc claim): `docs/src/crates/python.md:95`, `docs/src/crates/python.md:103`, `docs/src/crates/python.md:117`
+   - Evidence (implementation): `crates/vfx-rs-py/src/lib.rs:98`
+   - Impact: примеры не работают.
+
+404) В `crates/python.md` используются `lut.apply_3d`/`lut.apply_1d`, но в модуле `lut` нет таких функций (есть классы `Lut1D`/`Lut3D` с `apply`).
+   - Evidence (doc claim): `docs/src/crates/python.md:135`, `docs/src/crates/python.md:136`
+   - Evidence (implementation): `crates/vfx-rs-py/src/lut.rs:7`
+   - Impact: примеры не работают.
+
+405) В `crates/python.md` `ops.resize` использует `filter="lanczos"` и `scale=...`, но Python API ожидает `ResizeFilter` enum и параметры `width/height`; `scale` не поддерживается.
+   - Evidence (doc claim): `docs/src/crates/python.md:145`, `docs/src/crates/python.md:146`
+   - Evidence (implementation): `crates/vfx-rs-py/src/ops.rs:383`, `crates/vfx-rs-py/src/ops.rs:418`
+   - Impact: примеры не работают.
+
+406) В `crates/python.md` `ops.blur` принимает `radius` и `type`, но реальная сигнатура — `blur(image, sigma, roi=None)`.
+   - Evidence (doc claim): `docs/src/crates/python.md:149`
+   - Evidence (implementation): `crates/vfx-rs-py/src/ops.rs:941`
+   - Impact: пример не работает.
+
+407) В `crates/python.md` указан `ops.blend(..., mode=...)`, но в Python-модуле `ops` нет функции `blend` (есть отдельные `*_blend`).
+   - Evidence (doc claim): `docs/src/crates/python.md:153`
+   - Evidence (implementation): `crates/vfx-rs-py/src/ops.rs:1676`
+   - Impact: пример не работает.
+
+408) В `crates/python.md` используется `ocio.Config`/`builtin_aces_1_3` и методы `config.processor`/`display_processor`, но в биндингах класс называется `ColorConfig`, метод `aces_1_3`, а `display_processor` отсутствует.
+   - Evidence (doc claim): `docs/src/crates/python.md:162`, `docs/src/crates/python.md:165`, `docs/src/crates/python.md:175`
+   - Evidence (implementation): `crates/vfx-rs-py/src/ocio.rs:178`, `crates/vfx-rs-py/src/ocio.rs:240`
+   - Impact: примеры не работают.
+
+409) В `crates/python.md` показаны `read_layers`/`read_layer`/`write_layers`, но в биндингах есть только `read_layered` (LayeredImage); указанных функций нет.
+   - Evidence (doc claim): `docs/src/crates/python.md:227`, `docs/src/crates/python.md:232`, `docs/src/crates/python.md:235`
+   - Evidence (implementation): `crates/vfx-rs-py/src/lib.rs:58`
+   - Impact: примеры не работают.
+
+410) В `crates/python.md` используются исключения `vfx_rs.IoError`/`vfx_rs.FormatError`, но такие типы не экспортируются в Python.
+   - Evidence (doc claim): `docs/src/crates/python.md:249`, `docs/src/crates/python.md:251`
+   - Evidence (implementation): `crates/vfx-rs-py/src/lib.rs:84`
+   - Impact: обработчик исключений не сработает как описано.
+
+411) В `crates/python.md` заявлено, что `to_numpy()` может возвращать zero-copy view, но реализация `numpy()` всегда делает копию через `to_f32()`.
+   - Evidence (doc claim): `docs/src/crates/python.md:213`, `docs/src/crates/python.md:214`
+   - Evidence (implementation): `crates/vfx-rs-py/src/image.rs:105`
+   - Impact: ожидания по производительности/памяти не соответствуют факту.
+
+412) В `crates/tests.md` описана структура `crates/vfx-tests/tests/*.rs`, но в реальности тесты находятся в `crates/vfx-tests/src/lib.rs` и `crates/vfx-tests/src/golden.rs`; директории `tests/` нет.
+   - Evidence (doc claim): `docs/src/crates/tests.md:12`, `docs/src/crates/tests.md:14`, `docs/src/crates/tests.md:15`, `docs/src/crates/tests.md:19`
+   - Evidence (implementation): `crates/vfx-tests/src/lib.rs:1`
+   - Impact: документация вводит в заблуждение по структуре тестов.
+
+413) В `crates/tests.md` предлагается `cargo test -p vfx-tests --test io_roundtrip`, но такой integration test-таргет отсутствует.
+   - Evidence (doc claim): `docs/src/crates/tests.md:29`
+   - Evidence (implementation): `crates/vfx-tests/src/lib.rs:21`
+   - Impact: команда из документации не работает.
+
+414) В `crates/README.md` диаграмма зависимостей показывает `vfx-core → vfx-math`, но на самом деле `vfx-math` зависит от `vfx-core`.
+   - Evidence (doc claim): `docs/src/crates/README.md:78`, `docs/src/crates/README.md:79`
+   - Evidence (implementation): `crates/vfx-math/Cargo.toml:10`
+   - Impact: неверная архитектурная схема вводит в заблуждение.
+
+415) В `programmer/README.md` используется `vfx_ops::resize` и вызов `resize(&image, 960, 540)`, но такого API в `vfx-ops` нет; есть `resize::resize_f32` для raw-буфера.
+   - Evidence (doc claim): `docs/src/programmer/README.md:45`, `docs/src/programmer/README.md:52`
+   - Evidence (implementation): `crates/vfx-ops/src/resize.rs:120`
+   - Impact: пример не компилируется.
+
+416) В `appendix/formats.md` указано, что PSD поддерживает только flattened read и не поддерживает layers, но в `vfx-io::psd` есть чтение слоев (`read_layers`, `read_layer_by_*`).
+   - Evidence (doc claim): `docs/src/appendix/formats.md:101`, `docs/src/appendix/formats.md:103`
+   - Evidence (implementation): `crates/vfx-io/src/psd.rs:153`, `crates/vfx-io/src/psd.rs:190`
+   - Impact: документация занижает фактическую поддержку PSD.
+
+417) В `appendix/formats.md` используются CLI флаги `vfx info ... --layers` и `vfx convert ... --layer`, но таких флагов в CLI нет.
+   - Evidence (doc claim): `docs/src/appendix/formats.md:29`, `docs/src/appendix/formats.md:30`
+   - Evidence (implementation): `crates/vfx-cli/src/main.rs:252`, `crates/vfx-cli/src/main.rs:195`
+   - Impact: примеры не работают.
+
+418) В `appendix/feature-matrix.md` заявлен формат `TX (tiled)` как поддерживаемый, но в `vfx-io` нет модуля/формата `tx` (есть `ktx` под фичей `ktx`).
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:174`
+   - Evidence (implementation): `crates/vfx-io/src/lib.rs:152`, `crates/vfx-io/src/lib.rs:153`
+   - Impact: матрица возможностей вводит в заблуждение по поддержке форматов.
