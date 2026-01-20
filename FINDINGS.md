@@ -2524,3 +2524,23 @@
 457) В `streaming::ExrStreamingSource` для scanline-файлов идёт lazy-load всего изображения в память (кэш), поэтому стриминг по региону не реализован.
    - Evidence (implementation): `crates/vfx-io/src/streaming/exr.rs:188`, `crates/vfx-io/src/streaming/exr.rs:191`
    - Impact: риск OOM на больших scanline-файлах; отсутствует ожидаемый региональный стриминг.
+
+458) В `appendix/feature-matrix.md` заявлены `Context variables` как **Done**, но `processor_with_context` лишь сохраняет контекст и не резолвит `$VAR` в `FileTransform` путях (TODO).
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:349`
+   - Evidence (implementation): `crates/vfx-ocio/src/config.rs:1156`, `crates/vfx-ocio/src/config.rs:1161`, `crates/vfx-ocio/src/config.rs:1162`
+   - Impact: переменные окружения не подставляются в пути LUT/файлов, поведение не соответствует заявленному.
+
+459) В `appendix/feature-matrix.md` указано `Operation fusion` как **Done**, но операции исполняются по одной (каждый `apply_*` вызывает `execute_color`), а объединение доступно только при ручном использовании `ColorOpBatch`.
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:320`
+   - Evidence (implementation): `crates/vfx-compute/src/processor.rs:560`, `crates/vfx-compute/src/processor.rs:566`, `crates/vfx-compute/src/processor.rs:633`
+   - Impact: автоматического слияния последовательных операций нет; ожидания по производительности завышены.
+
+460) В `appendix/feature-matrix.md` заявлено `NumPy arrays` как `Zero-copy`, но Python-обёртка всегда копирует данные (`to_vec()` при `Image::new`, `to_f32()` при `numpy()`).
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:422`
+   - Evidence (implementation): `crates/vfx-rs-py/src/image.rs:55`, `crates/vfx-rs-py/src/image.rs:59`, `crates/vfx-rs-py/src/image.rs:105`
+   - Impact: лишние копии памяти; API не соответствует заявленной zero-copy семантике.
+
+461) В `appendix/feature-matrix.md` указано `Streaming execution` как **Done**, но стриминг для больших изображений фактически подменяется полным чтением в память (scanline input + compute source).
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:321`
+   - Evidence (implementation): `crates/vfx-compute/src/backend/streaming.rs:156`, `crates/vfx-io/src/streaming/exr.rs:188`
+   - Impact: при больших файлах поведение не «streaming», риск OOM и деградации производительности.
