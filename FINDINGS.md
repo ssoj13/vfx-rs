@@ -2544,3 +2544,72 @@
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:321`
    - Evidence (implementation): `crates/vfx-compute/src/backend/streaming.rs:156`, `crates/vfx-io/src/streaming/exr.rs:188`
    - Impact: при больших файлах поведение не «streaming», риск OOM и деградации производительности.
+
+462) Несоответствие паритету с OpenColorIO: в оригинале активно используется `Context::resolveStringVar` для подстановки `$VAR` (включая тесты на поведение), тогда как в `vfx-ocio` разрешение переменных контекста не реализовано.
+   - Evidence (reference): `_ref/OpenColorIO/tests/cpu/Config_tests.cpp:916`, `_ref/OpenColorIO/tests/cpu/Config_tests.cpp:926`
+   - Evidence (implementation): `crates/vfx-ocio/src/config.rs:1156`, `crates/vfx-ocio/src/config.rs:1161`
+   - Impact: расхождение с поведением OCIO при обработке FileTransform путей и контекстных переменных.
+
+463) Несоответствие паритету с OpenImageIO: оригинал поддерживает per-channel форматы (`channelformats`), а в `vfx-io` формат задаётся одним `PixelFormat` для всех каналов.
+   - Evidence (reference): `_ref/OpenImageIO/src/include/OpenImageIO/imageio.h:286`, `_ref/OpenImageIO/src/include/OpenImageIO/imageio.h:802`
+   - Evidence (implementation): `crates/vfx-io/src/lib.rs:546`, `crates/vfx-io/src/lib.rs:548`
+   - Impact: нет поддержки смешанных типов каналов (например, RGB float + A uint) в памяти и IO.
+
+464) Несоответствие паритету с OpenImageIO: в оригинале реализована проверка `contiguous()` для `ImageBuf`, а в `vfx-io` она возвращает `true` всегда (TODO).
+   - Evidence (reference): `_ref/OpenImageIO/src/include/OpenImageIO/imagebuf.h:1379`, `_ref/OpenImageIO/src/include/OpenImageIO/imagebuf.h:1385`
+   - Evidence (implementation): `crates/vfx-io/src/imagebuf/mod.rs:682`
+   - Impact: ложные гарантии о непрерывной раскладке данных, возможные ошибки при нативном interop.
+
+465) В `appendix/feature-matrix.md` утверждается «Overall OCIO parity: ~100%», но уже есть подтверждённые расхождения (например, контекстные переменные не реализованы как в OCIO).
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:457`
+   - Evidence (implementation): `crates/vfx-ocio/src/config.rs:1156`, `crates/vfx-ocio/src/config.rs:1161`
+   - Impact: итоговая оценка паритета вводит в заблуждение.
+
+466) В `appendix/feature-matrix.md` строка `Image I/O` помечена как **Done**/`13/13 100%`, но есть подтверждённые несоответствия (например, JP2 write отсутствует, TIFF tiles не реализованы).
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:421`, `docs/src/appendix/feature-matrix.md:449`
+   - Evidence (implementation): `crates/vfx-io/src/jp2.rs:1`, `crates/vfx-io/src/tiff.rs:172`
+   - Impact: итоговая метрика вводит в заблуждение по зрелости Image I/O.
+
+467) В `appendix/feature-matrix.md` итог `Transfer Functions 22/22 100%` противоречит отсутствию Log3G12.
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:445`
+   - Evidence (implementation): `crates/vfx-transfer/src/red_log.rs:1`, `crates/vfx-transfer/src/red_log.rs:112`
+   - Impact: итоговая метрика завышает покрытие transfer-кривых.
+
+468) В `appendix/feature-matrix.md` итог `GPU Compute 3/3 100%` завышен: заявлены стриминг и кэш, но они не реализованы полноценно.
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:453`
+   - Evidence (implementation): `crates/vfx-compute/src/backend/streaming.rs:156`, `crates/vfx-compute/src/backend/executor.rs:193`
+   - Impact: итоговая метрика вводит в заблуждение по зрелости GPU compute.
+
+469) В `appendix/feature-matrix.md` заявлен формат `TX (tiled)`, но в списке поддерживаемых форматов отсутствует `tx`, и детектор форматов его не распознаёт.
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:174`
+   - Evidence (implementation): `crates/vfx-io/src/detect.rs:12`, `crates/vfx-io/src/detect.rs:62`
+   - Impact: матрица возможностей завышает поддержку форматов текстур.
+
+470) В `appendix/feature-matrix.md` указано, что PSD читается, но `vfx_io::read` не поддерживает PSD: формата нет в `Format`, и в match отсутствует путь чтения.
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:173`
+   - Evidence (implementation): `crates/vfx-io/src/detect.rs:12`, `crates/vfx-io/src/lib.rs:206`
+   - Impact: вызов `vfx_io::read("file.psd")` вернёт `UnsupportedFormat` несмотря на заявленную поддержку.
+
+471) В `appendix/feature-matrix.md` AVIF помечен как `Read/Write Done`, но `vfx_io::read` явно возвращает ошибку для AVIF чтения.
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:183`
+   - Evidence (implementation): `crates/vfx-io/src/lib.rs:241`
+   - Impact: документация завышает поддержку AVIF (чтение недоступно).
+
+472) Несоответствие паритету с OpenImageIO: в оригинале есть инструменты для `.tx` (txReader/txWriter/maketx), но в `vfx-io` формат `tx` отсутствует в детекторе и списке форматов.
+   - Evidence (reference): `_ref/OpenImageIO/src/nuke/txReader/txReader.cpp`, `_ref/OpenImageIO/src/nuke/txWriter/txWriter.cpp`
+   - Evidence (implementation): `crates/vfx-io/src/detect.rs:12`, `crates/vfx-io/src/detect.rs:62`
+   - Impact: функциональность `.tx` не реализована, несмотря на ожидаемую совместимость с OIIO.
+
+473) В `appendix/formats.md` для PSD указано `Layers ✗`, но модуль PSD предоставляет `read_layers`/`read_layers_opts`.
+   - Evidence (doc claim): `docs/src/appendix/formats.md:103`
+   - Evidence (implementation): `crates/vfx-io/src/psd.rs:153`, `crates/vfx-io/src/psd.rs:158`
+   - Impact: документация занижает реальную поддержку слоёв.
+
+474) В `appendix/formats.md` для PSD заявлена поддержка `8/16-bit`, но чтение использует `psd.rgba()` (u8) и масштабирование через `/255.0`, т.е. 16-bit не поддержан.
+   - Evidence (doc claim): `docs/src/appendix/formats.md:104`
+   - Evidence (implementation): `crates/vfx-io/src/psd.rs:96`, `crates/vfx-io/src/psd.rs:115`
+   - Impact: 16-битные PSD будут интерпретированы как 8-битные, возможна потеря точности.
+
+475) В `TextureSystem::sample` режимы `Trilinear`/`Anisotropic` фактически сводятся к bilinear без выбора mip-уровня; в `sample_d` `Anisotropic` тоже упрощён до trilinear.
+   - Evidence (implementation): `crates/vfx-io/src/texture.rs:144`, `crates/vfx-io/src/texture.rs:173`
+   - Impact: качество фильтрации ниже заявленного; выбор фильтра не соответствует поведению.
