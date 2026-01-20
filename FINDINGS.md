@@ -2613,3 +2613,46 @@
 475) В `TextureSystem::sample` режимы `Trilinear`/`Anisotropic` фактически сводятся к bilinear без выбора mip-уровня; в `sample_d` `Anisotropic` тоже упрощён до trilinear.
    - Evidence (implementation): `crates/vfx-io/src/texture.rs:144`, `crates/vfx-io/src/texture.rs:173`
    - Impact: качество фильтрации ниже заявленного; выбор фильтра не соответствует поведению.
+
+476) `FormatRegistry::register_builtin_formats` регистрирует только DPX/PNG/JPEG/TIFF/HDR (и ещё один формат под фичей), но не регистрирует HEIF/WebP/AVIF/JP2/PSD/DDS/KTX при включённых фичах.
+   - Evidence (implementation): `crates/vfx-io/src/registry.rs:120`, `crates/vfx-io/src/registry.rs:200`
+   - Impact: `FormatRegistry::read`/`supports_extension` не распознают часть заявленных форматов, даже если модули/фичи включены.
+
+477) В `feature-matrix` CinemaDNG отмечен как поддерживаемый sequence-формат, но `Format`/детектор/registry не умеют обнаруживать `.dng` и нет интеграции с `vfx_io::read`.
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:189`
+   - Evidence (implementation): `crates/vfx-io/src/detect.rs:12`, `crates/vfx-io/src/lib.rs:206`, `crates/vfx-io/src/registry.rs:120`
+   - Impact: авто‑чтение через общий API не работает для CinemaDNG, нужна ручная работа через модуль `cinema_dng`.
+
+478) `ColorSpaceTransform` парсится из OCIO YAML, но в `Processor::compile_transform` отсутствует обработка этого варианта.
+   - Evidence (implementation): `crates/vfx-ocio/src/config.rs:687`, `crates/vfx-ocio/src/transform.rs:816`, `crates/vfx-ocio/src/processor.rs:781`
+   - Impact: конфиги с `ColorSpaceTransform` не исполняются через процессор, возможен `UnsupportedTransform`.
+
+479) В `feature-matrix` раздел Fixed Function Ops (vfx-ops) заявляет `RGB <-> HSV`, но в `vfx-ops::fixed_function` таких преобразований нет (HSV реализован в OCIO-процессоре, а не в vfx-ops).
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:257`
+   - Evidence (implementation): `crates/vfx-ops/src/fixed_function.rs:1`, `crates/vfx-ocio/src/processor.rs:1612`
+   - Impact: заявленный функционал vfx-ops отсутствует или доступен только через OCIO.
+
+480) Итог `Fixed Functions 16/16 100%` завышен: отсутствует реализация `RGB <-> HSV` в vfx-ops.
+   - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:452`
+   - Evidence (implementation): `crates/vfx-ops/src/fixed_function.rs:1`
+   - Impact: итоговая метрика вводит в заблуждение по покрытию Fixed Functions.
+
+481) В `docs/src/crates/io.md` показан UDIM API `UdimSet`/`udim_pattern`, но в коде есть только `UdimResolver`/`UdimTile` и отсутствуют эти элементы API.
+   - Evidence (doc claim): `docs/src/crates/io.md:183`, `docs/src/crates/io.md:187`
+   - Evidence (implementation): `crates/vfx-io/src/udim.rs:58`
+   - Impact: пример из документации не компилируется; публичный API отличается от заявленного.
+
+482) В `docs/src/cli/udim.md` пример вывода `udim info` содержит `Total size` и формат строк, которых CLI не печатает (нет расчёта общего размера и нет строки `Total size`).
+   - Evidence (doc claim): `docs/src/cli/udim.md:55`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/udim.rs:29`, `crates/vfx-cli/src/commands/udim.rs:39`, `crates/vfx-cli/src/commands/udim.rs:40`
+   - Impact: пример вывода вводит в заблуждение; пользователи не увидят заявленный summary.
+
+483) В `docs/src/cli/udim.md` примеры `udim convert` предлагают вывод в `.tx`, но `tx` не поддерживается детектором/форматами, и `save_image` для `.tx` завершится ошибкой.
+   - Evidence (doc claim): `docs/src/cli/udim.md:86`
+   - Evidence (implementation): `crates/vfx-io/src/detect.rs:12`, `crates/vfx-io/src/lib.rs:206`
+   - Impact: пример команд приводит к `UnsupportedFormat` при конвертации в `.tx`.
+
+484) В `cli/crop.md` заявлено сохранение формата/цветового пространства и метаданных, но CLI всегда конвертирует в f32 и создаёт `ImageData` с `Metadata::default()`.
+   - Evidence (doc claim): `docs/src/cli/crop.md:66`, `docs/src/cli/crop.md:67`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/crop.rs:24`, `crates/vfx-cli/src/commands/crop.rs:27`, `crates/vfx-io/src/lib.rs:754`
+   - Impact: теряются исходные метаданные (включая colorspace), а выход всегда F32, что противоречит документации.
