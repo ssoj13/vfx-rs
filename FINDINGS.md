@@ -2656,3 +2656,37 @@
    - Evidence (doc claim): `docs/src/cli/crop.md:66`, `docs/src/cli/crop.md:67`
    - Evidence (implementation): `crates/vfx-cli/src/commands/crop.rs:24`, `crates/vfx-cli/src/commands/crop.rs:27`, `crates/vfx-io/src/lib.rs:754`
    - Impact: теряются исходные метаданные (включая colorspace), а выход всегда F32, что противоречит документации.
+
+485) В `cli/channel-extract.md` заявлена поддержка именованных каналов вроде `N.x`, `P.y`, `beauty.R` и «custom names», но реализация принимает только R/G/B/A/Z либо числовой индекс.
+   - Evidence (doc claim): `docs/src/cli/channel-extract.md:32`, `docs/src/cli/channel-extract.md:60`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/channels.rs:170`, `crates/vfx-cli/src/commands/channels.rs:179`
+   - Impact: примеры с именами каналов из EXR не работают; CLI не поддерживает выбор по именам, только по индексу/каналам RGBA/Z.
+
+486) В `cli/channel-shuffle.md` заявлено сохранение bit depth и color space, но CLI всегда конвертирует в f32 и создаёт `ImageData` с `Metadata::default()`.
+   - Evidence (doc claim): `docs/src/cli/channel-shuffle.md:111`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/channels.rs:78`, `crates/vfx-cli/src/commands/channels.rs:122`, `crates/vfx-io/src/lib.rs:754`
+   - Impact: теряются метаданные и оригинальный формат пикселей; выход всегда F32.
+
+487) В `cli/channel-shuffle.md` сказано, что отсутствующие каналы заполняются 0, «кроме A — 1», но при отсутствии альфы `A` заполняется 0.0.
+   - Evidence (doc claim): `docs/src/cli/channel-shuffle.md:110`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/channels.rs:101`, `crates/vfx-cli/src/commands/channels.rs:118`
+   - Impact: паттерн `A` на RGB изображениях даст прозрачный альфа‑канал вместо 1.0.
+
+488) В `cli/extract-layer.md` сказано, что без `--layer` извлекается первый/основной слой, но реализация просто печатает список и выходит без записи.
+   - Evidence (doc claim): `docs/src/cli/extract-layer.md:33`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/layers.rs:120`, `crates/vfx-cli/src/commands/layers.rs:125`
+   - Impact: пример «extract default layer» не работает; команда не создаёт файл.
+
+489) В `cli/extract-layer.md` заявлено сохранение метаданных, но `to_image_data()` формирует `ImageData` с `Metadata::default()`.
+   - Evidence (doc claim): `docs/src/cli/extract-layer.md:87`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/layers.rs:150`, `crates/vfx-io/src/lib.rs:1045`
+   - Impact: метаданные (включая colorspace/attrs) теряются при извлечении слоя.
+
+490) В CLI есть команды `grade`, `clamp`, `premult`, но у них нет отдельных страниц в `docs/src/cli` и они не перечислены в `docs/src/cli/README.md`.
+   - Evidence (doc omission): `docs/src/cli/README.md:41`
+   - Evidence (implementation): `crates/vfx-cli/src/commands/grade.rs:1`, `crates/vfx-cli/src/commands/clamp.rs:1`, `crates/vfx-cli/src/commands/premult.rs:1`
+   - Impact: пользователи не находят документацию по реальным командам CLI.
+
+491) В `channel-extract` имя `Z` жёстко мапится на индекс 4, поэтому на одно-канальных depth-изображениях (где `Z` — это канал 0) команда падает как «out of range».
+   - Evidence (implementation): `crates/vfx-cli/src/commands/channels.rs:170`, `crates/vfx-cli/src/commands/channels.rs:179`
+   - Impact: заявленный кейс `-c Z` не работает для обычных depth-пассов, где канал всего один.
