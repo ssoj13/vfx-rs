@@ -283,6 +283,8 @@
    - Evidence (comment skipping): `_ref/OpenColorIO/src/OpenColorIO/fileformats/FileFormatDiscreet1DL.cpp:341`
    - Evidence (lower-case header check): `_ref/OpenColorIO/src/OpenColorIO/fileformats/FileFormatDiscreet1DL.cpp:420`
    - Impact: valid .1dl/.lut files with comments or lowercase headers fail to parse.
+   - STATUS: FIXED
+   - FIX: Added comment line skipping (`trimmed.starts_with('#')`). Changed header check to case-insensitive using `eq_ignore_ascii_case("LUT:")`.
 
 36) Discreet1DL dstDepth parsing does not accept Smoke's `65536f` token and ignores filename-based depth hints.
    - Parser only accepts `8/10/12/16/16f/32f` tokens; `65536f` is rejected.

@@ -71,16 +71,34 @@ impl BitDepth {
         matches!(self, BitDepth::Float16 | BitDepth::Float32)
     }
 
-    /// Parse from string (e.g., "8", "10", "16f", "32f").
+    /// Parse from string (e.g., "8", "10", "16f", "32f", "65536f").
+    /// 
+    /// Supports Smoke's convention of using "65536f" for 16f output depth.
     pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "8" => Some(BitDepth::Int8),
-            "10" => Some(BitDepth::Int10),
-            "12" => Some(BitDepth::Int12),
-            "16" => Some(BitDepth::Int16),
-            "16f" => Some(BitDepth::Float16),
+        let lower = s.to_lowercase();
+        match lower.as_str() {
+            "8" | "256" => Some(BitDepth::Int8),
+            "10" | "1024" => Some(BitDepth::Int10),
+            "12" | "4096" => Some(BitDepth::Int12),
+            "16" | "65536" => Some(BitDepth::Int16),
+            "16f" | "65536f" => Some(BitDepth::Float16),
             "32f" => Some(BitDepth::Float32),
-            _ => None,
+            _ => {
+                // Try parsing as {number}f pattern
+                if lower.ends_with('f') {
+                    let num_str = &lower[..lower.len() - 1];
+                    if let Ok(num) = num_str.parse::<u32>() {
+                        return match num {
+                            256 => Some(BitDepth::Int8),   // unlikely but consistent
+                            1024 => Some(BitDepth::Int10), // unlikely but consistent  
+                            4096 => Some(BitDepth::Int12), // unlikely but consistent
+                            65536 => Some(BitDepth::Float16),
+                            _ => None,
+                        };
+                    }
+                }
+                None
+            }
         }
     }
 
@@ -154,13 +172,13 @@ pub fn parse_1dl_with_info<R: BufRead>(reader: R) -> LutResult<(Lut1D, Discreet1
         let line = line?;
         let trimmed = line.trim();
 
-        // Skip empty lines and comments
-        if trimmed.is_empty() {
+        // Skip empty lines and comments (# at start)
+        if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
 
-        // Check for header
-        if trimmed.starts_with("LUT:") {
+        // Check for header (case-insensitive)
+        if trimmed.len() >= 4 && trimmed[..4].eq_ignore_ascii_case("LUT:") {
             header_info = Some(parse_header(trimmed)?);
             continue;
         }
