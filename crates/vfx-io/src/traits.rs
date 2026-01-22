@@ -56,8 +56,34 @@
 //! ```
 
 use crate::{ImageData, IoResult};
+use crate::deepdata::DeepData;
 use std::io::{Read, Seek, Write};
 use std::path::Path;
+
+/// Format capability flags (OIIO-style supports() query).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FormatCapability {
+    /// Format supports multiple subimages in a single file.
+    MultiImage,
+    /// Format supports MIP-map levels.
+    MipMap,
+    /// Format supports tiled images.
+    Tiles,
+    /// Format supports deep pixel data.
+    DeepData,
+    /// Format supports I/O proxy (memory/custom streams).
+    IoProxy,
+    /// Format supports thumbnails.
+    Thumbnail,
+    /// Format supports appending subimages after writing.
+    AppendSubImage,
+    /// Format supports arbitrary metadata.
+    ArbitraryMetadata,
+    /// Format supports EXIF metadata.
+    Exif,
+    /// Format supports IPTC metadata.
+    Iptc,
+}
 
 /// Combined trait bound for readers (Read + Seek).
 ///
@@ -187,6 +213,95 @@ pub trait FormatReader<O: Default = ()>: Send + Sync {
     fn with_options(options: O) -> Self
     where
         Self: Sized;
+    
+    // === OIIO-style subimage/miplevel API (optional) ===
+    
+    /// Returns true if this format supports multiple subimages.
+    ///
+    /// Default: false. Override for formats like EXR, TIFF.
+    fn supports_subimages(&self) -> bool {
+        false
+    }
+    
+    /// Returns true if this format supports mipmaps.
+    ///
+    /// Default: false. Override for formats like DDS, KTX.
+    fn supports_mipmaps(&self) -> bool {
+        false
+    }
+    
+    /// Returns the number of subimages in the file.
+    ///
+    /// Default: 1. Override for multi-part formats.
+    fn num_subimages<P: AsRef<Path>>(&self, _path: P) -> IoResult<usize> {
+        Ok(1)
+    }
+    
+    /// Returns the number of mip levels for a subimage.
+    ///
+    /// Default: 1. Override for mipmapped formats.
+    fn num_miplevels<P: AsRef<Path>>(&self, _path: P, _subimage: usize) -> IoResult<usize> {
+        Ok(1)
+    }
+    
+    /// Reads a specific subimage/miplevel from a file.
+    ///
+    /// Default: ignores subimage/miplevel and reads the whole image.
+    /// Override for formats that support these features.
+    fn read_subimage<P: AsRef<Path>>(
+        &self,
+        path: P,
+        _subimage: usize,
+        _miplevel: usize,
+    ) -> IoResult<ImageData> {
+        self.read(path)
+    }
+    
+    /// Reads a specific subimage/miplevel from memory.
+    ///
+    /// Default: ignores subimage/miplevel and reads the whole image.
+    fn read_subimage_from_memory(
+        &self,
+        data: &[u8],
+        _subimage: usize,
+        _miplevel: usize,
+    ) -> IoResult<ImageData> {
+        self.read_from_memory(data)
+    }
+    
+    /// Reads deep pixel data from a file.
+    ///
+    /// Default: returns UnsupportedFeature error.
+    /// Override for formats that support deep data (EXR).
+    fn read_deep<P: AsRef<Path>>(&self, _path: P) -> IoResult<DeepData> {
+        Err(crate::IoError::UnsupportedFeature(
+            format!("format '{}' doesn't support deep data", self.format_name())
+        ))
+    }
+    
+    /// Reads deep pixel data from memory.
+    ///
+    /// Default: returns UnsupportedFeature error.
+    fn read_deep_from_memory(&self, _data: &[u8]) -> IoResult<DeepData> {
+        Err(crate::IoError::UnsupportedFeature(
+            format!("format '{}' doesn't support deep data", self.format_name())
+        ))
+    }
+    
+    /// Query if this format supports a specific capability.
+    ///
+    /// Default: returns false for all capabilities.
+    /// Override for formats with specific features.
+    fn supports(&self, _capability: FormatCapability) -> bool {
+        false
+    }
+    
+    /// Returns all capabilities this format supports.
+    ///
+    /// Default: empty list. Override for specific format capabilities.
+    fn capabilities(&self) -> Vec<FormatCapability> {
+        Vec::new()
+    }
 }
 
 /// Format writer trait.
@@ -252,6 +367,18 @@ pub trait FormatWriter<O: Default = ()>: Send + Sync {
     fn with_options(options: O) -> Self
     where
         Self: Sized;
+    
+    /// Query if this format supports a specific capability.
+    ///
+    /// Default: returns false for all capabilities.
+    fn supports(&self, _capability: FormatCapability) -> bool {
+        false
+    }
+    
+    /// Returns all capabilities this format supports.
+    fn capabilities(&self) -> Vec<FormatCapability> {
+        Vec::new()
+    }
 }
 
 // === Legacy traits for backwards compatibility ===

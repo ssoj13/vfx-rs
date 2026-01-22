@@ -661,7 +661,7 @@ impl Config {
                 };
                 Ok(Transform::Exponent(ExponentTransform {
                     value,
-                    negative_style: NegativeStyle::Clamp,
+                    negative_style: parse_negative_style(yaml_str(yaml, "style")),
                     direction: parse_direction(yaml_str(yaml, "direction")),
                 }))
             }
@@ -674,12 +674,16 @@ impl Config {
             }
 
             "CDLTransform" => {
+                let style = match yaml_str(yaml, "style") {
+                    Some("no_clamp") | Some("NoClamp") | Some("NO_CLAMP") => CdlStyle::NoClamp,
+                    _ => CdlStyle::AscCdl,
+                };
                 Ok(Transform::Cdl(CdlTransform {
                     slope: parse_rgb(yaml_f64_list(yaml, "slope"), 1.0),
                     offset: parse_rgb(yaml_f64_list(yaml, "offset"), 0.0),
                     power: parse_rgb(yaml_f64_list(yaml, "power"), 1.0),
                     saturation: yaml_f64(yaml, "saturation").unwrap_or(1.0),
-                    style: CdlStyle::AscCdl,
+                    style,
                     direction: parse_direction(yaml_str(yaml, "direction")),
                 }))
             }
@@ -853,6 +857,96 @@ impl Config {
                 Ok(Transform::Allocation(AllocationTransform {
                     allocation,
                     vars: yaml_f64_list(yaml, "vars"),
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
+
+            "ExponentWithLinearTransform" => {
+                let gamma = parse_rgba(yaml_f64_list(yaml, "gamma"), 1.0);
+                let offset = parse_rgba(yaml_f64_list(yaml, "offset"), 0.0);
+                // OCIO uses "style" key; default for ExponentWithLinear is Linear (not Clamp)
+                let negative_style = match yaml_str(yaml, "style") {
+                    Some(s) => parse_negative_style(Some(s)),
+                    None => NegativeStyle::Linear, // OCIO default for ExponentWithLinear
+                };
+                Ok(Transform::ExponentWithLinear(ExponentWithLinearTransform {
+                    gamma,
+                    offset,
+                    negative_style,
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
+
+            "DisplayViewTransform" => {
+                let src = yaml_str(yaml, "src")
+                    .ok_or_else(|| OcioError::Yaml("DisplayViewTransform missing src".into()))?;
+                let display = yaml_str(yaml, "display")
+                    .ok_or_else(|| OcioError::Yaml("DisplayViewTransform missing display".into()))?;
+                let view = yaml_str(yaml, "view")
+                    .ok_or_else(|| OcioError::Yaml("DisplayViewTransform missing view".into()))?;
+                Ok(Transform::DisplayView(DisplayViewTransform {
+                    src: src.to_string(),
+                    display: display.to_string(),
+                    view: view.to_string(),
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
+
+            "Lut1DTransform" => {
+                // Inline 1D LUT - parse array data if present
+                let length = yaml_int(yaml, "length").unwrap_or(2) as usize;
+                let half_domain = yaml_bool(yaml, "halfDomain").unwrap_or(false);
+                let raw_halfs = yaml_bool(yaml, "rawHalfs").unwrap_or(false);
+                let interp = parse_interpolation(yaml_str(yaml, "interpolation"));
+                
+                // Try to load inline values or create identity
+                let data = yaml_f32_list(yaml, "values");
+                let red = if data.is_empty() {
+                    (0..length).map(|i| i as f32 / (length - 1).max(1) as f32).collect()
+                } else {
+                    data
+                };
+                
+                Ok(Transform::Lut1D(Lut1DTransform {
+                    red,
+                    green: None,
+                    blue: None,
+                    input_min: 0.0,
+                    input_max: 1.0,
+                    output_min: 0.0,
+                    output_max: 1.0,
+                    half_domain,
+                    raw_halfs,
+                    interpolation: interp,
+                    direction: parse_direction(yaml_str(yaml, "direction")),
+                }))
+            }
+
+            "Lut3DTransform" => {
+                // Inline 3D LUT - parse array data if present
+                let size = yaml_int(yaml, "gridSize").unwrap_or(2) as usize;
+                let interp = parse_interpolation(yaml_str(yaml, "interpolation"));
+                
+                // Create identity LUT of given size
+                let total = size * size * size;
+                let mut data = Vec::with_capacity(total);
+                for b in 0..size {
+                    for g in 0..size {
+                        for r in 0..size {
+                            let rf = r as f32 / (size - 1).max(1) as f32;
+                            let gf = g as f32 / (size - 1).max(1) as f32;
+                            let bf = b as f32 / (size - 1).max(1) as f32;
+                            data.push([rf, gf, bf]);
+                        }
+                    }
+                }
+                
+                Ok(Transform::Lut3D(Lut3DTransform {
+                    data,
+                    size,
+                    domain_min: [0.0, 0.0, 0.0],
+                    domain_max: [1.0, 1.0, 1.0],
+                    interpolation: interp,
                     direction: parse_direction(yaml_str(yaml, "direction")),
                 }))
             }
@@ -1163,11 +1257,38 @@ impl Config {
         dst: &str,
         context: &crate::Context,
     ) -> OcioResult<Processor> {
-        // For now, context is applied to search paths
-        // Full implementation would resolve $VAR in FileTransform paths
-        let mut processor = self.processor(src, dst)?;
-        processor.set_context(context.clone());
-        Ok(processor)
+        // Build transform chain: src -> reference -> dst (same as processor_with_opts)
+        let src_cs = self
+            .colorspace(src)
+            .ok_or_else(|| OcioError::ColorSpaceNotFound { name: src.into() })?;
+        let dst_cs = self
+            .colorspace(dst)
+            .ok_or_else(|| OcioError::ColorSpaceNotFound { name: dst.into() })?;
+
+        let mut transforms = Vec::new();
+
+        if let Some(t) = src_cs.to_reference() {
+            transforms.push(t.clone());
+        }
+
+        if let Some(t) = dst_cs.from_reference() {
+            transforms.push(t.clone());
+        } else if let Some(t) = dst_cs.to_reference() {
+            transforms.push(t.clone().inverse());
+        }
+
+        if transforms.is_empty() {
+            return Ok(Processor::new());
+        }
+
+        let group = Transform::group(transforms);
+        // Use context-aware creation to resolve $VAR DURING compilation
+        Processor::from_transform_with_context(
+            &group,
+            TransformDirection::Forward,
+            OptimizationLevel::default(),
+            context,
+        )
     }
 
     fn append_look_transforms(&self, transforms: &mut Vec<Transform>, looks: &str) -> OcioResult<()> {
@@ -2111,6 +2232,96 @@ impl Config {
             .collect()
     }
 
+    /// Checks if a display view is applicable for a given colorspace based on viewing rules.
+    /// 
+    /// If the view has no rule, it's always applicable.
+    /// If the view has a rule, checks if the colorspace matches the rule's criteria.
+    pub fn is_display_view_applicable(&self, view: &crate::display::View, colorspace_name: &str) -> bool {
+        // No rule means always applicable
+        let rule_name = match view.rule() {
+            Some(r) => r,
+            None => return true,
+        };
+        
+        // Find the rule
+        let rule = match self.viewing_rule(rule_name) {
+            Some(r) => r,
+            None => return true, // Unknown rule, assume applicable
+        };
+        
+        // Find the colorspace
+        let cs = match self.colorspace(colorspace_name) {
+            Some(cs) => cs,
+            None => return true, // Unknown colorspace, assume applicable
+        };
+        
+        // Check colorspace list match (supports role names)
+        if !rule.colorspaces.is_empty() {
+            let cs_name_lower = colorspace_name.to_lowercase();
+            for rule_cs in &rule.colorspaces {
+                // Rule can use role names, so resolve them first
+                let resolved = self.roles.get(rule_cs).unwrap_or(rule_cs.as_str());
+                if resolved.to_lowercase() == cs_name_lower {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        // Check encoding match
+        if !rule.encodings.is_empty() {
+            let encoding = cs.encoding();
+            if encoding != Encoding::Unknown {
+                let enc_str = encoding.as_str().to_lowercase();
+                return rule.encodings.iter().any(|e| e.to_lowercase() == enc_str);
+            }
+            return false; // Unknown encoding, rule requires specific encoding
+        }
+        
+        // Empty rule matches everything
+        true
+    }
+
+    /// Returns filtered views for a display, applicable for a given colorspace.
+    /// 
+    /// This filters views based on viewing rules, matching the OCIO API:
+    /// `getNumViews(display, colorspace)` and `getView(display, colorspace, index)`.
+    pub fn get_display_views_for_colorspace(&self, display_name: &str, colorspace_name: &str) -> Vec<&str> {
+        let display = match self.displays.display(display_name) {
+            Some(d) => d,
+            None => return Vec::new(),
+        };
+        
+        display.views()
+            .iter()
+            .filter(|v| self.is_display_view_applicable(v, colorspace_name))
+            .map(|v| v.name())
+            .collect()
+    }
+
+    /// Returns the number of filtered views for a display applicable to a colorspace.
+    pub fn num_display_views_for_colorspace(&self, display_name: &str, colorspace_name: &str) -> usize {
+        self.get_display_views_for_colorspace(display_name, colorspace_name).len()
+    }
+
+    /// Gets a view by index from filtered views for a display/colorspace.
+    /// 
+    /// Returns None if index is out of bounds or display doesn't exist.
+    pub fn get_display_view_for_colorspace(&self, display_name: &str, colorspace_name: &str, index: usize) -> Option<&str> {
+        self.get_display_views_for_colorspace(display_name, colorspace_name)
+            .get(index)
+            .copied()
+    }
+
+    /// Gets the rule name for a display/view combination.
+    /// 
+    /// Returns None if display, view, or rule doesn't exist.
+    pub fn get_display_view_rule(&self, display_name: &str, view_name: &str) -> Option<&str> {
+        self.displays.display(display_name)?
+            .view(view_name)?
+            .rule()
+    }
+
     // ========================================================================
     // Additional OCIO compatibility methods
     // ========================================================================
@@ -2351,6 +2562,16 @@ fn parse_interpolation(interp: Option<&str>) -> Interpolation {
     }
 }
 
+/// Parses NegativeStyle string for ExponentTransform.
+fn parse_negative_style(style: Option<&str>) -> NegativeStyle {
+    match style.map(|s| s.to_lowercase()).as_deref() {
+        Some("mirror") => NegativeStyle::Mirror,
+        Some("pass_thru") => NegativeStyle::PassThru,
+        Some("linear") => NegativeStyle::Linear,
+        _ => NegativeStyle::Clamp, // default
+    }
+}
+
 /// Parses FixedFunction style string.
 fn parse_fixed_function_style(style: &str) -> FixedFunctionStyle {
     match style.to_uppercase().as_str() {
@@ -2415,6 +2636,26 @@ fn parse_rgb(v: Vec<f64>, default: f64) -> [f64; 3] {
         1 => [v[0], v[0], v[0]],
         _ => [default, default, default],
     }
+}
+
+fn parse_rgba(v: Vec<f64>, default: f64) -> [f64; 4] {
+    match v.len() {
+        n if n >= 4 => [v[0], v[1], v[2], v[3]],
+        3 => [v[0], v[1], v[2], 1.0],
+        1 => [v[0], v[0], v[0], default],
+        _ => [default, default, default, default],
+    }
+}
+
+fn yaml_int<'a>(yaml: &'a Yaml<'a>, key: &str) -> Option<i64> {
+    yaml_get(yaml, key).and_then(|v| match unwrap_tagged(v) {
+        Yaml::Value(Scalar::Integer(i)) => Some(*i),
+        _ => None,
+    })
+}
+
+fn yaml_f32_list<'a>(yaml: &'a Yaml<'a>, key: &str) -> Vec<f32> {
+    yaml_f64_list(yaml, key).into_iter().map(|v| v as f32).collect()
 }
 
 /// Parses shared_views from YAML (OCIO v2.3+).

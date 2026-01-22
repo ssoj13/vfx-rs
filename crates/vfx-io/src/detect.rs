@@ -65,18 +65,28 @@ impl Format {
             .map(|e| e.to_lowercase());
         
         match ext.as_deref() {
-            Some("exr") => Format::Exr,
-            Some("png") => Format::Png,
-            Some("jpg") | Some("jpeg") => Format::Jpeg,
-            Some("tif") | Some("tiff") => Format::Tiff,
-            Some("dpx") => Format::Dpx,
-            Some("hdr") | Some("pic") | Some("rgbe") => Format::Hdr,
-            Some("heif") | Some("heic") | Some("hif") => Format::Heif,
-            Some("webp") => Format::WebP,
-            Some("avif") => Format::Avif,
-            Some("jp2") | Some("j2k") | Some("j2c") | Some("jpx") => Format::Jp2,
-            Some("ari") => Format::ArriRaw,
-            Some("r3d") => Format::RedCode,
+            Some(name) => Self::from_name(name),
+            None => Format::Unknown,
+        }
+    }
+
+    /// Converts a format name string to Format enum.
+    ///
+    /// Accepts common names and extensions (case-insensitive).
+    pub fn from_name(name: &str) -> Self {
+        match name.to_lowercase().as_str() {
+            "exr" | "openexr" => Format::Exr,
+            "png" => Format::Png,
+            "jpg" | "jpeg" => Format::Jpeg,
+            "tif" | "tiff" => Format::Tiff,
+            "dpx" | "cineon" => Format::Dpx,
+            "hdr" | "pic" | "rgbe" | "radiance" => Format::Hdr,
+            "heif" | "heic" | "hif" => Format::Heif,
+            "webp" => Format::WebP,
+            "avif" => Format::Avif,
+            "jp2" | "j2k" | "j2c" | "jpx" | "jpeg2000" => Format::Jp2,
+            "ari" | "arriraw" => Format::ArriRaw,
+            "r3d" | "redcode" => Format::RedCode,
             _ => Format::Unknown,
         }
     }

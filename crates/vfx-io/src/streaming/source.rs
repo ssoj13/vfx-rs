@@ -237,7 +237,7 @@ impl StreamingSource for MemorySource {
         self.image.format
     }
 
-    fn channels(&self) -> u32 {
+    fn source_channels(&self) -> u32 {
         self.image.channels
     }
 }

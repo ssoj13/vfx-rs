@@ -194,8 +194,8 @@ pub struct ImageCache {
     tiles: RwLock<HashMap<TileKey, Tile>>,
     /// Image info cache.
     image_info: RwLock<HashMap<PathBuf, CachedImageInfo>>,
-    /// Image data storage (full or streaming).
-    image_storage: RwLock<HashMap<PathBuf, ImageStorage>>,
+    /// Image data storage (full or streaming), keyed by (path, subimage).
+    image_storage: RwLock<HashMap<(PathBuf, u32), ImageStorage>>,
     /// LRU list head (most recent).
     lru_head: Mutex<Option<TileKey>>,
     /// LRU list tail (least recent).
@@ -275,6 +275,11 @@ impl ImageCache {
         self.tile_size = size;
     }
 
+    /// Returns the current tile size.
+    pub fn tile_size(&self) -> u32 {
+        self.tile_size
+    }
+
     /// Returns current memory usage in bytes.
     pub fn size(&self) -> usize {
         *self.current_size.read().unwrap()
@@ -321,6 +326,11 @@ impl ImageCache {
             }
         }
 
+        // Query actual subimages count from registry
+        let num_subimages = crate::registry::FormatRegistry::global()
+            .num_subimages(path)
+            .unwrap_or(1) as u32;
+
         // Try to estimate from header (fast path - no pixel loading)
         let info = if let Ok(estimate) = streaming::estimate_memory(path) {
             CachedImageInfo {
@@ -330,7 +340,7 @@ impl ImageCache {
                 tile_width: self.tile_size,
                 tile_height: self.tile_size,
                 mip_levels: compute_mip_levels(estimate.width, estimate.height),
-                subimages: 1,
+                subimages: num_subimages,
             }
         } else {
             // Fallback: load image to get dimensions
@@ -342,7 +352,7 @@ impl ImageCache {
                 tile_width: self.tile_size,
                 tile_height: self.tile_size,
                 mip_levels: compute_mip_levels(image.width, image.height),
-                subimages: 1,
+                subimages: num_subimages,
             }
         };
 
@@ -402,13 +412,14 @@ impl ImageCache {
     ///
     /// For small images: loads full image and extracts tiles from memory.
     /// For large images: uses streaming source to read only needed regions.
-    fn load_tile(&self, path: &Path, _subimage: u32, mip_level: u32, tile_x: u32, tile_y: u32) -> IoResult<Tile> {
+    fn load_tile(&self, path: &Path, subimage: u32, mip_level: u32, tile_x: u32, tile_y: u32) -> IoResult<Tile> {
         let path_buf = path.to_path_buf();
+        let storage_key = (path_buf.clone(), subimage);
         
-        // Check if we have storage for this image
+        // Check if we have storage for this image+subimage
         let has_storage = {
             let storage = self.image_storage.read().unwrap();
-            storage.contains_key(&path_buf)
+            storage.contains_key(&storage_key)
         };
         
         if !has_storage {
@@ -418,21 +429,23 @@ impl ImageCache {
                 .unwrap_or(false);
             
             if use_streaming {
-                // Open streaming source
+                // Open streaming source (note: streaming doesn't support subimages yet)
                 let source = streaming::open_streaming(path)?;
                 let (width, height) = source.dimensions();
-                let channels = source.channels();
+                // Region data is always RGBA (4 channels), regardless of source format.
+                // We use RGBA_CHANNELS for tile operations to match Region layout.
+                let channels = streaming::RGBA_CHANNELS;
                 
                 let mut storage = self.image_storage.write().unwrap();
-                storage.insert(path_buf.clone(), ImageStorage::Streaming {
+                storage.insert(storage_key.clone(), ImageStorage::Streaming {
                     source,
                     width,
                     height,
                     channels,
                 });
             } else {
-                // Load full image
-                let image = crate::read(path)?;
+                // Load full image with subimage support
+                let image = crate::read_subimage(path, subimage as usize, 0)?;
                 let data = image.to_f32();
                 let cached = CachedImageData {
                     data,
@@ -443,22 +456,74 @@ impl ImageCache {
                 };
                 
                 let mut storage = self.image_storage.write().unwrap();
-                storage.insert(path_buf.clone(), ImageStorage::Full(cached));
+                storage.insert(storage_key.clone(), ImageStorage::Full(cached));
             }
         }
         
         // Now load the tile from storage
         let mut storage = self.image_storage.write().unwrap();
-        let entry = storage.get_mut(&path_buf)
+        let entry = storage.get_mut(&storage_key)
             .ok_or_else(|| IoError::DecodeError("Storage not found".into()))?;
         
         match entry {
             ImageStorage::Streaming { source, width, height, channels } => {
-                // For streaming: mip_level > 0 not supported yet
+                // For mip_level > 0 in streaming mode, we need to load full image
+                // and generate mips (streaming can't efficiently do this)
                 if mip_level > 0 {
-                    return Err(IoError::UnsupportedOperation(
-                        "Mip levels not supported in streaming mode".into()
-                    ));
+                    // Read full image at mip=0 and convert to Full storage
+                    let full_width = *width;
+                    let full_height = *height;
+                    let num_channels = *channels;
+                    
+                    // Read all tiles at mip=0 to reconstruct full image
+                    let mut full_data = vec![0.0f32; (full_width * full_height) as usize * num_channels as usize];
+                    let tiles_x = (full_width + self.tile_size - 1) / self.tile_size;
+                    let tiles_y = (full_height + self.tile_size - 1) / self.tile_size;
+                    
+                    for ty in 0..tiles_y {
+                        for tx in 0..tiles_x {
+                            let tile_px_x = tx * self.tile_size;
+                            let tile_px_y = ty * self.tile_size;
+                            let tile_w = self.tile_size.min(full_width.saturating_sub(tile_px_x));
+                            let tile_h = self.tile_size.min(full_height.saturating_sub(tile_px_y));
+                            
+                            if tile_w == 0 || tile_h == 0 {
+                                continue;
+                            }
+                            
+                            let region = source.read_region(tile_px_x, tile_px_y, tile_w, tile_h)?;
+                            
+                            for y in 0..tile_h {
+                                for x in 0..tile_w {
+                                    let rgba = region.pixel(x, y);
+                                    let dst_x = tile_px_x + x;
+                                    let dst_y = tile_px_y + y;
+                                    let dst_idx = ((dst_y * full_width + dst_x) as usize) * num_channels as usize;
+                                    for c in 0..num_channels as usize {
+                                        full_data[dst_idx + c] = rgba[c];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Convert to Full storage
+                    let cached = CachedImageData {
+                        data: full_data,
+                        width: full_width,
+                        height: full_height,
+                        channels: num_channels,
+                        mips: HashMap::new(),
+                    };
+                    
+                    // Replace streaming storage with full storage
+                    drop(storage);
+                    let mut storage = self.image_storage.write().unwrap();
+                    storage.insert(storage_key.clone(), ImageStorage::Full(cached));
+                    drop(storage);
+                    
+                    // Recursively call to use the Full path now
+                    return self.load_tile(path, subimage, mip_level, tile_x, tile_y);
                 }
                 
                 let tile_px_x = tile_x * self.tile_size;
@@ -728,10 +793,10 @@ impl ImageCache {
             info_cache.remove(&path);
         }
 
-        // Remove cached image storage
+        // Remove cached image storage for all subimages of this path
         {
             let mut storage = self.image_storage.write().unwrap();
-            storage.remove(&path);
+            storage.retain(|k, _| k.0 != path);
         }
 
         // Find and remove all tiles for this path

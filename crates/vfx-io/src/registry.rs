@@ -34,7 +34,8 @@
 //! }
 //! ```
 
-use crate::{ImageData, IoResult, FormatReader, FormatWriter};
+use crate::{ImageData, IoResult, FormatReader, FormatWriter, FormatCapability};
+use crate::deepdata::DeepData;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -52,10 +53,20 @@ pub struct FormatInfo {
     pub read_path: fn(&Path) -> IoResult<ImageData>,
     /// Function to read from memory.
     pub read_memory: fn(&[u8]) -> IoResult<ImageData>,
+    /// Function to read specific subimage/miplevel from path.
+    pub read_subimage_path: Option<fn(&Path, usize, usize) -> IoResult<ImageData>>,
+    /// Function to get number of subimages.
+    pub num_subimages: Option<fn(&Path) -> IoResult<usize>>,
+    /// Function to get number of miplevels for subimage.
+    pub num_miplevels: Option<fn(&Path, usize) -> IoResult<usize>>,
     /// Function to write to a path (None if write not supported).
     pub write_path: Option<fn(&Path, &ImageData) -> IoResult<()>>,
     /// Function to write to memory (None if write not supported).
     pub write_memory: Option<fn(&ImageData) -> IoResult<Vec<u8>>>,
+    /// Capabilities supported by this format.
+    pub capabilities: &'static [FormatCapability],
+    /// Function to read deep data from path (None if deep not supported).
+    pub read_deep_path: Option<fn(&Path) -> IoResult<DeepData>>,
 }
 
 /// Dynamic format reader trait (object-safe).
@@ -146,8 +157,13 @@ impl FormatRegistry {
             },
             read_path: |p| crate::dpx::read(p),
             read_memory: |d| crate::dpx::DpxReader::new().read_from_memory(d),
+            read_subimage_path: None,
+            num_subimages: None,
+            num_miplevels: None,
             write_path: Some(|p, i| crate::dpx::write(p, i)),
             write_memory: Some(|i| crate::dpx::DpxWriter::new().write_to_memory(i)),
+            capabilities: &[FormatCapability::IoProxy],
+            read_deep_path: None, // DPX doesn't support deep data
         });
 
         #[cfg(feature = "exr")]
@@ -157,8 +173,24 @@ impl FormatRegistry {
             can_read: |h| h.len() >= 4 && h[0] == 0x76 && h[1] == 0x2F && h[2] == 0x31 && h[3] == 0x01,
             read_path: |p| crate::exr::read(p),
             read_memory: |d| crate::exr::ExrReader::new().read_from_memory(d),
+            // EXR supports multipart - TODO: implement real subimage support
+            read_subimage_path: None,
+            num_subimages: None,
+            num_miplevels: None,
             write_path: Some(|p, i| crate::exr::write(p, i)),
             write_memory: Some(|i| crate::exr::ExrWriter::new().write_to_memory(i)),
+            capabilities: &[
+                FormatCapability::MultiImage,
+                FormatCapability::MipMap,
+                FormatCapability::Tiles,
+                FormatCapability::DeepData,
+                FormatCapability::IoProxy,
+                FormatCapability::ArbitraryMetadata,
+            ],
+            read_deep_path: Some(|p| {
+                let (samples, channels) = crate::exr_deep::read_deep_exr(p)?;
+                crate::exr_deep::deep_samples_to_deepdata(&samples, &channels)
+            }),
         });
 
         #[cfg(feature = "png")]
@@ -178,8 +210,13 @@ impl FormatRegistry {
             },
             read_path: |p| crate::png::read(p),
             read_memory: |d| crate::png::PngReader::new().read_from_memory(d),
+            read_subimage_path: None,
+            num_subimages: None,
+            num_miplevels: None,
             write_path: Some(|p, i| crate::png::write(p, i)),
             write_memory: Some(|i| crate::png::PngWriter::new().write_to_memory(i)),
+            capabilities: &[FormatCapability::IoProxy],
+            read_deep_path: None, // PNG doesn't support deep data
         });
 
         #[cfg(feature = "jpeg")]
@@ -189,8 +226,13 @@ impl FormatRegistry {
             can_read: |h| h.len() >= 3 && h[0] == 0xFF && h[1] == 0xD8 && h[2] == 0xFF,
             read_path: |p| crate::jpeg::read(p),
             read_memory: |d| crate::jpeg::JpegReader::new().read_from_memory(d),
+            read_subimage_path: None,
+            num_subimages: None,
+            num_miplevels: None,
             write_path: Some(|p, i| crate::jpeg::write(p, i)),
             write_memory: Some(|i| crate::jpeg::JpegWriter::new().write_to_memory(i)),
+            capabilities: &[FormatCapability::IoProxy, FormatCapability::Exif],
+            read_deep_path: None, // JPEG doesn't support deep data
         });
 
         #[cfg(feature = "tiff")]
@@ -207,8 +249,19 @@ impl FormatRegistry {
             },
             read_path: |p| crate::tiff::read(p),
             read_memory: |d| crate::tiff::TiffReader::new().read_from_memory(d),
+            // TIFF supports pages/directories - TODO: implement real subimage support
+            read_subimage_path: None,
+            num_subimages: None,
+            num_miplevels: None,
             write_path: Some(|p, i| crate::tiff::write(p, i)),
             write_memory: Some(|i| crate::tiff::TiffWriter::new().write_to_memory(i)),
+            capabilities: &[
+                FormatCapability::MultiImage,
+                FormatCapability::Tiles,
+                FormatCapability::IoProxy,
+                FormatCapability::Exif,
+            ],
+            read_deep_path: None, // TIFF doesn't support deep data
         });
 
         #[cfg(feature = "hdr")]
@@ -218,8 +271,13 @@ impl FormatRegistry {
             can_read: |h| h.len() >= 2 && h[0] == b'#' && h[1] == b'?',
             read_path: |p| crate::hdr::read(p),
             read_memory: |d| crate::hdr::HdrReader::new().read_from_memory(d),
+            read_subimage_path: None,
+            num_subimages: None,
+            num_miplevels: None,
             write_path: Some(|p, i| crate::hdr::write(p, i)),
             write_memory: Some(|i| crate::hdr::HdrWriter::new().write_to_memory(i)),
+            capabilities: &[FormatCapability::IoProxy],
+            read_deep_path: None, // HDR doesn't support deep data
         });
     }
 
@@ -295,6 +353,74 @@ impl FormatRegistry {
         ))
     }
 
+    /// Reads a specific subimage/miplevel from a file.
+    ///
+    /// Falls back to regular read for subimage=0, miplevel=0 if format
+    /// doesn't have subimage support.
+    pub fn read_subimage(&self, path: &Path, subimage: usize, miplevel: usize) -> IoResult<ImageData> {
+        // Detect format
+        let header = std::fs::read(path)?;
+        let format_name = self.detect_format(&header[..header.len().min(16)])
+            .or_else(|| path.extension().and_then(|e| e.to_str()).and_then(|ext| self.by_extension.get(ext.to_lowercase().as_str()).copied()));
+        
+        if let Some(name) = format_name {
+            if let Some(info) = self.formats.get(name) {
+                // Try format-specific subimage read
+                if let Some(read_sub) = info.read_subimage_path {
+                    return read_sub(path, subimage, miplevel);
+                }
+                // Fall back to regular read for subimage=0, miplevel=0
+                if subimage == 0 && miplevel == 0 {
+                    return (info.read_memory)(&header);
+                }
+                return Err(crate::IoError::UnsupportedFeature(
+                    format!("format '{}' doesn't support subimage {} miplevel {}", name, subimage, miplevel)
+                ));
+            }
+        }
+        
+        Err(crate::IoError::UnsupportedFormat(
+            path.extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("unknown")
+                .to_string(),
+        ))
+    }
+
+    /// Gets number of subimages in a file.
+    pub fn num_subimages(&self, path: &Path) -> IoResult<usize> {
+        let header = std::fs::read(path)?;
+        let format_name = self.detect_format(&header[..header.len().min(16)])
+            .or_else(|| path.extension().and_then(|e| e.to_str()).and_then(|ext| self.by_extension.get(ext.to_lowercase().as_str()).copied()));
+        
+        if let Some(name) = format_name {
+            if let Some(info) = self.formats.get(name) {
+                if let Some(num_sub) = info.num_subimages {
+                    return num_sub(path);
+                }
+                return Ok(1); // Default: single subimage
+            }
+        }
+        Ok(1)
+    }
+
+    /// Gets number of miplevels for a subimage.
+    pub fn num_miplevels(&self, path: &Path, subimage: usize) -> IoResult<usize> {
+        let header = std::fs::read(path)?;
+        let format_name = self.detect_format(&header[..header.len().min(16)])
+            .or_else(|| path.extension().and_then(|e| e.to_str()).and_then(|ext| self.by_extension.get(ext.to_lowercase().as_str()).copied()));
+        
+        if let Some(name) = format_name {
+            if let Some(info) = self.formats.get(name) {
+                if let Some(num_mip) = info.num_miplevels {
+                    return num_mip(path, subimage);
+                }
+                return Ok(1); // Default: single miplevel
+            }
+        }
+        Ok(1)
+    }
+
     /// Writes an image to a file.
     pub fn write(&self, path: &Path, image: &ImageData) -> IoResult<()> {
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
@@ -305,6 +431,55 @@ impl FormatRegistry {
             }
         }
 
+        Err(crate::IoError::UnsupportedFormat(
+            path.extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("unknown")
+                .to_string(),
+        ))
+    }
+
+    /// Checks if a format supports a specific capability.
+    pub fn supports(&self, format_name: &str, capability: FormatCapability) -> bool {
+        self.formats.get(format_name)
+            .map(|info| info.capabilities.contains(&capability))
+            .unwrap_or(false)
+    }
+
+    /// Returns all capabilities for a format.
+    pub fn capabilities(&self, format_name: &str) -> &[FormatCapability] {
+        self.formats.get(format_name)
+            .map(|info| info.capabilities)
+            .unwrap_or(&[])
+    }
+
+    /// Checks if a format (by extension) supports a capability.
+    pub fn supports_by_extension(&self, ext: &str, capability: FormatCapability) -> bool {
+        self.get_by_extension(ext)
+            .map(|info| info.capabilities.contains(&capability))
+            .unwrap_or(false)
+    }
+
+    /// Reads deep data from a file.
+    ///
+    /// Returns error if format doesn't support deep data.
+    pub fn read_deep(&self, path: &Path) -> IoResult<DeepData> {
+        // Detect format
+        let header = std::fs::read(path)?;
+        let format_name = self.detect_format(&header[..header.len().min(16)])
+            .or_else(|| path.extension().and_then(|e| e.to_str()).and_then(|ext| self.by_extension.get(ext.to_lowercase().as_str()).copied()));
+        
+        if let Some(name) = format_name {
+            if let Some(info) = self.formats.get(name) {
+                if let Some(read_deep) = info.read_deep_path {
+                    return read_deep(path);
+                }
+                return Err(crate::IoError::UnsupportedFeature(
+                    format!("format '{}' doesn't support deep data", name)
+                ));
+            }
+        }
+        
         Err(crate::IoError::UnsupportedFormat(
             path.extension()
                 .and_then(|e| e.to_str())

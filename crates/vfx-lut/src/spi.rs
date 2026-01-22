@@ -221,7 +221,8 @@ pub fn write_spi1d_to<W: Write>(mut writer: W, lut: &Lut1D) -> LutResult<()> {
 
     // Header
     writeln!(writer, "Version 1")?;
-    writeln!(writer, "From {} {}", lut.domain_min, lut.domain_max)?;
+    // SPI1D uses scalar domain; use R channel (assume uniform)
+    writeln!(writer, "From {} {}", lut.domain_min[0], lut.domain_max[0])?;
     writeln!(writer, "Length {}", lut.size())?;
     writeln!(writer, "Components {}", components)?;
     writeln!(writer, "{{")?;

@@ -290,13 +290,15 @@ pub struct ExponentTransform {
 /// Negative value handling for exponent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NegativeStyle {
-    /// Clamp negatives to zero.
+    /// Clamp negatives to zero (default for ExponentTransform).
     #[default]
     Clamp,
     /// Mirror: sign * pow(abs(x), exp).
     Mirror,
     /// Pass through unchanged.
     PassThru,
+    /// Linearly extrapolate for negatives (default for ExponentWithLinear).
+    Linear,
 }
 
 /// Log transform (lin-to-log or log-to-lin).
@@ -547,7 +549,7 @@ impl Default for ExponentWithLinearTransform {
         Self {
             gamma: [1.0, 1.0, 1.0, 1.0],
             offset: [0.0, 0.0, 0.0, 0.0],
-            negative_style: NegativeStyle::Clamp,
+            negative_style: NegativeStyle::Linear,
             direction: TransformDirection::Forward,
         }
     }
@@ -641,6 +643,14 @@ impl ExponentWithLinearTransform {
                 if value < 0.0 {
                     value
                 } else if value <= brk {
+                    linear_slope * value
+                } else {
+                    (1.0 + o) * value.powf(g) - o
+                }
+            }
+            NegativeStyle::Linear => {
+                // Linear segment continues into negatives
+                if value <= brk {
                     linear_slope * value
                 } else {
                     (1.0 + o) * value.powf(g) - o

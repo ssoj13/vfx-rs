@@ -27,7 +27,7 @@
 //! - Range transforms (clamp/scale)
 
 use crate::processor::{Processor, ProcessorOp, TransferStyle};
-use crate::transform::{NegativeStyle, ExposureContrastStyle};
+use crate::transform::{CdlStyle, NegativeStyle, ExposureContrastStyle};
 use crate::OcioResult;
 use std::fmt::Write;
 
@@ -188,12 +188,13 @@ pub struct GpuProcessor {
 enum GpuOp {
     /// Matrix multiply (4x4 matrix as row-major [16], offset [4]).
     Matrix { matrix: [f32; 16], offset: [f32; 4] },
-    /// CDL (slope, offset, power, saturation).
+    /// CDL (slope, offset, power, saturation, style).
     Cdl {
         slope: [f32; 3],
         offset: [f32; 3],
         power: [f32; 3],
         saturation: f32,
+        style: CdlStyle,
     },
     /// Exponent/gamma.
     Exponent {
@@ -314,11 +315,13 @@ impl GpuProcessor {
                 offset,
                 power,
                 saturation,
+                style,
             } => Some(GpuOp::Cdl {
                 slope: *slope,
                 offset: *offset,
                 power: *power,
                 saturation: *saturation,
+                style: *style,
             }),
             ProcessorOp::Exponent {
                 value,
@@ -343,7 +346,7 @@ impl GpuProcessor {
                 clamp_max: *clamp_max,
             }),
             // 1D LUT - create texture and return op with index
-            ProcessorOp::Lut1d { lut, size, channels, domain } => {
+            ProcessorOp::Lut1d { lut, size, channels, domain_min, domain_max } => {
                 let tex_idx = textures.len();
                 let name = format!("ocio_lut1d_{}", tex_idx);
                 
@@ -375,10 +378,11 @@ impl GpuProcessor {
                     interpolation: GpuInterpolation::Linear,
                 });
                 
+                // GPU uses uniform domain; use R channel (typical for most LUTs)
                 Some(GpuOp::Lut1D {
                     texture_idx: tex_idx,
-                    domain_min: domain[0],
-                    domain_max: domain[1],
+                    domain_min: domain_min[0],
+                    domain_max: domain_max[0],
                 })
             }
             // 3D LUT - create texture and return op with index
@@ -638,8 +642,9 @@ impl GpuProcessor {
                 offset,
                 power,
                 saturation,
+                style,
             } => {
-                // Apply slope, offset, power (ASC CDL)
+                // Apply slope, offset, power with style-dependent clamping
                 writeln!(
                     code,
                     "    color.rgb = color.rgb * vec3({:.8}, {:.8}, {:.8});",
@@ -652,13 +657,28 @@ impl GpuProcessor {
                     offset[0], offset[1], offset[2]
                 )
                 .unwrap();
-                writeln!(code, "    color.rgb = max(color.rgb, vec3(0.0));").unwrap();
-                writeln!(
-                    code,
-                    "    color.rgb = pow(color.rgb, vec3({:.8}, {:.8}, {:.8}));",
-                    power[0], power[1], power[2]
-                )
-                .unwrap();
+                
+                match style {
+                    CdlStyle::AscCdl => {
+                        // ASC CDL: clamp negatives before power
+                        writeln!(code, "    color.rgb = max(color.rgb, vec3(0.0));").unwrap();
+                        writeln!(
+                            code,
+                            "    color.rgb = pow(color.rgb, vec3({:.8}, {:.8}, {:.8}));",
+                            power[0], power[1], power[2]
+                        )
+                        .unwrap();
+                    }
+                    CdlStyle::NoClamp => {
+                        // No clamping: use mirror style for negatives
+                        writeln!(
+                            code,
+                            "    color.rgb = sign(color.rgb) * pow(abs(color.rgb), vec3({:.8}, {:.8}, {:.8}));",
+                            power[0], power[1], power[2]
+                        )
+                        .unwrap();
+                    }
+                }
 
                 // Saturation (Rec.709 luma - see vfx_core::pixel::REC709_LUMA_*)
                 if (*saturation - 1.0).abs() > 1e-6 {
@@ -704,6 +724,15 @@ impl GpuProcessor {
                     )
                     .unwrap();
                     writeln!(code, "    color.rgb = mix(pos, color.rgb, neg_mask);").unwrap();
+                }
+                NegativeStyle::Linear => {
+                    // Linear extrapolation - same as Mirror for exponent
+                    writeln!(
+                        code,
+                        "    color.rgb = sign(color.rgb) * pow(abs(color.rgb), vec3({:.8}, {:.8}, {:.8}));",
+                        value[0], value[1], value[2]
+                    )
+                    .unwrap();
                 }
             },
             GpuOp::Log { base, forward } => {
@@ -883,6 +912,13 @@ impl GpuProcessor {
                             writeln!(code, "        vec3 pos = mix(lin_val, pow_val, step(brk, c));").unwrap();
                             writeln!(code, "        color.rgb = mix(color.rgb, pos, step(vec3(0.0), color.rgb));").unwrap();
                         }
+                        NegativeStyle::Linear => {
+                            // Linear extrapolation for negatives
+                            writeln!(code, "        vec3 ac = abs(color.rgb);").unwrap();
+                            writeln!(code, "        vec3 pow_val = pow(ac + off, g);").unwrap();
+                            writeln!(code, "        vec3 lin_val = lin_s * ac;").unwrap();
+                            writeln!(code, "        color.rgb = sign(color.rgb) * mix(lin_val, pow_val, step(brk, ac));").unwrap();
+                        }
                     }
                     writeln!(code, "    }}").unwrap();
                 } else {
@@ -913,6 +949,13 @@ impl GpuProcessor {
                             writeln!(code, "        vec3 lin_val = c / lin_s;").unwrap();
                             writeln!(code, "        vec3 pos = mix(lin_val, pow_val, step(brk, c));").unwrap();
                             writeln!(code, "        color.rgb = mix(color.rgb, pos, step(vec3(0.0), color.rgb));").unwrap();
+                        }
+                        NegativeStyle::Linear => {
+                            // Linear extrapolation for negatives (inverse)
+                            writeln!(code, "        vec3 ac = abs(color.rgb);").unwrap();
+                            writeln!(code, "        vec3 pow_val = pow(ac, inv_g) - off;").unwrap();
+                            writeln!(code, "        vec3 lin_val = ac / lin_s;").unwrap();
+                            writeln!(code, "        color.rgb = sign(color.rgb) * mix(lin_val, pow_val, step(brk, ac));").unwrap();
                         }
                     }
                     writeln!(code, "    }}").unwrap();
@@ -1313,6 +1356,76 @@ impl GpuProcessor {
                     writeln!(code, "        vec3 lo = (color.rgb - {:.10}) / {:.10};", A, A).unwrap();
                     writeln!(code, "        vec3 hi = exp((color.rgb - 0.5) / {:.10}) - {:.10};", B, C).unwrap();
                     writeln!(code, "        color.rgb = mix(lo, hi, step(vec3(0.09292915127), color.rgb));").unwrap();
+                    writeln!(code, "    }}").unwrap();
+                }
+            }
+            TransferStyle::Rec1886 => {
+                // Rec.1886: pure gamma 2.4 for broadcast displays
+                if forward {
+                    writeln!(code, "    color.rgb = pow(max(color.rgb, vec3(0.0)), vec3(1.0/2.4));").unwrap();
+                } else {
+                    writeln!(code, "    color.rgb = pow(max(color.rgb, vec3(0.0)), vec3(2.4));").unwrap();
+                }
+            }
+            TransferStyle::AppleLog => {
+                // Apple Log constants
+                const R0: f32 = -0.05641088;
+                const RT: f32 = 0.01;
+                const C0: f32 = 0.089286;
+                const C1: f32 = 0.080886;
+                const G: f32 = 0.2568629;
+                const D: f32 = 0.486665;
+                if forward {
+                    writeln!(code, "    {{ // Apple Log encode").unwrap();
+                    writeln!(code, "        vec3 t = color.rgb - {:.10};", R0).unwrap();
+                    writeln!(code, "        vec3 lo = {:.10} * t + {:.10};", C1 / (RT - R0), C0 - C1 * R0 / (RT - R0)).unwrap();
+                    writeln!(code, "        vec3 hi = {:.10} * log(max(t + 1.0, vec3(1e-10))) + {:.10};", G, D).unwrap();
+                    writeln!(code, "        color.rgb = mix(lo, hi, step(vec3({:.10}), color.rgb));", RT).unwrap();
+                    writeln!(code, "    }}").unwrap();
+                } else {
+                    let pt: f32 = C1 / (RT - R0) * RT + C0 - C1 * R0 / (RT - R0);
+                    writeln!(code, "    {{ // Apple Log decode").unwrap();
+                    writeln!(code, "        vec3 lo = (color.rgb - {:.10}) / {:.10} + {:.10};", C0 - C1 * R0 / (RT - R0), C1 / (RT - R0), R0).unwrap();
+                    writeln!(code, "        vec3 hi = exp((color.rgb - {:.10}) / {:.10}) - 1.0 + {:.10};", D, G, R0).unwrap();
+                    writeln!(code, "        color.rgb = mix(lo, hi, step(vec3({:.10}), color.rgb));", pt).unwrap();
+                    writeln!(code, "    }}").unwrap();
+                }
+            }
+            TransferStyle::CanonCLog2 => {
+                // Canon C-Log2 constants
+                const A: f32 = 0.092864125;
+                const B: f32 = 0.24136077;
+                const C: f32 = 87.09937;
+                if forward {
+                    writeln!(code, "    {{ // Canon C-Log2 encode").unwrap();
+                    writeln!(code, "        vec3 t = {:.10} * color.rgb + 1.0;", C).unwrap();
+                    writeln!(code, "        color.rgb = {:.10} * log(max(t, vec3(1e-10))) + {:.10};", A, B).unwrap();
+                    writeln!(code, "    }}").unwrap();
+                } else {
+                    writeln!(code, "    {{ // Canon C-Log2 decode").unwrap();
+                    writeln!(code, "        vec3 t = exp((color.rgb - {:.10}) / {:.10});", B, A).unwrap();
+                    writeln!(code, "        color.rgb = (t - 1.0) / {:.10};", C).unwrap();
+                    writeln!(code, "    }}").unwrap();
+                }
+            }
+            TransferStyle::CanonCLog3 => {
+                // Canon C-Log3 constants
+                const A: f32 = 0.07623209;
+                const B: f32 = 0.11602634;
+                const C: f32 = 0.3118549;
+                const D: f32 = 14.98325;
+                if forward {
+                    writeln!(code, "    {{ // Canon C-Log3 encode").unwrap();
+                    writeln!(code, "        vec3 lo = {:.10} * color.rgb + {:.10};", D * A, C - B - D * A * B / D).unwrap();
+                    writeln!(code, "        vec3 hi = {:.10} * log(max(color.rgb + {:.10}, vec3(1e-10))) + {:.10};", A, B, C).unwrap();
+                    writeln!(code, "        color.rgb = mix(lo, hi, step(vec3(-{:.10}), color.rgb));", B).unwrap();
+                    writeln!(code, "    }}").unwrap();
+                } else {
+                    let pt: f32 = C - B - D * A * B / D + D * A * (-B);
+                    writeln!(code, "    {{ // Canon C-Log3 decode").unwrap();
+                    writeln!(code, "        vec3 lo = (color.rgb - {:.10} + {:.10} * {:.10} / {:.10}) / ({:.10} * {:.10});", C - B, D, A, D, D, A).unwrap();
+                    writeln!(code, "        vec3 hi = exp((color.rgb - {:.10}) / {:.10}) - {:.10};", C, A, B).unwrap();
+                    writeln!(code, "        color.rgb = mix(lo, hi, step(vec3({:.10}), color.rgb));", pt).unwrap();
                     writeln!(code, "    }}").unwrap();
                 }
             }

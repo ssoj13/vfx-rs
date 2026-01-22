@@ -156,6 +156,8 @@ struct ImageBufInner {
     error: Option<String>,
     /// Associated ImageCache (if any).
     cache: Option<Arc<ImageCache>>,
+    /// Read config hints (format conversion, attributes, etc.).
+    read_config: Option<ImageSpec>,
     /// Write format override.
     write_format: Option<DataFormat>,
     /// Write tile dimensions.
@@ -186,6 +188,7 @@ impl Clone for ImageBuf {
                 nmiplevels: inner.nmiplevels,
                 error: None,
                 cache: inner.cache.clone(),
+                read_config: inner.read_config.clone(),
                 write_format: inner.write_format,
                 write_tiles: inner.write_tiles,
                 spec_valid: inner.spec_valid,
@@ -221,6 +224,7 @@ impl ImageBuf {
                 nmiplevels: 1,
                 error: None,
                 cache: None,
+                read_config: None,
                 write_format: None,
                 write_tiles: None,
                 spec_valid: false,
@@ -266,6 +270,7 @@ impl ImageBuf {
                 nmiplevels: 1,
                 error: None,
                 cache: None,
+                read_config: None,
                 write_format: None,
                 write_tiles: None,
                 spec_valid: true,
@@ -321,6 +326,7 @@ impl ImageBuf {
                 nmiplevels: 1,
                 error: None,
                 cache: None,
+                read_config: None,
                 write_format: None,
                 write_tiles: None,
                 spec_valid: true,
@@ -361,7 +367,7 @@ impl ImageBuf {
         subimage: i32,
         miplevel: i32,
         cache: Option<Arc<ImageCache>>,
-        _config: Option<&ImageSpec>,
+        config: Option<&ImageSpec>,
     ) -> Self {
         let name = path.as_ref().to_string_lossy().to_string();
         let storage = if cache.is_some() {
@@ -383,6 +389,7 @@ impl ImageBuf {
                 error: None,
                 read_only: cache.is_some(),
                 cache,
+                read_config: config.cloned(),
                 write_format: None,
                 write_tiles: None,
                 spec_valid: false,
@@ -688,9 +695,12 @@ impl ImageBuf {
     }
 
     /// Returns true if pixels are stored contiguously.
+    ///
+    /// Contiguous storage means pixels are packed without gaps or padding,
+    /// i.e., x_stride equals pixel size and y_stride equals width * x_stride.
     pub fn contiguous(&self) -> bool {
-        // TODO: Check actual storage layout
-        true
+        let inner = self.inner.read().unwrap();
+        inner.pixels.is_contiguous()
     }
 
     // =========================================================================
@@ -838,24 +848,46 @@ impl ImageBuf {
     ///
     /// * `filename` - Output file path (empty = use internal name)
     /// * `fileformat` - Format hint (None = detect from extension)
+    ///
+    /// Note: Uses `write_format` if set via `set_write_format()` to convert pixel data.
+    /// The `write_tiles` setting is noted but tile writing requires format-specific support.
     pub fn write<P: AsRef<Path>>(
         &self,
         filename: P,
-        _fileformat: Option<&str>,
+        fileformat: Option<&str>,
     ) -> IoResult<()> {
         self.ensure_spec_read();
         self.ensure_pixels_read_ref();
 
-        let inner = self.inner.read().unwrap();
-        let path = if filename.as_ref().as_os_str().is_empty() {
-            Path::new(&inner.name)
-        } else {
-            filename.as_ref()
+        // Get settings from inner while holding lock
+        let (path_buf, write_format) = {
+            let inner = self.inner.read().unwrap();
+            let p = if filename.as_ref().as_os_str().is_empty() {
+                std::path::PathBuf::from(&inner.name)
+            } else {
+                filename.as_ref().to_path_buf()
+            };
+            (p, inner.write_format)
         };
 
-        // Convert to ImageData and write using existing infrastructure
-        let image_data = self.to_image_data()?;
-        crate::write(path, &image_data)
+        // Convert to ImageData
+        let mut image_data = self.to_image_data()?;
+        
+        // Apply write_format conversion if set
+        if let Some(target_format) = write_format {
+            let current = match &image_data.data {
+                crate::PixelData::U8(_) => crate::PixelFormat::U8,
+                crate::PixelData::U16(_) => crate::PixelFormat::U16,
+                crate::PixelData::U32(_) => crate::PixelFormat::U32,
+                crate::PixelData::F32(_) => crate::PixelFormat::F32,
+            };
+            if current != target_format {
+                image_data = image_data.convert_to(target_format);
+            }
+        }
+
+        // Write using format hint if provided
+        crate::write_with_format(&path_buf, &image_data, fileformat)
     }
 
     // =========================================================================
@@ -1405,7 +1437,13 @@ impl ImageBuf {
 
     /// Converts to ImageData for use with other vfx-io functions.
     pub fn to_image_data(&self) -> IoResult<crate::ImageData> {
-        self.ensure_pixels_read_ref();
+        if !self.ensure_pixels_read_ref() {
+            let inner = self.inner.read().unwrap();
+            if let Some(ref err) = inner.error {
+                return Err(crate::IoError::DecodeError(err.clone()));
+            }
+            return Err(crate::IoError::DecodeError("Failed to load pixels".into()));
+        }
 
         let inner = self.inner.read().unwrap();
         let spec = &inner.spec;
@@ -1495,18 +1533,18 @@ impl ImageBuf {
             return false;
         }
 
-        // Use probe_dimensions and detect format
-        match crate::probe_dimensions(&name) {
-            Ok((width, height)) => {
+        // Use probe_image_info to get dimensions and channel count
+        match crate::probe_image_info(&name) {
+            Ok((width, height, channels)) => {
                 let mut inner = self.inner.write().unwrap();
                 inner.spec.width = width;
                 inner.spec.height = height;
-                inner.spec.nchannels = 4; // Assume RGBA
+                inner.spec.nchannels = channels as u8;
                 inner.spec.full_width = width;
                 inner.spec.full_height = height;
                 #[allow(deprecated)]
                 {
-                    inner.spec.channels = 4;
+                    inner.spec.channels = channels as u8;
                 }
                 
                 // Try to get subimage/miplevel counts from file
@@ -1543,17 +1581,17 @@ impl ImageBuf {
             return false;
         }
 
-        let name = {
+        let (name, subimage, miplevel) = {
             let inner = self.inner.read().unwrap();
-            inner.name.clone()
+            (inner.name.clone(), inner.subimage as usize, inner.miplevel as usize)
         };
 
         if name.is_empty() {
             return false;
         }
 
-        // Read the actual image data
-        match crate::read(&name) {
+        // Read the actual image data with subimage/miplevel support
+        match crate::read_subimage(&name, subimage, miplevel) {
             Ok(image_data) => {
                 let f32_data = image_data.to_f32();
                 let mut inner = self.inner.write().unwrap();
@@ -1592,6 +1630,20 @@ impl ImageBuf {
 
                 inner.storage = IBStorage::LocalBuffer;
                 inner.pixels_valid = true;
+
+                // Check if format conversion is needed from read_config
+                let target_format = inner.read_config.as_ref()
+                    .map(|cfg| cfg.format)
+                    .filter(|&f| f != DataFormat::F32);
+                
+                // Release lock before conversion
+                drop(inner);
+                
+                // Apply format conversion if specified in read_config
+                if let Some(fmt) = target_format {
+                    self.convert_format(fmt);
+                }
+                
                 true
             }
             Err(e) => {
@@ -1610,11 +1662,69 @@ impl ImageBuf {
             }
         }
 
-        // For read-only access on cache-backed images, we might load on demand
-        // For now, we need mutable access to load
-        // This is a limitation - proper implementation would use interior mutability
-        // or require users to call read() explicitly
-        false
+        // Use interior mutability (RwLock) to load pixels even from &self.
+        // First ensure spec is read.
+        if !self.ensure_spec_read() {
+            return false;
+        }
+
+        let (name, subimage, miplevel) = {
+            let inner = self.inner.read().unwrap();
+            (inner.name.clone(), inner.subimage as usize, inner.miplevel as usize)
+        };
+
+        if name.is_empty() {
+            return false;
+        }
+
+        // Read the actual image data with subimage/miplevel support.
+        match crate::read_subimage(&name, subimage, miplevel) {
+            Ok(image_data) => {
+                let f32_data = image_data.to_f32();
+                let mut inner = self.inner.write().unwrap();
+
+                // Update spec from actual read.
+                inner.spec.width = image_data.width;
+                inner.spec.height = image_data.height;
+                inner.spec.nchannels = image_data.channels as u8;
+                inner.spec.full_width = image_data.width;
+                inner.spec.full_height = image_data.height;
+                #[allow(deprecated)]
+                {
+                    inner.spec.channels = image_data.channels as u8;
+                }
+                inner.spec.format = DataFormat::F32;
+
+                // Allocate and fill pixels.
+                inner.pixels = PixelStorage::allocate(&inner.spec, false);
+                let nch = inner.spec.nchannels as usize;
+                let width = inner.spec.width;
+                let height = inner.spec.height;
+                let spec_copy = inner.spec.clone();
+
+                for y in 0..height {
+                    for x in 0..width {
+                        let idx = (y * width + x) as usize * nch;
+                        inner.pixels.set_pixel(
+                            x as usize,
+                            y as usize,
+                            0,
+                            &f32_data[idx..idx.saturating_add(nch).min(f32_data.len())],
+                            &spec_copy,
+                        );
+                    }
+                }
+
+                inner.storage = IBStorage::LocalBuffer;
+                inner.pixels_valid = true;
+                true
+            }
+            Err(e) => {
+                let mut inner = self.inner.write().unwrap();
+                inner.error = Some(format!("Failed to read pixels: {}", e));
+                false
+            }
+        }
     }
 }
 

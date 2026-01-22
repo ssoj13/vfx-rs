@@ -119,6 +119,31 @@ impl PreLut {
         rgb[1] = self.green.apply(rgb[1]);
         rgb[2] = self.blue.apply(rgb[2]);
     }
+
+    /// Converts PreLut to a 3-channel Lut1D by sampling the curves.
+    pub fn to_lut1d(&self) -> Option<crate::Lut1D> {
+        if self.is_identity() {
+            return None;
+        }
+        // Sample at 1024 points
+        let size = 1024;
+        let mut r = Vec::with_capacity(size);
+        let mut g = Vec::with_capacity(size);
+        let mut b = Vec::with_capacity(size);
+        for i in 0..size {
+            let t = i as f32 / (size - 1) as f32;
+            r.push(self.red.apply(t));
+            g.push(self.green.apply(t));
+            b.push(self.blue.apply(t));
+        }
+        Some(crate::Lut1D {
+            r,
+            g: Some(g),
+            b: Some(b),
+            domain_min: [0.0, 0.0, 0.0],
+            domain_max: [1.0, 1.0, 1.0],
+        })
+    }
 }
 
 /// CSP file contents (can be 1D or 3D).

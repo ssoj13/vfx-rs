@@ -38,10 +38,10 @@ pub struct Lut1D {
     pub g: Option<Vec<f32>>,
     /// LUT entries for blue channel (None if mono)
     pub b: Option<Vec<f32>>,
-    /// Input domain minimum
-    pub domain_min: f32,
-    /// Input domain maximum
-    pub domain_max: f32,
+    /// Input domain minimum per channel [R, G, B]
+    pub domain_min: [f32; 3],
+    /// Input domain maximum per channel [R, G, B]
+    pub domain_max: [f32; 3],
 }
 
 impl Lut1D {
@@ -67,8 +67,8 @@ impl Lut1D {
             r: entries,
             g: None,
             b: None,
-            domain_min: 0.0,
-            domain_max: 1.0,
+            domain_min: [0.0, 0.0, 0.0],
+            domain_max: [1.0, 1.0, 1.0],
         }
     }
 
@@ -97,8 +97,8 @@ impl Lut1D {
             r: entries,
             g: None,
             b: None,
-            domain_min: 0.0,
-            domain_max: 1.0,
+            domain_min: [0.0, 0.0, 0.0],
+            domain_max: [1.0, 1.0, 1.0],
         }
     }
 
@@ -109,7 +109,13 @@ impl Lut1D {
     /// * `data` - LUT entries [0, 1]
     /// * `domain_min` - Input domain minimum
     /// * `domain_max` - Input domain maximum
+    /// Creates a LUT from raw data with uniform domain.
     pub fn from_data(data: Vec<f32>, domain_min: f32, domain_max: f32) -> LutResult<Self> {
+        Self::from_data_per_channel(data, [domain_min; 3], [domain_max; 3])
+    }
+
+    /// Creates a LUT from raw data with per-channel domain.
+    pub fn from_data_per_channel(data: Vec<f32>, domain_min: [f32; 3], domain_max: [f32; 3]) -> LutResult<Self> {
         if data.is_empty() {
             return Err(LutError::InvalidSize("LUT size must be > 0".into()));
         }
@@ -122,13 +128,24 @@ impl Lut1D {
         })
     }
 
-    /// Creates a 3-channel LUT from separate RGB data.
+    /// Creates a 3-channel LUT from separate RGB data with uniform domain.
     pub fn from_rgb(
         r: Vec<f32>,
         g: Vec<f32>,
         b: Vec<f32>,
         domain_min: f32,
         domain_max: f32,
+    ) -> LutResult<Self> {
+        Self::from_rgb_per_channel(r, g, b, [domain_min; 3], [domain_max; 3])
+    }
+
+    /// Creates a 3-channel LUT from separate RGB data with per-channel domain.
+    pub fn from_rgb_per_channel(
+        r: Vec<f32>,
+        g: Vec<f32>,
+        b: Vec<f32>,
+        domain_min: [f32; 3],
+        domain_max: [f32; 3],
     ) -> LutResult<Self> {
         if r.is_empty() || g.is_empty() || b.is_empty() {
             return Err(LutError::InvalidSize("LUT size must be > 0".into()));
@@ -168,32 +185,33 @@ impl Lut1D {
     /// let output = lut.apply(0.5);
     /// ```
     pub fn apply(&self, value: f32) -> f32 {
-        self.interpolate(&self.r, value)
+        self.interpolate(&self.r, value, 0)
     }
 
     /// Applies the LUT to RGB values.
     ///
     /// If this is a mono LUT, the same curve is applied to all channels.
+    /// Uses per-channel domain scaling.
     pub fn apply_rgb(&self, rgb: [f32; 3]) -> [f32; 3] {
-        let r = self.interpolate(&self.r, rgb[0]);
-        let g = self.interpolate(self.g.as_ref().unwrap_or(&self.r), rgb[1]);
-        let b = self.interpolate(self.b.as_ref().unwrap_or(&self.r), rgb[2]);
+        let r = self.interpolate(&self.r, rgb[0], 0);
+        let g = self.interpolate(self.g.as_ref().unwrap_or(&self.r), rgb[1], 1);
+        let b = self.interpolate(self.b.as_ref().unwrap_or(&self.r), rgb[2], 2);
         [r, g, b]
     }
 
-    /// Linear interpolation in the LUT.
-    fn interpolate(&self, data: &[f32], value: f32) -> f32 {
+    /// Linear interpolation in the LUT with per-channel domain.
+    fn interpolate(&self, data: &[f32], value: f32, channel: usize) -> f32 {
         let size = data.len();
         if size == 0 {
             return value;
         }
 
-        // Normalize to [0, 1] based on domain
-        let range = self.domain_max - self.domain_min;
+        // Normalize to [0, 1] based on per-channel domain
+        let range = self.domain_max[channel] - self.domain_min[channel];
         let t = if range.abs() < 1e-10 {
             0.0
         } else {
-            (value - self.domain_min) / range
+            (value - self.domain_min[channel]) / range
         };
 
         // Convert to index

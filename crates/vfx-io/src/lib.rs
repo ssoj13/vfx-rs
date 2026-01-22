@@ -173,7 +173,7 @@ pub mod colorconfig;
 
 // Re-exports
 pub use error::{IoError, IoResult};
-pub use traits::{FormatReader, FormatWriter, ReadSeek, WriteSeek};
+pub use traits::{FormatCapability, FormatReader, FormatWriter, ReadSeek, WriteSeek};
 pub use detect::Format;
 pub use attrs::{Attrs, AttrValue};
 pub use registry::{FormatRegistry, FormatInfo, FormatReaderDyn, FormatWriterDyn};
@@ -261,6 +261,59 @@ pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
     }
 }
 
+/// Reads a specific subimage and miplevel from an image file.
+///
+/// Most formats only support subimage=0, miplevel=0.
+/// EXR supports multiple parts (subimages), TIFF supports pages.
+///
+/// # Arguments
+/// * `path` - Path to the image file
+/// * `subimage` - Subimage index (0 for most formats)
+/// * `miplevel` - MIP level (0 = full resolution)
+pub fn read_subimage<P: AsRef<Path>>(path: P, subimage: usize, miplevel: usize) -> IoResult<ImageData> {
+    let path = path.as_ref();
+    trace!(path = %path.display(), subimage, miplevel, "vfx_io::read_subimage");
+    
+    crate::registry::FormatRegistry::global().read_subimage(path, subimage, miplevel)
+}
+
+/// Reads deep data from a file.
+///
+/// Deep data contains multiple samples per pixel at different Z depths,
+/// commonly used in deep compositing workflows.
+///
+/// Currently only EXR format supports deep data.
+///
+/// # Example
+///
+/// ```ignore
+/// use vfx_io::read_deep;
+///
+/// let deep = read_deep("deep.exr")?;
+/// println!("Pixels: {}, Channels: {}", deep.pixels(), deep.channels());
+///
+/// // Access samples at pixel 0
+/// let num_samples = deep.samples(0);
+/// for s in 0..num_samples as usize {
+///     let z = deep.deep_value(0, deep.z_channel() as usize, s);
+///     let a = deep.deep_value(0, deep.a_channel() as usize, s);
+///     println!("Sample {}: Z={}, A={}", s, z, a);
+/// }
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The file cannot be read
+/// - The format doesn't support deep data
+/// - The file is not a deep image
+pub fn read_deep<P: AsRef<Path>>(path: P) -> IoResult<deepdata::DeepData> {
+    let path = path.as_ref();
+    trace!(path = %path.display(), "vfx_io::read_deep");
+    
+    crate::registry::FormatRegistry::global().read_deep(path)
+}
+
 /// Writes an image to a file, detecting format from extension.
 ///
 /// # Example
@@ -341,6 +394,86 @@ pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
                 .and_then(|e| e.to_str())
                 .unwrap_or("unknown")
                 .to_string()
+        )),
+    }
+}
+
+/// Writes an image to a file with explicit format override.
+///
+/// If `format_hint` is `Some`, uses that format regardless of file extension.
+/// Otherwise, detects format from file extension.
+///
+/// # Arguments
+///
+/// * `path` - Output file path
+/// * `image` - Image data to write
+/// * `format_hint` - Optional format name (e.g., "exr", "png", "tiff")
+pub fn write_with_format<P: AsRef<Path>>(
+    path: P,
+    image: &ImageData,
+    format_hint: Option<&str>,
+) -> IoResult<()> {
+    let path = path.as_ref();
+    
+    // Use format hint if provided, otherwise detect from extension
+    let format = match format_hint {
+        Some(name) => {
+            let f = Format::from_name(name);
+            if f == Format::Unknown {
+                // Fall back to extension if hint is invalid
+                Format::from_extension(path)
+            } else {
+                f
+            }
+        }
+        None => Format::from_extension(path),
+    };
+    
+    trace!(path = %path.display(), format = ?format, "vfx_io::write_with_format");
+    
+    match format {
+        #[cfg(feature = "exr")]
+        Format::Exr => exr::write(path, image),
+        
+        #[cfg(feature = "png")]
+        Format::Png => png::write(path, image),
+        
+        #[cfg(feature = "jpeg")]
+        Format::Jpeg => jpeg::write(path, image),
+        
+        #[cfg(feature = "tiff")]
+        Format::Tiff => tiff::write(path, image),
+        
+        #[cfg(feature = "dpx")]
+        Format::Dpx => dpx::write(path, image),
+
+        #[cfg(feature = "hdr")]
+        Format::Hdr => hdr::write(path, image),
+
+        #[cfg(feature = "heif")]
+        Format::Heif => heif::write_heif(path, image, None),
+
+        #[cfg(not(feature = "heif"))]
+        Format::Heif => Err(IoError::UnsupportedFormat("HEIF support requires 'heif' feature".into())),
+
+        #[cfg(feature = "webp")]
+        Format::WebP => webp::write(path, image),
+
+        #[cfg(not(feature = "webp"))]
+        Format::WebP => Err(IoError::UnsupportedFormat("WebP support requires 'webp' feature".into())),
+
+        #[cfg(feature = "avif")]
+        Format::Avif => avif::write(path, image),
+
+        #[cfg(not(feature = "avif"))]
+        Format::Avif => Err(IoError::UnsupportedFormat("AVIF support requires 'avif' feature".into())),
+
+        Format::Jp2 => Err(IoError::UnsupportedFormat("JPEG2000 write not supported (read-only format)".into())),
+        Format::ArriRaw => Err(IoError::UnsupportedFormat("ARRIRAW write not supported (camera raw format)".into())),
+        Format::RedCode => Err(IoError::UnsupportedFormat("REDCODE write not supported (camera raw format)".into())),
+
+        Format::Unknown => Err(IoError::UnsupportedFormat(
+            format_hint.unwrap_or("unknown").to_string()
         )),
     }
 }
@@ -503,6 +636,120 @@ pub fn probe_dimensions<P: AsRef<Path>>(path: P) -> IoResult<(u32, u32)> {
         _ => {
             let img = read(path)?;
             Ok((img.width, img.height))
+        }
+    }
+}
+
+/// Probes image dimensions and channel count without full decode.
+///
+/// Returns (width, height, channels) tuple.
+pub fn probe_image_info<P: AsRef<Path>>(path: P) -> IoResult<(u32, u32, u32)> {
+    use std::io::{Read, Seek, SeekFrom};
+    use std::fs::File;
+    
+    let path = path.as_ref();
+    let format = Format::detect(path)?;
+    
+    match format {
+        #[cfg(feature = "png")]
+        Format::Png => {
+            // PNG IHDR: width(4) + height(4) + bit_depth(1) + color_type(1)
+            let mut file = File::open(path)?;
+            let mut buf = [0u8; 26];
+            file.read_exact(&mut buf)?;
+            
+            let width = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
+            let height = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
+            let color_type = buf[25];
+            
+            // PNG color types: 0=gray, 2=RGB, 3=indexed, 4=gray+alpha, 6=RGBA
+            let channels = match color_type {
+                0 => 1,
+                2 => 3,
+                3 => 3, // indexed treated as RGB
+                4 => 2,
+                6 => 4,
+                _ => 4,
+            };
+            Ok((width, height, channels))
+        }
+        
+        #[cfg(feature = "jpeg")]
+        Format::Jpeg => {
+            // JPEG SOF contains num_components
+            let mut file = File::open(path)?;
+            let mut buf = [0u8; 2];
+            
+            file.read_exact(&mut buf)?;
+            if buf != [0xFF, 0xD8] {
+                return Err(IoError::DecodeError("Invalid JPEG".into()));
+            }
+            
+            loop {
+                file.read_exact(&mut buf)?;
+                if buf[0] != 0xFF {
+                    return Err(IoError::DecodeError("Invalid JPEG marker".into()));
+                }
+                
+                let marker = buf[1];
+                
+                if matches!(marker, 0xC0 | 0xC1 | 0xC2) {
+                    let mut header = [0u8; 8];
+                    file.read_exact(&mut header)?;
+                    let height = u16::from_be_bytes([header[3], header[4]]) as u32;
+                    let width = u16::from_be_bytes([header[5], header[6]]) as u32;
+                    let channels = header[7] as u32; // num_components
+                    return Ok((width, height, channels));
+                }
+                
+                if marker == 0xD9 || marker == 0xDA {
+                    return Err(IoError::DecodeError("JPEG info not found".into()));
+                }
+                
+                if !matches!(marker, 0xD0..=0xD7 | 0x01) {
+                    file.read_exact(&mut buf)?;
+                    let len = u16::from_be_bytes(buf) as i64 - 2;
+                    file.seek(SeekFrom::Current(len))?;
+                }
+            }
+        }
+        
+        #[cfg(feature = "dpx")]
+        Format::Dpx => {
+            let img = dpx::read(path)?;
+            Ok((img.width, img.height, img.channels))
+        }
+        
+        #[cfg(feature = "hdr")]
+        Format::Hdr => {
+            // HDR is always RGB (3 channels)
+            let (w, h) = probe_dimensions(path)?;
+            Ok((w, h, 3))
+        }
+        
+        #[cfg(feature = "exr")]
+        Format::Exr => {
+            let (w, h) = exr::probe_dimensions(path)?;
+            // EXR channel count from metadata
+            if let Ok(meta) = vfx_exr::meta::MetaData::read_from_file(path, false) {
+                if let Some(header) = meta.headers.first() {
+                    let ch = header.channels.list.len() as u32;
+                    return Ok((w, h, ch.max(1)));
+                }
+            }
+            Ok((w, h, 4)) // fallback to RGBA
+        }
+        
+        #[cfg(feature = "tiff")]
+        Format::Tiff => {
+            let img = tiff::read(path)?;
+            Ok((img.width, img.height, img.channels))
+        }
+        
+        // Fallback: full read
+        _ => {
+            let img = read(path)?;
+            Ok((img.width, img.height, img.channels))
         }
     }
 }

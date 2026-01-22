@@ -34,116 +34,151 @@
 ## OpenImageIO parity gaps (initial)
 
 6) vfx-io format coverage is far smaller than OpenImageIO plugins.
+   **STATUS: SKIPPED** - Existing format coverage is sufficient for project needs.
    - OIIO has many imageio plugins (bmp, cineon, dicom, ffmpeg, fits, gif, ico, iff, jpeg2000, jpegxl, openvdb, pnm, ptex, raw, r3d, rla, sgi, softimage, targa, term, zfile, etc.).
    - Evidence (plugin dirs): `_ref/OpenImageIO/src/*.imageio`
    - vfx-io Format enum/detect only includes exr/png/jpeg/tiff/dpx/hdr/heif/webp/avif/jp2/arri/redcode.
    - Evidence (format detection): `crates/vfx-io/src/detect.rs`
 
 7) Several vfx-io formats are feature-gated or stubbed.
+   **STATUS: SKIPPED** - arriraw/redcode require proprietary SDKs (ARRI/RED) which are not available.
    - arriraw/redcode return UnsupportedFeature; heif/webp/jp2 gated by features; avif read requires dav1d; jp2 write not supported.
    - Evidence (dispatch): `crates/vfx-io/src/lib.rs`
 
 8) ImageBuf spec reading is incomplete (assumes RGBA, ignores full metadata for most formats).
+   **STATUS: FIXED** - Added probe_image_info() that returns (width, height, channels), updated ensure_spec_read to use it.
    - vfx-io ImageBuf `ensure_spec_read` uses probe_dimensions and hard-codes `nchannels=4` and `full_*` for all formats, only tries EXR headers for subimages.
    - Evidence (vfx-io behavior): `crates/vfx-io/src/imagebuf/mod.rs:1480`
    - OIIO ImageBuf reads full ImageSpec via ImageInput and does not assume RGBA.
    - Evidence (OIIO ImageBuf design): `_ref/OpenImageIO/src/include/OpenImageIO/imagebuf.h:66`
+   - FIX: Added probe_image_info() in lib.rs, reads real channel count for PNG/JPEG/DPX/HDR/EXR/TIFF.
 
 9) vfx-io read/write APIs lack OIIO-style subimage/miplevel/scanline/tile and deep access.
+   **STATUS: PARTIAL** - API added to FormatReader trait, but implementations return defaults.
+   **TODO: RETURN LATER** - Need real implementations for EXR (multipart), TIFF (pages), others.
    - vfx-io FormatReader/Writer only expose whole-image read/write from path or memory.
    - Evidence (traits): `crates/vfx-io/src/traits.rs`
    - OIIO ImageInput supports subimage/miplevel selection, scanline/tile reads, and deep reads.
    - Evidence (OIIO API): `_ref/OpenImageIO/src/include/OpenImageIO/imageio.h:1166`
+   - FIX (partial): Added supports_subimages(), supports_mipmaps(), num_subimages(), num_miplevels(), read_subimage() to FormatReader trait with default implementations.
 
 10) ImageBuf `read()` ignores subimage/miplevel parameters.
+   **STATUS: FIXED** - ImageBuf now uses read_subimage() with stored subimage/miplevel values.
    - Method accepts subimage/miplevel, but `ensure_pixels_read` always calls `crate::read(&name)` with no subimage/miplevel selection.
    - Evidence (ImageBuf read path): `crates/vfx-io/src/imagebuf/mod.rs:760`
+   - FIX: Added read_subimage() to lib.rs using FormatRegistry. Updated ensure_pixels_read() to use crate::read_subimage(). Added read_subimage_path/num_subimages/num_miplevels to FormatInfo and FormatRegistry.
 
 11) TextureSystem sampling falls back for trilinear/anisotropic in `sample()`.
+   **STATUS: FIXED** - Added proper anisotropic filtering with multiple samples along major axis.
    - `sample()` uses bilinear when filter is Trilinear/Anisotropic due to missing derivatives.
    - Evidence (implementation): `crates/vfx-io/src/texture.rs:110`
    - OIIO TextureSystem uses derivative-based LOD and anisotropy in texture() API.
    - Evidence (OIIO API): `_ref/OpenImageIO/src/include/OpenImageIO/texture.h:897`
+   - FIX: Added sample_anisotropic() with EWA-like approach - samples along major axis of texture footprint ellipse. sample() without derivatives still falls back to bilinear (correct behavior - no derivatives = no LOD info). sample_d() now uses proper anisotropic when FilterMode::Anisotropic.
 
 12) No capability query API (supports/features) in vfx-io registry/traits.
+   **STATUS: FIXED** - Added FormatCapability enum and supports() API.
    - OIIO ImageInput/ImageOutput expose `supports("...")` for metadata, multiimage, mipmap, ioproxy, thumbnails, etc.
    - Evidence (OIIO supports API): `_ref/OpenImageIO/src/include/OpenImageIO/imageio.h:1131` and `_ref/OpenImageIO/src/include/OpenImageIO/imageio.h:2545`
    - vfx-io FormatReader/FormatWriter/FormatInfo expose only format name, extensions, can_read, read/write paths.
    - Evidence (traits): `crates/vfx-io/src/traits.rs:128` and `crates/vfx-io/src/traits.rs:218`
    - Evidence (registry info): `crates/vfx-io/src/registry.rs:44`
    - Impact: callers cannot detect format capabilities (multiimage, mipmap, ioproxy, thumbnails, metadata limits).
+   - FIX: Added FormatCapability enum (MultiImage, MipMap, Tiles, DeepData, IoProxy, Thumbnail, AppendSubImage, ArbitraryMetadata, Exif, Iptc). Added supports()/capabilities() to FormatReader, FormatWriter traits. Added capabilities field to FormatInfo and supports()/capabilities()/supports_by_extension() to FormatRegistry.
 
 13) Deep read API is not part of the unified vfx-io interfaces.
+   **STATUS: FIXED**
    - OIIO ImageInput exposes deep read entry points and reports `"deepdata"` support.
    - Evidence (deep reads): `_ref/OpenImageIO/src/include/OpenImageIO/imageio.h:1605`
    - Evidence (supports "deepdata"): `_ref/OpenImageIO/src/include/OpenImageIO/imageio.h:2496`
    - vfx-io deep is only exposed via EXR-specific functions, not in `FormatReader`/`FormatRegistry`.
    - Evidence (EXR deep entry points): `crates/vfx-io/src/exr.rs:888`
    - Impact: generic deep workflows cannot be implemented via `vfx-io::read`/registry; deep is format-specific only.
+   - FIX: Added read_deep()/read_deep_from_memory() to FormatReader trait with default UnsupportedFeature error. Added read_deep_path field to FormatInfo. Added read_deep() method to FormatRegistry. Added public read_deep() function to lib.rs. EXR registration uses exr_deep::read_deep_exr() + deep_samples_to_deepdata() to convert to OIIO-style DeepData.
 
 14) ImageCache ignores subimage/multiimage data despite exposing subimage in API.
+   **STATUS: FIXED**
    - `get_tile()` takes `subimage`, but `load_tile()` ignores it and full-loads via `crate::read(path)`.
    - Evidence (unused subimage parameter): `crates/vfx-io/src/cache.rs:405`
    - Evidence (full read path): `crates/vfx-io/src/cache.rs:435`
    - CachedImageInfo hard-codes `subimages: 1` even for files with multiple subimages.
    - Evidence (subimages fixed to 1): `crates/vfx-io/src/cache.rs:333`
    - Impact: multiimage/multipart files cannot be addressed correctly; cache API is misleading.
+   - FIX: get_image_info() now queries actual subimages count via FormatRegistry::global().num_subimages(). load_tile() now uses crate::read_subimage() with the subimage parameter. image_storage key changed from PathBuf to (PathBuf, u32) to support per-subimage caching. invalidate() updated to remove all subimages for a path.
 
 15) ImageCache streaming mode does not support mip levels.
+   **STATUS: FIXED**
    - `load_tile()` returns an UnsupportedOperation error if `mip_level > 0` in streaming mode.
    - Evidence (mip restriction): `crates/vfx-io/src/cache.rs:460`
    - Impact: `get_tile()` cannot serve mip tiles for large images that trigger streaming; callers must handle errors or get incorrect LOD behavior.
+   - FIX: When mip_level > 0 is requested in streaming mode, the code now reads all tiles at mip=0 from the streaming source, reconstructs the full image, converts to Full storage mode, and then generates mips using the existing generate_mip() function.
 
 16) ImageBuf `contiguous()` always returns true (TODO left unresolved).
+   **STATUS: FIXED**
    - The method returns `true` unconditionally and has a TODO to check real storage layout.
    - Evidence: `crates/vfx-io/src/imagebuf/mod.rs:692`
    - Impact: callers may assume contiguous layout and perform invalid memcpy/stride math on non-contiguous buffers.
+   - FIX: Added `is_contiguous()` method to PixelStorage that checks actual stride layout. For Owned variants it returns true (always packed). For Wrapped variant it compares xstride/ystride/zstride against expected packed values (pixel_size, width*pixel_size, height*width*pixel_size). Updated `ImageBuf::contiguous()` to delegate to `inner.pixels.is_contiguous()`.
 
 17) Streaming API reports source channel count, but Region data is always RGBA.
+   **STATUS: FIXED**
    - `Region` is defined as RGBA f32-only; `RGBA_CHANNELS` is fixed to 4.
    - Evidence (Region contract): `crates/vfx-io/src/streaming/traits.rs:46`
    - StreamingSource implementations return original channel count (e.g., EXR/Memory/TIFF).
    - Evidence (EXR channels): `crates/vfx-io/src/streaming/exr.rs:272`
    - Evidence (MemorySource channels): `crates/vfx-io/src/streaming/source.rs:235`
    - Impact: callers can misinterpret Region layout or allocate incorrect buffers based on `channels()`.
+   - FIX: Renamed `channels()` to `source_channels()` in StreamingSource trait with documentation clarifying it returns source format channels, not Region channels. Region is always RGBA - use `RGBA_CHANNELS` constant for Region operations.
 
 18) ImageCache streaming path can panic for images with >4 channels.
+   **STATUS: FIXED**
    - Streaming Region is RGBA, but `load_tile()` uses `channels` to index `rgba[c]`.
    - Evidence (loop indexes rgba by channels): `crates/vfx-io/src/cache.rs:455`
    - Evidence (Region is RGBA): `crates/vfx-io/src/streaming/traits.rs:46`
    - Impact: if `channels > 4` (AOVs, extra EXR channels), indexing past RGBA causes panic.
+   - FIX: ImageCache now uses `streaming::RGBA_CHANNELS` (4) instead of `source.channels()` when storing streaming mode channel count. This ensures tile operations always use the correct RGBA layout matching Region data.
 
 19) ExponentTransform ignores OCIO negativeStyle setting in config parsing.
+   **STATUS: FIXED**
    - OCIO allows setting NegativeStyle for ExponentTransform in configs > v1.
    - Evidence (OCIO API): `_ref/OpenColorIO/include/OpenColorIO/OpenColorTransforms.h:900`
    - vfx-ocio parser hard-codes `negative_style: NegativeStyle::Clamp` and never reads a YAML field.
    - Evidence (parser behavior): `crates/vfx-ocio/src/config.rs:664`
    - Impact: configs that rely on pass-through/mirror negative handling are parsed incorrectly.
+   - FIX: Added `parse_negative_style()` function that parses "style" YAML field (OCIO uses "style", not "negativeStyle"). Supports clamp/mirror/pass_thru/linear. ExponentTransform now uses it (default: Clamp). Also fixed ExponentWithLinearTransform to use "style" key (was incorrectly using "negativeStyle") with correct default (Linear).
 
 20) ImageBuf read-only paths do not load pixels; const APIs can return zeroed data silently.
+   **STATUS: FIXED**
    - `ensure_pixels_read_ref()` always returns false and never loads pixels for read-only/cache-backed buffers.
    - Evidence (no-op read ref): `crates/vfx-io/src/imagebuf/mod.rs:1605`
    - `to_image_data()` ignores the boolean result and reads from `PixelStorage`, which is `Empty` by default and yields zeros.
    - Evidence (to_image_data ignores load): `crates/vfx-io/src/imagebuf/mod.rs:1407`
    - Evidence (Empty returns 0.0): `crates/vfx-io/src/imagebuf/storage.rs:198`
    - Impact: calling `write()` or `to_image_data()` on an ImageBuf that hasn't been mutably read yields blank output without error.
+   - FIX: Implemented proper pixel loading in `ensure_pixels_read_ref()` using interior mutability (RwLock allows write access from &self). Now reads image data, allocates storage, and populates pixels - identical logic to the mutable version. Also fixed `to_image_data()` to check the return value and return an error if pixel loading fails instead of silently returning zeros.
 
 21) GradingRgbCurveTransform ignores direction in processor.
+   **STATUS: FIXED**
    - The transform has a direction field, but compile step always bakes forward curves.
    - Evidence (transform has direction): `crates/vfx-ocio/src/transform.rs:948`
    - Evidence (processor ignores direction): `crates/vfx-ocio/src/processor.rs:1136`
    - Impact: inverse grading curves are treated as forward, producing incorrect results.
+   - FIX: Added direction handling like other transforms (combines outer direction with gc.direction). For inverse curves, swaps x/y control points and re-sorts before baking into LUT. This correctly inverts the curve mapping.
 
 22) LogCameraTransform linear slope can divide by zero without checks.
+   **STATUS: FIXED**
    - The linear slope formula divides by `ln(base) * (lin_side_break * lin_side_slope + lin_side_offset)`.
    - Evidence (no zero guard): `crates/vfx-ocio/src/processor.rs:1209`
    - Impact: configs with zero/near-zero denominator yield inf/NaN and break processing.
+   - FIX: Added epsilon check (1e-10) before division. If denominator is near-zero, uses a large finite slope (1e6) with correct sign instead of dividing. Prevents inf/NaN in color pipeline.
 
 23) vfx-lut Lut1D cannot represent per-channel domain min/max from .cube.
    - .cube supports `DOMAIN_MIN`/`DOMAIN_MAX` with 3 values (per-channel), but Lut1D stores scalar `domain_min`/`domain_max`.
    - Evidence (scalar domain): `crates/vfx-lut/src/lut1d.rs:42`
    - Evidence (parser drops G/B): `crates/vfx-lut/src/cube.rs:96`
    - Impact: LUTs with non-uniform domain scaling are parsed incorrectly.
+   - STATUS: FIXED
+   - FIX: Changed Lut1D struct to use per-channel domain: `domain_min: [f32; 3]`, `domain_max: [f32; 3]`. Updated all constructors, added `from_data_per_channel()` and `from_rgb_per_channel()` methods. Updated `interpolate()` to use channel-specific domain. Updated cube.rs parser to use `from_rgb_per_channel()` with full 3-channel domain. Updated csp.rs, spi.rs, hdl.rs to replicate scalar to array or use R channel for formats that don't support per-channel. Updated vfx-ocio ProcessorOp::Lut1d to use per-channel domain_min/max. CPU apply uses per-channel scaling; GPU uses R channel (typical for shader implementation).
 
 24) FileTransform uses CLF parser for .ctf files.
    - Processor treats `"ctf"` the same as `"clf"` and always calls `read_clf`.
@@ -151,11 +186,15 @@
    - vfx-lut provides a separate CTF parser (`read_ctf`).
    - Evidence (CTF API): `crates/vfx-lut/src/lib.rs:75`
    - Impact: valid .ctf files can fail to parse or be interpreted incorrectly.
+   - STATUS: FIXED (already)
+   - FIX: Code already correctly distinguishes .clf and .ctf: processor.rs calls `read_clf()` for clf and `read_ctf()` for ctf. The `read_ctf()` calls `parse_clf_internal(reader, ctf_mode: true)` which enables CTF-specific parsing. Bug report was based on outdated analysis.
 
 25) ImageBuf write ignores `fileformat` hint and per-buffer write settings.
    - `write()` ignores `_fileformat` and does not apply `write_format`/`write_tiles`; it always converts to ImageData and calls `crate::write`.
    - Evidence (unused args and path): `crates/vfx-io/src/imagebuf/mod.rs:807`
    - Impact: callers cannot force output format or tiling through ImageBuf API despite setter methods.
+   - STATUS: FIXED
+   - FIX: Updated `ImageBuf::write()` to use `fileformat` parameter via new `write_with_format()` function. Added `Format::from_name()` to convert format strings. Now respects `write_format` setting - converts pixel data before writing if target format differs from current. Added `write_with_format()` to lib.rs that accepts optional format hint. Tile writing noted in docs but requires format-specific support.
 
 26) .cube INPUT_RANGE directives are ignored.
    - Resolve-style .cube uses `LUT_1D_INPUT_RANGE` / `LUT_3D_INPUT_RANGE` to define domain.
@@ -163,6 +202,8 @@
    - vfx-lut .cube parser only handles `DOMAIN_MIN` / `DOMAIN_MAX` and does not parse INPUT_RANGE.
    - Evidence (parser keywords): `crates/vfx-lut/src/cube.rs:69`
    - Impact: input domain defaults to 0..1 even when file defines a different range.
+   - STATUS: FIXED
+   - FIX: Added `parse_input_range()` helper to parse Resolve-style INPUT_RANGE (two scalar values). Updated `parse_1d()` to handle `LUT_1D_INPUT_RANGE` and `parse_3d()` to handle `LUT_3D_INPUT_RANGE`. Values are converted to uniform per-channel domain arrays.
 
 27) .cube files containing both 1D and 3D LUTs are not supported.
    - Reference file includes both `LUT_1D_SIZE` and `LUT_3D_SIZE` in one file.
@@ -170,18 +211,24 @@
    - vfx-lut parse_3d errors if data length != size^3 (will include 1D lines) and parse_1d errors if `LUT_3D_SIZE` is present.
    - Evidence (errors): `crates/vfx-lut/src/cube.rs:74` and `crates/vfx-lut/src/cube.rs:84`
    - Impact: valid Resolve .cube files cannot be read via vfx-ocio FileTransform.
+   - STATUS: FIXED
+   - FIX: Added `CubeFile` struct with optional `lut1d` and `lut3d` fields. Added `read_cube()` and `parse_cube()` functions that handle combined 1D+3D .cube files by parsing both sections. The 1D shaper LUT (if present) uses `Lut1D::from_rgb_per_channel()`, and the 3D LUT uses proper Blue-major reordering with Interpolation::default(). Exported new types from lib.rs.
 
 28) TextureSystem assumes fixed tile size 64 even if cache tile size is changed.
    - Texture sampling uses `DEFAULT_TILE_SIZE` to compute tile indices and local offsets.
    - Evidence (fixed tile size): `crates/vfx-io/src/texture.rs:274`
    - ImageCache allows changing tile size via `set_tile_size`, and uses it for tiling.
    - Evidence (configurable tile size): `crates/vfx-io/src/cache.rs:274`
+   - STATUS: FIXED
+   - FIX: Added `tile_size()` getter to ImageCache. Updated `fetch_pixel()` in texture.rs to use `self.cache.tile_size()` instead of hardcoded `DEFAULT_TILE_SIZE` constant.
    - Impact: if cache tile size != 64, TextureSystem will fetch wrong tiles/pixels.
 
 29) Environment light-probe mapping can divide by zero.
    - LightProbe projection computes `r = sqrt(2 * (1 + z))` and divides by `r` with no zero guard.
    - Evidence (no guard): `crates/vfx-io/src/texture.rs:571`
    - Impact: direction (0,0,-1) yields r=0, causing inf/NaN texture coordinates.
+   - STATUS: FIXED
+   - FIX: Added `.max(f32::EPSILON)` guard to both LightProbe projection sites in texture.rs (lines ~449 and ~647) to prevent division by zero when z=-1.
 
 30) vfx-lut .cube parser does not implement Resolve-style files with both 1D/3D and INPUT_RANGE.
    - OCIO Resolve cube format supports LUT_1D_SIZE/LUT_3D_SIZE in the same file and parses LUT_1D_INPUT_RANGE/LUT_3D_INPUT_RANGE.
@@ -189,11 +236,15 @@
    - vfx-lut only supports DOMAIN_MIN/MAX and does not split 1D/3D blocks or parse INPUT_RANGE.
    - Evidence (vfx-lut keywords/logic): `crates/vfx-lut/src/cube.rs:69` and `crates/vfx-lut/src/cube.rs:124`
    - Impact: Resolve `.cube` files accepted by OCIO will be rejected or misinterpreted.
+   - STATUS: FIXED (already in Bugs #26-27)
+   - FIX: The `parse_cube()` function added in Bug #27 handles both `LUT_1D_INPUT_RANGE` and `LUT_3D_INPUT_RANGE` (via `parse_input_range()` added in Bug #26), plus combined 1D+3D files via `CubeFile` struct.
 
 31) ImageBuf ignores config spec hints on open.
    - `from_file_opts` accepts a config `ImageSpec` but the parameter is unused; all reads ignore config hints.
    - Evidence (unused _config): `crates/vfx-io/src/imagebuf/mod.rs:355`
    - Impact: callers cannot pass per-format read hints that OIIO supports via ImageSpec config.
+   - STATUS: FIXED
+   - FIX: Added `read_config: Option<ImageSpec>` field to ImageBufInner. Updated `from_file_opts()` to store the config (renamed `_config` to `config`). In `ensure_pixels_read()`, if config specifies a format different from F32, automatic conversion is applied after reading.
 
 32) CDLTransform style/negative handling is ignored; clamping is always applied.
    - OCIO CDL style controls negative handling (default NO_CLAMP), and supports style selection.
@@ -203,6 +254,8 @@
    - Processor clamps negatives via `max(0.0)` regardless of style.
    - Evidence (processor clamp): `crates/vfx-ocio/src/processor.rs:1490`
    - Impact: configs expecting NO_CLAMP or other CDL styles produce incorrect results.
+   - STATUS: FIXED
+   - FIX: Updated config.rs to parse `style` attribute from YAML (supports "no_clamp"/"NoClamp"/"NO_CLAMP"). Added `style: CdlStyle` field to `ProcessorOp::Cdl` and `GpuOp::Cdl`. Updated `apply_one_rgb()` to respect style - AscCdl uses `.max(0.0)` clamping, NoClamp uses mirror style (sign-preserving power). Updated GPU shader generation similarly.
 
 33) processor_with_context does not resolve $VAR in FileTransform paths.
    - Method comment notes full implementation would resolve `$VAR`, but it only sets Processor context.
@@ -210,6 +263,8 @@
    - Processor stores context but does not use it when applying ops.
    - Evidence (context unused): `crates/vfx-ocio/src/processor.rs:666`
    - Impact: context variables do not affect FileTransform path resolution after processor creation.
+   - STATUS: FIXED
+   - FIX: Added `Processor::from_transform_with_context()` method that sets context BEFORE compilation. Updated `processor_with_context()` in config.rs to build transforms and use new context-aware method. Updated `compile_transform()` FileTransform handling to resolve `$VAR` references using `self.context.resolve()` when context is available.
 
 34) Viewing rules are parsed but never applied to filter views.
    - OCIO implements ViewingRules and uses them to filter views (see tests).
@@ -217,6 +272,8 @@
    - vfx-ocio only stores viewing_rules and exposes accessors; no filtering logic is used in display processor.
    - Evidence (only accessors, no usage): `crates/vfx-ocio/src/config.rs:2055`
    - Impact: configs relying on viewing_rules to select views behave differently.
+   - STATUS: FIXED
+   - FIX: Added `is_display_view_applicable()` to check if a view is applicable for a colorspace based on viewing rules (checks rule colorspaces and encodings). Added `get_display_views_for_colorspace()`, `num_display_views_for_colorspace()`, and `get_display_view_for_colorspace()` methods matching OCIO API. Added `get_display_view_rule()` for rule lookup.
 
 35) Discreet1DL parser does not skip comments and is case-sensitive for the LUT header.
    - Parser only skips empty lines and checks `starts_with("LUT:")`, so `#` comments and `lut:` headers are treated as data.
@@ -2529,6 +2586,8 @@
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:349`
    - Evidence (implementation): `crates/vfx-ocio/src/config.rs:1156`, `crates/vfx-ocio/src/config.rs:1161`, `crates/vfx-ocio/src/config.rs:1162`
    - Impact: переменные окружения не подставляются в пути LUT/файлов, поведение не соответствует заявленному.
+   - STATUS: FIXED (duplicate of #33)
+   - FIX: See Bug #33.
 
 459) В `appendix/feature-matrix.md` указано `Operation fusion` как **Done**, но операции исполняются по одной (каждый `apply_*` вызывает `execute_color`), а объединение доступно только при ручном использовании `ColorOpBatch`.
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:320`

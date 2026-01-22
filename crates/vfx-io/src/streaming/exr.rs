@@ -270,7 +270,7 @@ impl StreamingSource for ExrStreamingSource {
         self.format
     }
 
-    fn channels(&self) -> u32 {
+    fn source_channels(&self) -> u32 {
         self.channels
     }
 }

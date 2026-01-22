@@ -20,7 +20,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::cache::{ImageCache, CachedImageInfo, DEFAULT_TILE_SIZE};
+use crate::cache::{ImageCache, CachedImageInfo};
 use crate::IoResult;
 
 /// Texture wrap modes.
@@ -170,8 +170,7 @@ impl TextureSystem {
             FilterMode::Bilinear => self.sample_bilinear(path, &info, s, t, mip_level as u32, opts),
             FilterMode::Trilinear => self.sample_trilinear(path, &info, s, t, mip_level, opts),
             FilterMode::Anisotropic => {
-                // Simplified: use trilinear for now
-                self.sample_trilinear(path, &info, s, t, mip_level, opts)
+                self.sample_anisotropic(path, &info, s, t, dsdx, dtdx, dsdy, dtdy, opts)
             }
         }
     }
@@ -251,6 +250,82 @@ impl TextureSystem {
         Ok(result)
     }
 
+    /// Anisotropic filtering with multiple samples along major axis.
+    ///
+    /// Uses EWA-like approach: samples along the major axis of the texture
+    /// footprint ellipse, blended with trilinear filtering.
+    fn sample_anisotropic(&self, path: &Path, info: &CachedImageInfo, s: f32, t: f32,
+                          dsdx: f32, dtdx: f32, dsdy: f32, dtdy: f32,
+                          opts: &TextureOptions) -> IoResult<[f32; 4]> {
+        // Compute texture-space derivatives
+        let dudx = dsdx * info.width as f32;
+        let dvdx = dtdx * info.height as f32;
+        let dudy = dsdy * info.width as f32;
+        let dvdy = dtdy * info.height as f32;
+
+        // Compute lengths of the two derivative vectors
+        let len_x = (dudx * dudx + dvdx * dvdx).sqrt();
+        let len_y = (dudy * dudy + dvdy * dvdy).sqrt();
+
+        // Determine major and minor axes
+        let (major_len, minor_len, major_ds, major_dt) = if len_x > len_y {
+            (len_x, len_y, dsdx, dtdx)
+        } else {
+            (len_y, len_x, dsdy, dtdy)
+        };
+
+        // Compute anisotropic ratio (clamped to max_anisotropy)
+        let aspect = (major_len / minor_len.max(0.0001)).min(opts.max_anisotropy);
+
+        // If nearly isotropic, just use trilinear
+        if aspect < 1.5 {
+            let mip = compute_mip_level(info, dsdx, dtdx, dsdy, dtdy);
+            return self.sample_trilinear(path, info, s, t, mip, opts);
+        }
+
+        // Number of samples along major axis (proportional to aspect ratio)
+        let nsamples = ((aspect * 2.0).ceil() as usize).clamp(2, 16);
+
+        // MIP level based on minor axis (for proper filtering along it)
+        let mip = minor_len.max(1.0).log2().clamp(0.0, (info.mip_levels.saturating_sub(1)) as f32);
+
+        // Step size along major axis in UV space
+        let step_s = major_ds / nsamples as f32;
+        let step_t = major_dt / nsamples as f32;
+
+        // Accumulate samples along major axis
+        let mut accum = [0.0f32; 4];
+        let half = (nsamples as f32 - 1.0) / 2.0;
+
+        for i in 0..nsamples {
+            let offset = i as f32 - half;
+            let sample_s = s + offset * step_s;
+            let sample_t = t + offset * step_t;
+
+            // Apply wrap modes
+            let ws = apply_wrap(sample_s, opts.wrap_s);
+            let wt = apply_wrap(sample_t, opts.wrap_t);
+
+            // Skip out-of-bounds samples for black wrap
+            if ws < 0.0 || ws > 1.0 || wt < 0.0 || wt > 1.0 {
+                continue;
+            }
+
+            let sample = self.sample_trilinear(path, info, ws, wt, mip, opts)?;
+            for c in 0..4 {
+                accum[c] += sample[c];
+            }
+        }
+
+        // Average the samples
+        let inv_n = 1.0 / nsamples as f32;
+        for c in 0..4 {
+            accum[c] *= inv_n;
+        }
+
+        Ok(accum)
+    }
+
     /// Fetches a single pixel with coordinate wrapping.
     fn fetch_pixel_wrapped(&self, path: &Path, info: &CachedImageInfo, 
                            x: i32, y: i32, mip: u32, opts: &TextureOptions) -> IoResult<[f32; 4]> {
@@ -270,10 +345,11 @@ impl TextureSystem {
     /// Fetches a single pixel from cache.
     fn fetch_pixel(&self, path: &Path, _info: &CachedImageInfo,
                    x: u32, y: u32, mip: u32, opts: &TextureOptions) -> IoResult<[f32; 4]> {
-        let tile_x = x / DEFAULT_TILE_SIZE;
-        let tile_y = y / DEFAULT_TILE_SIZE;
-        let local_x = x % DEFAULT_TILE_SIZE;
-        let local_y = y % DEFAULT_TILE_SIZE;
+        let ts = self.cache.tile_size();
+        let tile_x = x / ts;
+        let tile_y = y / ts;
+        let local_x = x % ts;
+        let local_y = y % ts;
 
         let tile = self.cache.get_tile(path, opts.subimage, mip, tile_x, tile_y)?;
 
@@ -370,8 +446,8 @@ impl TextureSystem {
                 (s, t)
             }
             EnvLayout::LightProbe => {
-                // Mirror ball projection
-                let r = (2.0 * (1.0 + z)).sqrt();
+                // Mirror ball projection (guard against z=-1 where r=0)
+                let r = (2.0 * (1.0 + z)).sqrt().max(f32::EPSILON);
                 let s = 0.5 + x / (2.0 * r);
                 let t = 0.5 + y / (2.0 * r);
                 (s, t)
@@ -568,7 +644,8 @@ impl TextureSystem {
                 (s, t)
             }
             EnvLayout::LightProbe => {
-                let r = (2.0 * (1.0 + z)).sqrt();
+                // Guard against z=-1 where r=0
+                let r = (2.0 * (1.0 + z)).sqrt().max(f32::EPSILON);
                 let s = 0.5 + x / (2.0 * r);
                 let t = 0.5 + y / (2.0 * r);
                 (s, t)

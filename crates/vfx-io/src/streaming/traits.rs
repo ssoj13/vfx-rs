@@ -253,8 +253,12 @@ pub trait StreamingSource: Send {
     /// format conversions during write-back.
     fn native_format(&self) -> PixelFormat;
 
-    /// Returns number of channels in source (3=RGB, 4=RGBA).
-    fn channels(&self) -> u32;
+    /// Returns number of channels in the source image (e.g., 3=RGB, 4=RGBA, 5+ for AOVs).
+    ///
+    /// **Note:** This is the *source* channel count, not the Region channel count.
+    /// Region data is always RGBA (4 channels) regardless of source format.
+    /// For Region operations, use `RGBA_CHANNELS` constant instead.
+    fn source_channels(&self) -> u32;
 
     /// Hint for optimal region cache size.
     ///

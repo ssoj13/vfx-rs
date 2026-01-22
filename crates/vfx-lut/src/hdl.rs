@@ -101,7 +101,8 @@ impl HdlFile {
     pub fn new_1d(lut: Lut1D) -> Self {
         Self {
             lut_type: HdlType::Lut1D,
-            from_range: (lut.domain_min, lut.domain_max),
+            // HDL uses scalar range; use R channel (assume uniform)
+            from_range: (lut.domain_min[0], lut.domain_max[0]),
             to_range: (0.0, 1.0),
             black: 0.0,
             white: 1.0,
@@ -127,7 +128,7 @@ impl HdlFile {
     pub fn new_3d1d(prelut: Lut1D, lut3d: Lut3D) -> Self {
         Self {
             lut_type: HdlType::Lut3D1D,
-            from_range: (prelut.domain_min, prelut.domain_max),
+            from_range: (prelut.domain_min[0], prelut.domain_max[0]),
             to_range: (0.0, 1.0),
             black: 0.0,
             white: 1.0,

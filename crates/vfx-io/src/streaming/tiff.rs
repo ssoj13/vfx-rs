@@ -408,7 +408,7 @@ impl StreamingSource for TiffStreamingSource {
         self.format
     }
 
-    fn channels(&self) -> u32 {
+    fn source_channels(&self) -> u32 {
         self.samples_per_pixel as u32
     }
 }

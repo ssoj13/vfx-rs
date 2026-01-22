@@ -162,6 +162,38 @@ impl PixelStorage {
         matches!(self, Self::Empty)
     }
 
+    /// Returns true if pixels are stored contiguously (no gaps/padding).
+    ///
+    /// For owned buffers, this is always true.
+    /// For wrapped buffers, checks if strides match the packed layout.
+    pub fn is_contiguous(&self) -> bool {
+        match self {
+            Self::Empty => true,
+            Self::OwnedF32 { .. } => true,
+            Self::OwnedU8 { .. } => true,
+            Self::OwnedU16 { .. } => true,
+            Self::Wrapped {
+                width,
+                height,
+                nchannels,
+                format,
+                xstride,
+                ystride,
+                zstride,
+                ..
+            } => {
+                let pixel_size = format.bytes_per_channel() * nchannels;
+                let expected_xstride = pixel_size;
+                let expected_ystride = width * expected_xstride;
+                let expected_zstride = height * expected_ystride;
+                
+                *xstride == expected_xstride 
+                    && *ystride == expected_ystride
+                    && *zstride == expected_zstride
+            }
+        }
+    }
+
     /// Returns raw pointer to data, if available.
     pub fn as_ptr(&self) -> Option<*const u8> {
         match self {

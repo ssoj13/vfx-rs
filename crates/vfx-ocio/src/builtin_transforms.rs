@@ -52,6 +52,13 @@ pub enum TransferStyle {
     Log3G10,
     Srgb,
     Rec709,
+    AppleLog,
+    CanonCLog2,
+    CanonCLog3,
+    Pq,    // ST-2084 / PQ
+    Hlg,   // HLG
+    Rec1886, // Rec.1886 (gamma 2.4)
+    Gamma26, // gamma 2.6 (DCI)
 }
 
 // ============================================================================
@@ -139,6 +146,46 @@ pub const VGAMUT_TO_AP0: [f32; 16] = [
     0.7245869636, 0.1661761999, 0.1092368365, 0.0,
     0.0219097584, 0.9843355417, -0.0062452999, 0.0,
     -0.0096276887, -0.0004312588, 1.0100589475, 0.0,
+    0.0, 0.0, 0.0, 1.0,
+];
+
+/// Canon Cinema Gamut to ACES AP0 (CAT02 adaptation).
+pub const CANON_CGAMUT_TO_AP0: [f32; 16] = [
+    0.763064455, 0.1488693, 0.0880662450, 0.0,
+    0.003299634, 1.0884838, -0.0917834340, 0.0,
+    -0.009632175, -0.0829892, 1.0926213750, 0.0,
+    0.0, 0.0, 0.0, 1.0,
+];
+
+/// Rec.2020 to ACES AP0 (Bradford adaptation).
+pub const REC2020_TO_AP0: [f32; 16] = [
+    0.678891151, 0.158868422, 0.162240427, 0.0,
+    0.045570831, 0.860712772, 0.093716397, 0.0,
+    -0.000485710, 0.025060196, 0.975425514, 0.0,
+    0.0, 0.0, 0.0, 1.0,
+];
+
+/// CIE XYZ D65 to Rec.709/sRGB primaries.
+pub const XYZ_D65_TO_REC709: [f32; 16] = [
+    3.2404542, -1.5371385, -0.4985314, 0.0,
+    -0.9692660, 1.8760108, 0.0415560, 0.0,
+    0.0556434, -0.2040259, 1.0572252, 0.0,
+    0.0, 0.0, 0.0, 1.0,
+];
+
+/// CIE XYZ D65 to Rec.2020 primaries.
+pub const XYZ_D65_TO_REC2020: [f32; 16] = [
+    1.7166512, -0.3556708, -0.2533663, 0.0,
+    -0.6666844, 1.6164812, 0.0157685, 0.0,
+    0.0176399, -0.0427706, 0.9421031, 0.0,
+    0.0, 0.0, 0.0, 1.0,
+];
+
+/// CIE XYZ D65 to Display P3 primaries.
+pub const XYZ_D65_TO_P3_D65: [f32; 16] = [
+    2.4934969, -0.9313836, -0.4027108, 0.0,
+    -0.8294890, 1.7626641, 0.0236247, 0.0,
+    0.0358458, -0.0761724, 0.9568845, 0.0,
     0.0, 0.0, 0.0, 1.0,
 ];
 
@@ -328,6 +375,115 @@ pub fn get_builtin(style: &str) -> Option<BuiltinDef> {
             BuiltinDef::Matrix { matrix: SRGB_TO_XYZ_D65, offset: [0.0; 4] },
         ])),
         
+        // Apple Log to ACES (Apple Log uses Rec.2020 primaries)
+        "applelogtoaces20651" | "applelogtoaces" => {
+            Some(BuiltinDef::Chain(vec![
+                BuiltinDef::Transfer { style: TransferStyle::AppleLog },
+                BuiltinDef::Matrix { matrix: REC2020_TO_AP0, offset: [0.0; 4] },
+            ]))
+        }
+        
+        // Apple Log curve only
+        "curveapplelogtolinear" => {
+            Some(BuiltinDef::Transfer { style: TransferStyle::AppleLog })
+        }
+        
+        // Canon C-Log2 Cinema Gamut to ACES
+        "canonclog2cgamuttoaces20651" | "clog2toaces" => {
+            Some(BuiltinDef::Chain(vec![
+                BuiltinDef::Transfer { style: TransferStyle::CanonCLog2 },
+                BuiltinDef::Matrix { matrix: CANON_CGAMUT_TO_AP0, offset: [0.0; 4] },
+            ]))
+        }
+        
+        // Canon C-Log2 curve only
+        "curvecanonclog2tolinear" => {
+            Some(BuiltinDef::Transfer { style: TransferStyle::CanonCLog2 })
+        }
+        
+        // Canon C-Log3 Cinema Gamut to ACES
+        "canonclog3cgamuttoaces20651" | "clog3toaces" => {
+            Some(BuiltinDef::Chain(vec![
+                BuiltinDef::Transfer { style: TransferStyle::CanonCLog3 },
+                BuiltinDef::Matrix { matrix: CANON_CGAMUT_TO_AP0, offset: [0.0; 4] },
+            ]))
+        }
+        
+        // Canon C-Log3 curve only
+        "curvecanonclog3tolinear" => {
+            Some(BuiltinDef::Transfer { style: TransferStyle::CanonCLog3 })
+        }
+        
+        // ACES utility transforms
+        "utilityacesap0tociexyzd65bfd" => Some(BuiltinDef::Matrix {
+            matrix: AP0_TO_XYZ_D65,
+            offset: [0.0; 4],
+        }),
+        "utilityacesap1tociexyzd65bfd" => Some(BuiltinDef::Matrix {
+            matrix: AP1_TO_XYZ_D65,
+            offset: [0.0; 4],
+        }),
+        
+        // ACEScct/ACEScc curve only (no matrix)
+        "curveacescctlogtolin" | "curveacescctlogtolinear" => {
+            Some(BuiltinDef::Transfer { style: TransferStyle::AcesCct })
+        }
+        
+        // Display transforms (XYZ D65 to display)
+        "displayciexyzd65torec.1886rec.709" | "displayxyzd65torec1886rec709" => {
+            Some(BuiltinDef::Chain(vec![
+                BuiltinDef::Matrix { matrix: XYZ_D65_TO_REC709, offset: [0.0; 4] },
+                BuiltinDef::Transfer { style: TransferStyle::Rec1886 },
+            ]))
+        }
+        "displayciexyzd65torec.1886rec.2020" | "displayxyzd65torec1886rec2020" => {
+            Some(BuiltinDef::Chain(vec![
+                BuiltinDef::Matrix { matrix: XYZ_D65_TO_REC2020, offset: [0.0; 4] },
+                BuiltinDef::Transfer { style: TransferStyle::Rec1886 },
+            ]))
+        }
+        "displayciexyzd65tosrgb" | "displayxyzd65tosrgb" => {
+            Some(BuiltinDef::Chain(vec![
+                BuiltinDef::Matrix { matrix: XYZ_D65_TO_REC709, offset: [0.0; 4] },
+                BuiltinDef::Transfer { style: TransferStyle::Srgb },
+            ]))
+        }
+        "displayciexyzd65todisplayp3" => {
+            Some(BuiltinDef::Chain(vec![
+                BuiltinDef::Matrix { matrix: XYZ_D65_TO_P3_D65, offset: [0.0; 4] },
+                BuiltinDef::Transfer { style: TransferStyle::Srgb },
+            ]))
+        }
+        "displayciexyzd65torec.2100pq" | "displayxyzd65topq" => {
+            Some(BuiltinDef::Chain(vec![
+                BuiltinDef::Matrix { matrix: XYZ_D65_TO_REC2020, offset: [0.0; 4] },
+                BuiltinDef::Transfer { style: TransferStyle::Pq },
+            ]))
+        }
+        "displayciexyzd65torec.2100hlg1000nit" | "displayxyzd65tohlg" => {
+            Some(BuiltinDef::Chain(vec![
+                BuiltinDef::Matrix { matrix: XYZ_D65_TO_REC2020, offset: [0.0; 4] },
+                BuiltinDef::Transfer { style: TransferStyle::Hlg },
+            ]))
+        }
+        
+        // PQ / ST-2084 curves
+        "curvest2084tolinear" | "curvepqtolinear" => {
+            Some(BuiltinDef::Transfer { style: TransferStyle::Pq })
+        }
+        "curvelineartost2084" | "curvelineartopq" => {
+            // Inverse direction handled in compile
+            Some(BuiltinDef::Transfer { style: TransferStyle::Pq })
+        }
+        
+        // HLG curves
+        "curvehlgoetfinverse" | "curvehlgtolinear" => {
+            Some(BuiltinDef::Transfer { style: TransferStyle::Hlg })
+        }
+        "curvehlgoetf" | "curvelineartohlg" => {
+            Some(BuiltinDef::Transfer { style: TransferStyle::Hlg })
+        }
+        
         _ => None,
     }
 }
@@ -403,6 +559,13 @@ pub fn compile_builtin(def: &BuiltinDef, forward: bool, ops: &mut Vec<ProcessorO
                 TransferStyle::Log3G10 => ProcTransfer::Log3G10,
                 TransferStyle::Srgb => ProcTransfer::Srgb,
                 TransferStyle::Rec709 => ProcTransfer::Rec709,
+                TransferStyle::AppleLog => ProcTransfer::AppleLog,
+                TransferStyle::CanonCLog2 => ProcTransfer::CanonCLog2,
+                TransferStyle::CanonCLog3 => ProcTransfer::CanonCLog3,
+                TransferStyle::Pq => ProcTransfer::Pq,
+                TransferStyle::Hlg => ProcTransfer::Hlg,
+                TransferStyle::Rec1886 => ProcTransfer::Rec1886,
+                TransferStyle::Gamma26 => ProcTransfer::Gamma26,
             };
             ops.push(ProcessorOp::Transfer { style: proc_style, forward });
         }

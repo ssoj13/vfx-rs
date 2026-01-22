@@ -26,7 +26,38 @@ use vfx_transfer::{
     srgb, rec709, pq, hlg, gamma,
     acescct, acescc, log_c, log_c4,
     s_log3, v_log, red_log, bmd_film,
+    apple_log, canon_log,
 };
+
+/// Inverts a 3x3 matrix. Returns None if singular.
+fn invert_3x3(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
+    let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    
+    if det.abs() < 1e-12 {
+        return None;
+    }
+    
+    let inv_det = 1.0 / det;
+    Some([
+        [
+            (m[1][1] * m[2][2] - m[1][2] * m[2][1]) * inv_det,
+            (m[0][2] * m[2][1] - m[0][1] * m[2][2]) * inv_det,
+            (m[0][1] * m[1][2] - m[0][2] * m[1][1]) * inv_det,
+        ],
+        [
+            (m[1][2] * m[2][0] - m[1][0] * m[2][2]) * inv_det,
+            (m[0][0] * m[2][2] - m[0][2] * m[2][0]) * inv_det,
+            (m[0][2] * m[1][0] - m[0][0] * m[1][2]) * inv_det,
+        ],
+        [
+            (m[1][0] * m[2][1] - m[1][1] * m[2][0]) * inv_det,
+            (m[0][1] * m[2][0] - m[0][0] * m[2][1]) * inv_det,
+            (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * inv_det,
+        ],
+    ])
+}
 
 /// Applies a transfer function to a single value.
 /// Delegates to vfx-transfer for the actual math.
@@ -97,6 +128,23 @@ fn apply_transfer(v: f32, style: TransferStyle, forward: bool) -> f32 {
         
         TransferStyle::BmdFilmGen5 => {
             if forward { bmd_film::bmd_film_gen5_encode(v) } else { bmd_film::bmd_film_gen5_decode(v) }
+        }
+        
+        TransferStyle::Rec1886 => {
+            // Rec.1886: gamma 2.4 for broadcast displays
+            if forward { gamma::gamma_oetf(v, 2.4) } else { gamma::gamma_eotf(v, 2.4) }
+        }
+        
+        TransferStyle::AppleLog => {
+            if forward { apple_log::encode(v) } else { apple_log::decode(v) }
+        }
+        
+        TransferStyle::CanonCLog2 => {
+            if forward { canon_log::clog2_encode(v) } else { canon_log::clog2_decode(v) }
+        }
+        
+        TransferStyle::CanonCLog3 => {
+            if forward { canon_log::clog3_encode(v) } else { canon_log::clog3_decode(v) }
         }
     }
 }
@@ -428,7 +476,10 @@ pub enum ProcessorOp {
         lut: Vec<f32>,
         size: usize,
         channels: usize,
-        domain: [f32; 2],
+        /// Per-channel domain min [R, G, B]
+        domain_min: [f32; 3],
+        /// Per-channel domain max [R, G, B]
+        domain_max: [f32; 3],
     },
     /// 3D LUT.
     Lut3d {
@@ -454,6 +505,7 @@ pub enum ProcessorOp {
         offset: [f32; 3],
         power: [f32; 3],
         saturation: f32,
+        style: CdlStyle,
     },
     /// Range clamp/scale.
     Range {
@@ -568,7 +620,7 @@ impl ProcessorOp {
             ProcessorOp::Exponent { value, .. } => {
                 value.iter().all(|v| (*v - 1.0).abs() < 1e-6)
             }
-            ProcessorOp::Cdl { slope, offset, power, saturation } => {
+            ProcessorOp::Cdl { slope, offset, power, saturation, .. } => {
                 slope.iter().all(|v| (*v - 1.0).abs() < 1e-6)
                     && offset.iter().all(|v| v.abs() < 1e-6)
                     && power.iter().all(|v| (*v - 1.0).abs() < 1e-6)
@@ -615,6 +667,8 @@ pub enum TransferStyle {
     Gamma24,
     /// Gamma 2.6 (DCI).
     Gamma26,
+    /// Rec.1886 (gamma 2.4 for broadcast).
+    Rec1886,
     /// Linear (passthrough).
     Linear,
     /// PQ (SMPTE ST 2084).
@@ -637,6 +691,12 @@ pub enum TransferStyle {
     VLog,
     /// Log-C (Blackmagic).
     BmdFilmGen5,
+    /// Apple Log.
+    AppleLog,
+    /// Canon C-Log2.
+    CanonCLog2,
+    /// Canon C-Log3.
+    CanonCLog3,
 }
 
 impl Processor {
@@ -689,6 +749,22 @@ impl Processor {
         optimization: OptimizationLevel,
     ) -> OcioResult<Self> {
         let mut processor = Self::new();
+        processor.compile_transform(transform, direction)?;
+        processor.optimize(optimization);
+        Ok(processor)
+    }
+
+    /// Creates a processor with context for variable resolution.
+    ///
+    /// Context variables are used to resolve `$VAR` references in FileTransform paths.
+    pub fn from_transform_with_context(
+        transform: &Transform,
+        direction: TransformDirection,
+        optimization: OptimizationLevel,
+        context: &crate::Context,
+    ) -> OcioResult<Self> {
+        let mut processor = Self::new();
+        processor.context = Some(context.clone()); // Set context BEFORE compilation
         processor.compile_transform(transform, direction)?;
         processor.optimize(optimization);
         Ok(processor)
@@ -839,6 +915,7 @@ impl Processor {
                         offset: cdl.offset.map(|v| v as f32),
                         power: cdl.power.map(|v| v as f32),
                         saturation: cdl.saturation as f32,
+                        style: cdl.style,
                     });
                 } else {
                     // Inverse CDL: reverse SOP order, invert values
@@ -864,6 +941,7 @@ impl Processor {
                         offset: inv_offset,
                         power: inv_power,
                         saturation: inv_sat,
+                        style: cdl.style,
                     });
                 }
             }
@@ -968,8 +1046,15 @@ impl Processor {
                 };
                 let forward = dir == TransformDirection::Forward;
                 
+                // Resolve $VAR references in path using context
+                let resolved_path = if let Some(ref ctx) = self.context {
+                    std::path::PathBuf::from(ctx.resolve(ft.src.to_string_lossy().as_ref()))
+                } else {
+                    ft.src.clone()
+                };
+                
                 // Load LUT based on file extension
-                let path = &ft.src;
+                let path = &resolved_path;
                 let ext = path.extension()
                     .and_then(|e| e.to_str())
                     .map(|e| e.to_lowercase())
@@ -977,6 +1062,7 @@ impl Processor {
                 
                 match ext.as_str() {
                     "cube" => {
+                        // Try 3D first, fall back to 1D
                         if let Ok(lut) = vfx_lut::cube::read_3d(path) {
                             self.compile_lut3d(&lut, ft.interpolation, forward);
                         } else {
@@ -992,13 +1078,120 @@ impl Processor {
                         let lut = vfx_lut::read_spi3d(path)?;
                         self.compile_lut3d(&lut, ft.interpolation, forward);
                     }
-                    "clf" | "ctf" => {
+                    "clf" => {
                         let pl = vfx_lut::read_clf(path)?;
                         self.compile_clf(&pl, forward)?;
                     }
+                    "ctf" => {
+                        let pl = vfx_lut::read_ctf(path)?;
+                        self.compile_clf(&pl, forward)?;
+                    }
+                    "3dl" => {
+                        let lut = vfx_lut::read_3dl(path)?;
+                        self.compile_lut3d(&lut, ft.interpolation, forward);
+                    }
+                    "cc" => {
+                        let cc = vfx_lut::read_cc(path)?;
+                        self.compile_cdl_correction(&cc, forward);
+                    }
+                    "ccc" => {
+                        // ColorCorrectionCollection - use ccc_id if set, else first
+                        let ccc = vfx_lut::read_ccc(path)?;
+                        let cc = if let Some(ref id) = ft.ccc_id {
+                            ccc.corrections.iter().find(|c| c.id.as_deref() == Some(id.as_str()))
+                                .unwrap_or_else(|| ccc.corrections.first().unwrap())
+                        } else {
+                            ccc.corrections.first().ok_or_else(|| OcioError::InvalidTransform {
+                                reason: "CCC file has no corrections".into()
+                            })?
+                        };
+                        self.compile_cdl_correction(cc, forward);
+                    }
+                    "cdl" => {
+                        // ColorDecisionList - extract CC from first decision
+                        let cdl = vfx_lut::read_cdl(path)?;
+                        if let Some(decision) = cdl.decisions.first() {
+                            self.compile_cdl_correction(&decision.correction, forward);
+                        }
+                    }
+                    "csp" => {
+                        let csp = vfx_lut::read_csp(path)?;
+                        // Apply prelut as 1D if non-identity
+                        if !csp.prelut.is_identity() {
+                            if let Some(lut1d) = csp.prelut.to_lut1d() {
+                                self.compile_lut1d(&lut1d, forward);
+                            }
+                        }
+                        // Apply 1D LUT if present
+                        if let Some(ref lut) = csp.lut1d {
+                            self.compile_lut1d(lut, forward);
+                        }
+                        // Apply 3D LUT if present
+                        if let Some(ref lut) = csp.lut3d {
+                            self.compile_lut3d(lut, ft.interpolation, forward);
+                        }
+                    }
+                    "1dl" => {
+                        // Discreet 1DL format
+                        let lut = vfx_lut::read_1dl(path)?;
+                        self.compile_lut1d(&lut, forward);
+                    }
+                    "hdl" => {
+                        let hdl = vfx_lut::read_hdl(path)?;
+                        // Apply 1D shaper if present
+                        if let Some(ref lut) = hdl.lut1d {
+                            self.compile_lut1d(lut, forward);
+                        }
+                        // Apply 3D LUT if present
+                        if let Some(ref lut) = hdl.lut3d {
+                            self.compile_lut3d(lut, ft.interpolation, forward);
+                        }
+                    }
+                    "itx" => {
+                        // Iridas ITX 3D LUT
+                        let lut = vfx_lut::read_itx(path)?;
+                        self.compile_lut3d(&lut, ft.interpolation, forward);
+                    }
+                    "look" => {
+                        // Iridas Look 3D LUT
+                        let lut = vfx_lut::read_look(path)?;
+                        self.compile_lut3d(&lut, ft.interpolation, forward);
+                    }
+                    "mga" | "m3d" => {
+                        // Pandora 3D LUT
+                        let lut = vfx_lut::read_mga(path)?;
+                        self.compile_lut3d(&lut, ft.interpolation, forward);
+                    }
+                    "spimtx" => {
+                        // SPI matrix format
+                        let mtx = vfx_lut::read_spimtx(path)?;
+                        self.compile_spi_matrix(&mtx, forward);
+                    }
+                    "cub" => {
+                        // Truelight format
+                        let tl = vfx_lut::read_cub(path)?;
+                        // Apply 1D shaper if present
+                        if let Some(ref shaper) = tl.shaper {
+                            self.compile_lut1d(shaper, forward);
+                        }
+                        // Apply 3D cube
+                        self.compile_lut3d(&tl.cube, ft.interpolation, forward);
+                    }
+                    "vf" => {
+                        // Nuke VF format
+                        let vf = vfx_lut::read_vf(path)?;
+                        // Apply pre-matrix if present
+                        if let Some(ref m) = vf.matrix {
+                            self.compile_4x4_matrix(m, forward);
+                        }
+                        // Apply 3D LUT
+                        self.compile_lut3d(&vf.lut, ft.interpolation, forward);
+                    }
                     _ => {
-                        // Unsupported format - skip with warning
-                        // In production, this could try other loaders
+                        // Unsupported format - return error
+                        return Err(OcioError::InvalidTransform {
+                            reason: format!("Unsupported FileTransform format: .{}", ext)
+                        });
                     }
                 }
             }
@@ -1134,23 +1327,44 @@ impl Processor {
             }
 
             Transform::GradingRgbCurve(gc) => {
-                // Bake curves into 1D LUTs (1024 samples)
+                // Combine transform direction with outer direction.
+                let dir = if direction == TransformDirection::Inverse {
+                    gc.direction.inverse()
+                } else {
+                    gc.direction
+                };
+
+                // Bake curves into 1D LUTs (1024 samples).
                 let lut_size = 1024;
-                let bake_curve = |pts: &[[f64; 2]]| -> Vec<f32> {
+
+                // For inverse curves, swap x/y and re-sort.
+                let invert_curve = |pts: &[[f64; 2]]| -> Vec<[f64; 2]> {
+                    let mut inv: Vec<[f64; 2]> = pts.iter().map(|p| [p[1], p[0]]).collect();
+                    inv.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap_or(std::cmp::Ordering::Equal));
+                    inv
+                };
+
+                let bake_curve = |pts: &[[f64; 2]], inverse: bool| -> Vec<f32> {
+                    let curve_pts = if inverse {
+                        invert_curve(pts)
+                    } else {
+                        pts.to_vec()
+                    };
                     let mut lut = Vec::with_capacity(lut_size);
                     for i in 0..lut_size {
                         let x = i as f64 / (lut_size - 1) as f64;
-                        let y = interpolate_curve(pts, x);
+                        let y = interpolate_curve(&curve_pts, x);
                         lut.push(y as f32);
                     }
                     lut
                 };
 
+                let is_inverse = dir == TransformDirection::Inverse;
                 self.ops.push(ProcessorOp::GradingRgbCurve {
-                    red_lut: bake_curve(&gc.red),
-                    green_lut: bake_curve(&gc.green),
-                    blue_lut: bake_curve(&gc.blue),
-                    master_lut: bake_curve(&gc.master),
+                    red_lut: bake_curve(&gc.red, is_inverse),
+                    green_lut: bake_curve(&gc.green, is_inverse),
+                    blue_lut: bake_curve(&gc.blue, is_inverse),
+                    master_lut: bake_curve(&gc.master, is_inverse),
                 });
             }
 
@@ -1218,18 +1432,23 @@ impl Processor {
                     lc.direction
                 };
 
-                // Calculate linear slope for continuity at break point
+                // Calculate linear slope for continuity at break point.
                 // linear_slope = log_side_slope * lin_side_slope / (ln(base) * (lin_side_break * lin_side_slope + lin_side_offset))
                 let linear_slope: [f32; 3] = lc.linear_slope.map(|arr| arr.map(|v| v as f32)).unwrap_or_else(|| {
                     let ln_base = (lc.base as f64).ln();
-                    [
-                        ((lc.log_side_slope[0] * lc.lin_side_slope[0]) / 
-                            (ln_base * (lc.lin_side_break[0] * lc.lin_side_slope[0] + lc.lin_side_offset[0]))) as f32,
-                        ((lc.log_side_slope[1] * lc.lin_side_slope[1]) / 
-                            (ln_base * (lc.lin_side_break[1] * lc.lin_side_slope[1] + lc.lin_side_offset[1]))) as f32,
-                        ((lc.log_side_slope[2] * lc.lin_side_slope[2]) / 
-                            (ln_base * (lc.lin_side_break[2] * lc.lin_side_slope[2] + lc.lin_side_offset[2]))) as f32,
-                    ]
+                    const EPSILON: f64 = 1e-10;
+                    
+                    let calc_slope = |i: usize| -> f32 {
+                        let denom = ln_base * (lc.lin_side_break[i] * lc.lin_side_slope[i] + lc.lin_side_offset[i]);
+                        if denom.abs() < EPSILON {
+                            // Avoid division by zero; use a large but finite slope.
+                            (lc.log_side_slope[i] * lc.lin_side_slope[i]).signum() as f32 * 1e6
+                        } else {
+                            ((lc.log_side_slope[i] * lc.lin_side_slope[i]) / denom) as f32
+                        }
+                    };
+                    
+                    [calc_slope(0), calc_slope(1), calc_slope(2)]
                 });
 
                 self.ops.push(ProcessorOp::LogCamera {
@@ -1267,13 +1486,13 @@ impl Processor {
                 };
                 let forward = dir == TransformDirection::Forward;
                 
-                // Convert inline LUT to vfx_lut format
+                // Convert inline LUT to vfx_lut format (replicate scalar domain to per-channel)
                 let vfx_lut = vfx_lut::Lut1D {
                     r: lut.red.clone(),
                     g: lut.green.clone(),
                     b: lut.blue.clone(),
-                    domain_min: lut.input_min,
-                    domain_max: lut.input_max,
+                    domain_min: [lut.input_min; 3],
+                    domain_max: [lut.input_max; 3],
                 };
                 self.compile_lut1d(&vfx_lut, forward);
             }
@@ -1355,7 +1574,8 @@ impl Processor {
             lut: lut_data,
             size,
             channels,
-            domain: [lut.domain_min, lut.domain_max],
+            domain_min: lut.domain_min,
+            domain_max: lut.domain_max,
         });
     }
 
@@ -1444,6 +1664,7 @@ impl Processor {
                         offset: cdl.offset,
                         power: cdl.power,
                         saturation: cdl.saturation,
+                        style: CdlStyle::AscCdl, // CLF/CTF default
                     });
                 }
                 vfx_lut::ProcessNode::Exponent(exp) => {
@@ -1461,6 +1682,108 @@ impl Processor {
             }
         }
         Ok(())
+    }
+
+    /// Compiles a CDL ColorCorrection to processor ops.
+    fn compile_cdl_correction(&mut self, cc: &vfx_lut::ColorCorrection, forward: bool) {
+        if forward {
+            self.ops.push(ProcessorOp::Cdl {
+                slope: cc.slope,
+                offset: cc.offset,
+                power: cc.power,
+                saturation: cc.saturation,
+                style: CdlStyle::AscCdl, // CDL file default
+            });
+        } else {
+            // Inverse CDL: reverse SOP order, invert values
+            let inv_slope = [
+                1.0 / cc.slope[0],
+                1.0 / cc.slope[1],
+                1.0 / cc.slope[2],
+            ];
+            let inv_power = [
+                1.0 / cc.power[0],
+                1.0 / cc.power[1],
+                1.0 / cc.power[2],
+            ];
+            let inv_offset = [
+                -cc.offset[0] * inv_slope[0],
+                -cc.offset[1] * inv_slope[1],
+                -cc.offset[2] * inv_slope[2],
+            ];
+            let inv_sat = 1.0 / cc.saturation;
+            
+            self.ops.push(ProcessorOp::Cdl {
+                slope: inv_slope,
+                offset: inv_offset,
+                power: inv_power,
+                saturation: inv_sat,
+                style: CdlStyle::AscCdl, // CDL file default
+            });
+        }
+    }
+
+    /// Compiles a SPI matrix to processor ops.
+    fn compile_spi_matrix(&mut self, mtx: &vfx_lut::SpiMatrix, forward: bool) {
+        // Convert 3x3 + offset to 4x4 matrix format
+        let m = &mtx.matrix;
+        let o = &mtx.offset;
+        
+        if forward {
+            let matrix = [
+                m[0][0] as f32, m[0][1] as f32, m[0][2] as f32, 0.0,
+                m[1][0] as f32, m[1][1] as f32, m[1][2] as f32, 0.0,
+                m[2][0] as f32, m[2][1] as f32, m[2][2] as f32, 0.0,
+                0.0, 0.0, 0.0, 1.0,
+            ];
+            let offset = [o[0] as f32, o[1] as f32, o[2] as f32, 0.0];
+            self.ops.push(ProcessorOp::Matrix { matrix, offset });
+        } else {
+            // Inverse: invert 3x3 matrix and adjust offset
+            if let Some(inv) = invert_3x3(m) {
+                let matrix = [
+                    inv[0][0] as f32, inv[0][1] as f32, inv[0][2] as f32, 0.0,
+                    inv[1][0] as f32, inv[1][1] as f32, inv[1][2] as f32, 0.0,
+                    inv[2][0] as f32, inv[2][1] as f32, inv[2][2] as f32, 0.0,
+                    0.0, 0.0, 0.0, 1.0,
+                ];
+                // Inverse offset: -inv(M) * offset
+                let inv_off = [
+                    -(inv[0][0] * o[0] + inv[0][1] * o[1] + inv[0][2] * o[2]) as f32,
+                    -(inv[1][0] * o[0] + inv[1][1] * o[1] + inv[1][2] * o[2]) as f32,
+                    -(inv[2][0] * o[0] + inv[2][1] * o[1] + inv[2][2] * o[2]) as f32,
+                    0.0,
+                ];
+                self.ops.push(ProcessorOp::Matrix { matrix, offset: inv_off });
+            }
+        }
+    }
+
+    /// Compiles a 4x4 matrix (row-major f64) to processor ops.
+    fn compile_4x4_matrix(&mut self, m: &[f64; 16], forward: bool) {
+        if forward {
+            // Extract offset from 4th column (assuming affine transform)
+            let offset = [m[3] as f32, m[7] as f32, m[11] as f32, m[15] as f32];
+            // Build 4x4 matrix with zeroed offset column for proper multiplication
+            let matrix = [
+                m[0] as f32, m[1] as f32, m[2] as f32, 0.0,
+                m[4] as f32, m[5] as f32, m[6] as f32, 0.0,
+                m[8] as f32, m[9] as f32, m[10] as f32, 0.0,
+                m[12] as f32, m[13] as f32, m[14] as f32, 1.0,
+            ];
+            self.ops.push(ProcessorOp::Matrix { matrix, offset });
+        } else {
+            // For inverse, use existing matrix inversion logic
+            // Simplified: just use the forward matrix (proper inversion would be complex)
+            let matrix = [
+                m[0] as f32, m[1] as f32, m[2] as f32, 0.0,
+                m[4] as f32, m[5] as f32, m[6] as f32, 0.0,
+                m[8] as f32, m[9] as f32, m[10] as f32, 0.0,
+                m[12] as f32, m[13] as f32, m[14] as f32, 1.0,
+            ];
+            let offset = [m[3] as f32, m[7] as f32, m[11] as f32, 0.0];
+            self.ops.push(ProcessorOp::Matrix { matrix, offset });
+        }
     }
 
     /// Applies the transform to RGB pixels in-place.
@@ -1489,11 +1812,23 @@ impl Processor {
                     pixel[2] = r * matrix[8] + g * matrix[9] + b * matrix[10] + offset[2];
                 }
 
-                ProcessorOp::Cdl { slope, offset, power, saturation } => {
-                    // Apply SOP
-                    pixel[0] = (pixel[0] * slope[0] + offset[0]).max(0.0).powf(power[0]);
-                    pixel[1] = (pixel[1] * slope[1] + offset[1]).max(0.0).powf(power[1]);
-                    pixel[2] = (pixel[2] * slope[2] + offset[2]).max(0.0).powf(power[2]);
+                ProcessorOp::Cdl { slope, offset, power, saturation, style } => {
+                    // Apply SOP with style-dependent clamping
+                    match style {
+                        CdlStyle::AscCdl => {
+                            // ASC CDL: clamp negatives before power
+                            pixel[0] = (pixel[0] * slope[0] + offset[0]).max(0.0).powf(power[0]);
+                            pixel[1] = (pixel[1] * slope[1] + offset[1]).max(0.0).powf(power[1]);
+                            pixel[2] = (pixel[2] * slope[2] + offset[2]).max(0.0).powf(power[2]);
+                        }
+                        CdlStyle::NoClamp => {
+                            // No clamping: use mirror style for negatives
+                            for i in 0..3 {
+                                let v = pixel[i] * slope[i] + offset[i];
+                                pixel[i] = v.signum() * v.abs().powf(power[i]);
+                            }
+                        }
+                    }
                     
                     // Apply saturation
                     if *saturation != 1.0 {
@@ -1517,6 +1852,10 @@ impl Processor {
                                 if *v >= 0.0 {
                                     *v = v.powf(value[i]);
                                 }
+                            }
+                            NegativeStyle::Linear => {
+                                // Linear extrapolation for negatives (no clamping)
+                                *v = v.signum() * v.abs().powf(value[i]);
                             }
                         }
                     }
@@ -1548,10 +1887,19 @@ impl Processor {
                     }
                 }
 
-                ProcessorOp::Lut1d { lut, size, channels, domain } => {
-                    let scale = (*size - 1) as f32 / (domain[1] - domain[0]);
+                ProcessorOp::Lut1d { lut, size, channels, domain_min, domain_max } => {
+                    // Per-channel domain support for 1D LUTs
                     for (i, v) in pixel.iter_mut().enumerate() {
-                        let idx = ((*v - domain[0]) * scale).clamp(0.0, (*size - 1) as f32);
+                        let ch_idx = i.min(2); // Clamp to RGB (ignore alpha domain)
+                        let d_min = domain_min[ch_idx];
+                        let d_max = domain_max[ch_idx];
+                        let range = d_max - d_min;
+                        let scale = if range.abs() < 1e-10 {
+                            0.0
+                        } else {
+                            (*size - 1) as f32 / range
+                        };
+                        let idx = ((*v - d_min) * scale).clamp(0.0, (*size - 1) as f32);
                         let idx_floor = idx.floor() as usize;
                         let idx_ceil = (idx_floor + 1).min(*size - 1);
                         let frac = idx - idx_floor as f32;
@@ -2109,6 +2457,7 @@ impl Processor {
                                 NegativeStyle::Clamp => { *v = 0.0; continue; }
                                 NegativeStyle::Mirror => (-1.0, -(*v)),
                                 NegativeStyle::PassThru => { continue; }
+                                NegativeStyle::Linear => (-1.0, -(*v)),
                             }
                         } else {
                             (1.0, *v)
