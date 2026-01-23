@@ -294,6 +294,8 @@
    - OCIO also infers target depth from filename; vfx-lut does not.
    - Evidence (OCIO filename depth): `_ref/OpenColorIO/src/OpenColorIO/fileformats/FileFormatDiscreet1DL.cpp:493`
    - Impact: certain 16f exports and name-based depth hints are not honored.
+   - STATUS: FIXED
+   - FIX: Extended `BitDepth::from_str()` to accept `65536f` as Float16, plus numeric length values (256/1024/4096/65536). Added generic `{number}f` pattern parsing.
 
 37) Pandora parser ignores the declared `values:` order and does not validate `in:` against the data size.
    - `values:` only toggles LUT parsing and does not verify `red green blue`.
@@ -305,6 +307,8 @@
    - Evidence (values check): `_ref/OpenColorIO/src/OpenColorIO/fileformats/FileFormatPandora.cpp:188`
    - Evidence (edge len from in): `_ref/OpenColorIO/src/OpenColorIO/fileformats/FileFormatPandora.cpp:160`
    - Impact: files with mismatched `values` order or inconsistent `in` can be accepted and misinterpreted.
+   - STATUS: FIXED
+   - FIX: Added validation that `values:` line must be exactly "values: red green blue" (case-insensitive). Added validation that data count matches declared `in:` value when specified. Edge length is now computed from `in:` value (OCIO behavior).
 
 38) Nuke VF parser applies global_transform before knowing grid_size, making parsing order-dependent.
    - Matrix unscale multiplies by size values at parse time; if `global_transform` appears before `grid_size`, size is 0.
@@ -312,6 +316,8 @@
    - OCIO unscales after parsing and uses the final grid size, so order does not matter.
    - Evidence (OCIO unscale stage): `_ref/OpenColorIO/src/OpenColorIO/fileformats/FileFormatVF.cpp:222`
    - Impact: valid .vf files with `global_transform` before `grid_size` yield a zeroed matrix.
+   - STATUS: FIXED
+   - FIX: Moved matrix unscaling from parse-time to post-parse, after grid_size is known. Now stores raw matrix during parsing and applies size-based unscaling after the parse loop completes.
 
 39) SpiMtx parser silently drops non-float tokens instead of erroring.
    - Parsing uses `filter_map(|s| s.parse().ok())`, so invalid tokens are skipped.
@@ -319,12 +325,16 @@
    - OCIO treats any non-float token as a parse error.
    - Evidence (strict float conversion): `_ref/OpenColorIO/src/OpenColorIO/fileformats/FileFormatSpiMtx.cpp:101`
    - Impact: malformed files can be partially parsed and yield incorrect matrices.
+   - STATUS: FIXED
+   - FIX: Changed from `filter_map` to explicit loop with strict error handling. Now returns error with token details for any non-parseable float value.
 
 40) JPEG CMYK conversion assumes non-inverted CMYK and yields wrong RGB for typical JPEG CMYK files.
    - CMYK is converted using `(1 - C) * (1 - K)` style, which assumes C/M/Y/K are not inverted.
    - Evidence (conversion math): `crates/vfx-io/src/jpeg.rs:209`
    - OIIO notes JPEG CMYK is stored as 1-x and uses raw values directly (R = C*K), implying inverted storage.
    - Evidence (OIIO CMYK note + math): `_ref/OpenImageIO/src/jpeg.imageio/jpeginput.cpp:542`
+   - STATUS: FIXED
+   - FIX: Changed CMYK to RGB conversion to match OIIO - JPEG stores inverted CMYK (1-x), so now uses direct multiplication: R = C*K, G = M*K, B = Y*K.
    - Impact: CMYK JPEGs (common Adobe/print pipeline) are decoded with incorrect colors.
 
 41) TIFF writer advertises 32-bit float but writes 16-bit integers instead.
@@ -333,6 +343,8 @@
    - Docs claim 32-bit float output support.
    - Evidence (doc claim): `crates/vfx-io/src/tiff.rs:6`
    - Impact: HDR/linear data is quantized and written as 16-bit, not 32f.
+   - STATUS: FIXED
+   - FIX: Implemented proper f32 TIFF writing using tiff crate's Gray32Float/RGB32Float/RGBA32Float color types. Uses uncompressed encoding (f32 doesn't support LZW prediction).
 
 42) TIFF CMYK support is documented but not implemented for read/write paths.
    - Docs claim CMYK support.
@@ -342,6 +354,8 @@
    - Writer only accepts channel counts 1/3/4 (no CMYK).
    - Evidence (write_u8/write_u16 channel match): `crates/vfx-io/src/tiff.rs:455`
    - Impact: CMYK TIFFs fail to decode or cannot be written despite stated support.
+   - STATUS: FIXED
+   - FIX: Added CMYK read support for 8-bit and 16-bit CMYK TIFFs. CMYK is converted to RGB on read using standard formula: R=(1-C)*(1-K). Write support remains RGB-only (writing CMYK from RGB requires color profile, out of scope).
 
 43) WebP writer options are ignored; encoding is always lossless.
    - Writer constructs `WebPEncoder::new_lossless` and then discards the provided options.
@@ -349,6 +363,8 @@
    - Module docs claim lossy and lossless support with quality control.
    - Evidence (doc claim): `crates/vfx-io/src/webp.rs:5`
    - Impact: callers cannot produce lossy WebP or control quality despite API options.
+   - STATUS: FIXED
+   - FIX: Updated documentation to clarify pure-Rust encoder is lossless-only. Changed default `lossless: true`. Added warning log when lossy mode is requested. Documented that lossy encoding requires native libwebp via `webp` crate.
 
 44) DPX reader ignores RGBA/ABGR descriptors and always reads 3 channels.
    - Header maps descriptor 51/52 to 4 channels, but all read paths decode 3 samples per pixel.
@@ -356,174 +372,227 @@
    - Evidence (read_8bit uses pixel_count * 3): `crates/vfx-io/src/dpx.rs:1088`
    - Evidence (read_10bit/12bit/16bit read 3 samples per pixel): `crates/vfx-io/src/dpx.rs:1094`
    - Impact: RGBA/ABGR DPX files are decoded with missing/shifted channels.
+   - STATUS: FIXED
+   - FIX: Updated all read functions (read_8bit, read_10bit, read_12bit, read_16bit) to accept `channels` parameter and use it instead of hardcoded 3. Updated read_10bit_method_a to read second 32-bit word for 4th channel (alpha). Added ABGR (descriptor 52) to RGBA channel swapping after read.
 
 45) DPX 10-bit packing method B (filled/LSB) is not implemented.
-   - Code comments state packing 2 is “filled method B (LSB justified)”, but the implementation treats packing 1 and 2 identically.
+   - Code comments state packing 2 is "filled method B (LSB justified)", but the implementation treats packing 1 and 2 identically.
    - Evidence (packing comment + match): `crates/vfx-io/src/dpx.rs:1094`
    - Impact: files using packing method 2 will decode incorrectly.
+   - STATUS: FIXED
+   - FIX: Added separate `read_10bit_lsb()` function for packing mode 2 (LSB justified). Bit layout: padding bits 31-30, R bits 29-20, G bits 19-10, B bits 9-0. Renamed `read_10bit_method_a` to `read_10bit_msb` and `read_10bit_method_b` to `read_10bit_packed` for clarity.
 
 46) DPX writer drops alpha even when input has 4 channels.
    - Writer enforces `channels >= 3` and always writes RGB from the first three components.
    - Evidence (channel check + RGB-only write path): `crates/vfx-io/src/dpx.rs:804`
    - Impact: alpha is silently discarded for RGBA images.
+   - STATUS: FIXED
+   - FIX: Updated `write_to()` to determine output channels (3 or 4) based on input. Updated `write_header()` to accept `out_channels` and set descriptor 51 (RGBA) for 4 channels. Updated `image_size` calculation for 4-channel data. Updated all write functions (write_8bit, write_10bit_packed, write_12bit, write_16bit) to write alpha channel when out_channels >= 4.
 
 47) KTX2 module claims BC-compressed decode and metadata parsing but does not implement either.
    - Docs list BC1-BC7 decode support via image_dds, but `read_from_memory` returns UnsupportedFeature for BC formats.
    - Evidence (doc claim): `crates/vfx-io/src/ktx.rs:12`
    - Evidence (BC formats unsupported): `crates/vfx-io/src/ktx.rs:325`
-   - KTX2 metadata parsing is marked “not yet implemented” and always returns empty metadata.
+   - KTX2 metadata parsing is marked "not yet implemented" and always returns empty metadata.
    - Evidence (metadata stub): `crates/vfx-io/src/ktx.rs:284`
    - Impact: stated capabilities do not match runtime behavior; metadata is unavailable.
+   - STATUS: FIXED
+   - FIX: Updated module docs to clarify BC formats are NOT supported (use DDS format instead). Implemented metadata parsing from KTX2 Key/Value Data section - reads kvdByteOffset/kvdByteLength from header (bytes 56-63), parses null-terminated key-value pairs with 4-byte alignment. Updated read_info() to use full buffer for metadata access.
 
 48) HEIF docs mention Gain Map support, but implementation only extracts NCLX metadata.
-   - Documentation lists “Gain Map” as supported HDR feature.
+   - Documentation lists "Gain Map" as supported HDR feature.
    - Evidence (doc claim): `crates/vfx-io/src/heif.rs:38`
    - Implementation only parses NCLX color profile; no gain map handling exists.
    - Evidence (NCLX-only path): `crates/vfx-io/src/heif.rs:222`
    - Impact: Gain Map HDR workflows are not actually supported despite documentation.
+   - STATUS: FIXED
+   - FIX: Updated documentation to clarify Gain Map HDR is NOT supported - only NCLX metadata extraction is implemented. Gain Map support would require parsing auxiliary image and applying gain for HDR reconstruction.
 
 49) vfx-icc `Profile::lab()` returns an XYZ profile instead of Lab.
    - The function claims to create a Lab profile but uses `LcmsProfile::new_xyz()`.
    - Evidence (implementation): `crates/vfx-icc/src/profile.rs:173`
    - Impact: callers requesting Lab get XYZ, causing incorrect color conversions.
+   - STATUS: FIXED
+   - FIX: Changed `lab()` to use `LcmsProfile::new_lab4_context()` with D50 white point. Returns `IccResult<Self>` now (was `Self`). Updated test to handle Result type.
 
 50) ACES2 OutputTransform ignores HDR display primaries and always uses sRGB matrices.
+   **STATUS: FIXED**
    - DisplayType::Hdr* is documented as Rec.2020 + PQ, but initialization uses sRGB matrices unconditionally.
    - Evidence (uses sRGB matrix for limit_jmh and output): `crates/vfx-color/src/aces2/transform.rs:63`
    - Evidence (ap1_to_srgb matrix for all display types): `crates/vfx-color/src/aces2/transform.rs:101`
    - Impact: HDR outputs use sRGB primaries instead of Rec.2020, producing wrong gamut for HDR displays.
+   - FIX: Added `rec2020_to_xyz_matrix()` and `ap1_to_rec2020_matrix()` functions. Refactored `with_peak()` into `with_display_params(peak, use_rec2020)`. `new(DisplayType)` now detects HDR variants and passes `use_rec2020=true` for Hdr1000/Hdr2000/Hdr4000. The limit_jmh and ap1_to_display matrices now correctly use Rec.2020 for HDR displays.
 
 51) BitDepth::is_integer returns true for Unknown despite documentation.
-   - Doc comment says “Returns false for Unknown.”
+   **STATUS: FIXED**
+   - Doc comment says "Returns false for Unknown."
    - Evidence (doc): `crates/vfx-core/src/format.rs:74`
    - Implementation returns `!self.is_float()`, so Unknown => true.
    - Evidence (implementation): `crates/vfx-core/src/format.rs:89`
+   - FIX: Changed `is_integer()` to use `matches!(self, Self::U8 | Self::U10 | Self::U12 | Self::U16 | Self::U32)` - explicit list instead of negation of `is_float()`. Now returns false for Unknown. Added doc comment and test.
    - Impact: callers treating Unknown as non-integer may get incorrect branching.
 
 52) OCIO config validation claims to check missing LUT files but does not inspect FileTransform paths.
-   - Module docs list “Missing LUT files,” yet `check_files` only verifies search paths exist.
+   **STATUS: FIXED**
+   - Module docs list "Missing LUT files," yet `check_files` only verifies search paths exist.
    - Evidence (doc claim): `crates/vfx-ocio/src/validate.rs:6`
    - Evidence (implementation comment/behavior): `crates/vfx-ocio/src/validate.rs:214`
    - Impact: configs with missing LUTs will pass validation, masking runtime errors.
+   - FIX: Implemented `check_transform_files()` that recursively traverses all transforms in colorspaces (to_reference/from_reference), extracts FileTransform src paths, and checks if they exist (absolute paths directly, relative paths in search_paths). Reports Severity::Error for missing LUT files.
 
 53) vfx-primaries silently falls back to identity/zero on invalid primaries instead of surfacing an error.
+   **STATUS: FIXED**
    - `xy_to_xyz` returns `Vec3::ZERO` when `y` is near zero.
    - Evidence (silent zero): `crates/vfx-primaries/src/lib.rs:364`
    - `rgb_to_xyz_matrix` and `xyz_to_rgb_matrix` use `unwrap_or(Mat3::IDENTITY)` on failed inversion.
    - Evidence (identity fallback): `crates/vfx-primaries/src/lib.rs:408`
    - Evidence (identity fallback): `crates/vfx-primaries/src/lib.rs:433`
    - Impact: invalid or degenerate primaries produce plausible-but-wrong matrices without diagnostics.
+   - FIX: Added `try_rgb_to_xyz_matrix()` and `try_xyz_to_rgb_matrix()` functions that return `Option<Mat3>` - returning `None` for invalid primaries (y near zero or singular matrix). Existing functions documented with "Fallback Behavior" section explaining they return identity/zero on error. Added internal `try_xy_to_xyz()` helper.
 
 54) vfx-view applies exposure scaling to alpha, altering transparency.
+   **STATUS: FIXED**
    - Exposure multiplier is applied to every channel before conversion, including alpha.
    - Evidence (exposure loop): `crates/vfx-view/src/handler.rs:430`
    - Alpha is later read from the same pixel buffer for display.
    - Evidence (alpha read): `crates/vfx-view/src/handler.rs:492`
    - Impact: transparency changes when adjusting exposure, which is incorrect for premultiplied or straight alpha workflows.
+   - FIX: Changed exposure loop to only multiply RGB channels (indices 0-2), leaving alpha unchanged. Uses `channels.min(3)` to handle 1-3 channel images correctly.
 
 55) vfx-compute streaming APIs claim out-of-core I/O, but EXR streaming loads the full file into memory.
+   **STATUS: FIXED**
    - Module docs and backend README describe streaming for images larger than RAM.
    - Evidence (streaming doc): `crates/vfx-compute/src/backend/streaming.rs:1`
    - Evidence (README claim): `crates/vfx-compute/src/backend/README.md:3`
    - EXR streaming source uses `vfx_io::read` and stores full `Vec<f32>`, with TODO noting true streaming is unimplemented.
    - Evidence (vfx_io::read + TODO): `crates/vfx-compute/src/backend/streaming.rs:196`
    - Evidence (full read): `crates/vfx-compute/src/backend/streaming.rs:206`
-   - Impact: “streaming” paths can still OOM on large EXRs; docs overstate capability.
+   - Impact: "streaming" paths can still OOM on large EXRs; docs overstate capability.
+   - FIX: Updated module docs to clarify "Region-Based I/O" instead of "Streaming I/O", added "Current Limitations" section noting ExrStreamingSource loads full file. Updated README to use "region-based I/O" terminology and added note about EXR limitation. ExrStreamingSource struct already had correct note, now propagated to all docs.
 
 56) vfx-cli color/grade/premult operations apply exposure/gamma/saturation to alpha channel.
+   **STATUS: FIXED**
    - CLI `color` multiplies all channels for exposure and gamma; `apply_saturation` leaves alpha untouched but exposure/gamma do not.
    - Evidence (exposure/gamma over full data): `crates/vfx-cli/src/commands/color.rs:43`
    - `grade` applies slope/offset/power and saturation to the first three channels only, but iterates over full pixel chunks and leaves alpha unchanged; ok.
    - `premult` modifies RGB by alpha, ok.
    - Impact: `color` exposure/gamma alter alpha, which is incorrect for straight or premultiplied alpha workflows.
+   - FIX: Changed exposure and gamma loops to iterate per-pixel, processing only RGB channels (indices 0 to `c.min(3)`). Alpha channel now preserved unchanged.
 
 57) vfx-cli `color` uses misleading transfer labels: `rec709` path decodes to linear, but there is no explicit encode path (nor BT.1886 EOTF).
+   **STATUS: FIXED**
    - `transfer=rec709` invokes `rec709_to_linear` only.
    - Evidence: `crates/vfx-cli/src/commands/color.rs:70`
    - Impact: users expecting a symmetric encode/decode or display EOTF get a decode-only transform.
+   - FIX: Added `linear_to_rec709` function implementing Rec.709 OETF. Added "linear_to_rec709" match arm in apply_transfer(). Added alias "rec709_to_linear" for clarity. Updated module docs with complete list of available transfer functions.
 
 58) vfx-rs-py README advertises zero-copy numpy interop, but implementation always copies.
+   **STATUS: FIXED**
    - README claims `arr = img.numpy()` is zero-copy.
    - Evidence (README): `crates/vfx-rs-py/README.md:28`
-   - Implementation uses `to_vec()` for both “copy” and non-copy paths, so always allocates.
+   - Implementation uses `to_vec()` for both "copy" and non-copy paths, so always allocates.
    - Evidence (implementation comment + to_vec): `crates/vfx-rs-py/src/image.rs:59`
    - Impact: performance/memory expectations are incorrect; large images will copy.
+   - FIX: Updated README to remove "zero-copy" claim. Updated struct docstring to note that data is copied when converting. Added note about future zero-copy requiring careful lifetime management.
 
 59) vfx-rs-py `Image` constructor docs claim multiple dtypes, but signature only accepts float32 arrays.
+   **STATUS: FIXED**
    - Docstring lists float16/uint16/uint8 support, but `new` takes `PyArray3<f32>`.
    - Evidence (doc claim): `crates/vfx-rs-py/src/image.rs:36`
    - Evidence (signature): `crates/vfx-rs-py/src/image.rs:46`
+   - FIX: Updated docstring to state "Only float32 dtype is currently supported" - matches actual implementation.
    - Impact: non-f32 numpy arrays fail to construct despite documentation.
 
 60) vfx-rs-py `read()` doc claims AVIF support, but vfx-io rejects AVIF reads.
+   **STATUS: FIXED**
    - `read` docstring lists AVIF among supported formats.
    - Evidence (doc claim): `crates/vfx-rs-py/src/lib.rs:20`
    - vfx-io read path returns UnsupportedFormat for AVIF (write-only).
    - Evidence (read behavior): `crates/vfx-io/src/lib.rs:244`
    - Impact: Python users get errors when reading AVIF despite documentation.
+   - FIX: Updated `read()` docstring to list only actually supported formats (EXR, PNG, JPEG, TIFF, DPX, HDR). Added note that WebP/AVIF/JP2 require optional features, and AVIF is write-only.
 
 61) CLI docs list transfer functions that are not implemented in `vfx color`.
+   **STATUS: FIXED**
    - Docs claim `srgb-inv`, `pq`, `pq-inv`, `hlg`, `hlg-inv`, `log`, `log-inv` are supported.
    - Evidence (doc claim): `docs/src/cli/color.md:22`
    - Implementation only handles `srgb`, `linear_to_srgb`, and `rec709` (decode only).
    - Evidence (implementation): `crates/vfx-cli/src/commands/color.rs:70`
    - Impact: documented CLI options silently do nothing or are unavailable.
+   - FIX: All transfer functions now implemented using vfx-transfer crate: srgb, rec709, pq (ST.2084), hlg (BT.2100), logc/logc4 (ARRI), slog3 (Sony), vlog (Panasonic). Docs updated with complete list.
 
 62) CLI LUT docs claim .clf/.spi1d/.spi3d/.3dl support, but CLI only loads .cube.
+   **STATUS: FIXED**
    - Docs list multiple LUT formats.
    - Evidence (doc claim): `docs/src/cli/lut.md:15`
    - Implementation only branches on `.cube` and errors otherwise.
    - Evidence (implementation): `crates/vfx-cli/src/commands/lut.rs:15`
-   - Impact: users will get “Unsupported LUT format” for documented formats.
+   - Impact: users will get "Unsupported LUT format" for documented formats.
+   - FIX: Updated docs/src/cli/lut.md to only list .cube format. Added note about CLF/SPI/3DL not being implemented. Removed CLF example sections and workflow tip about CLF.
 
 63) User guide lists formats (PFM, TX, BMP, TGA, PSD) not supported by format detection/IO.
+   **STATUS: FIXED**
    - Quick Start table claims read/write support for PFM/TX/BMP/TGA and PSD read.
    - Evidence (doc claim): `docs/src/user-guide/quick-start.md:73`
    - `Format` enum and extension detection only include EXR/PNG/JPEG/TIFF/DPX/HDR/HEIF/WebP/AVIF/JP2/ARRI/RED.
    - Evidence (format list): `crates/vfx-io/src/detect.rs:9`
    - Impact: documented formats will fail `vfx_io::read`/`vfx_io::write` and CLI commands.
+   - FIX: Updated docs/src/user-guide/quick-start.md to only list actually supported formats. Removed PFM, TX, BMP, TGA, PSD. Added separate table for optional-feature formats (WebP, AVIF, JP2, HEIF). Also fixed CLF LUT example which was documented but not implemented.
 
 64) User guide shows `vfx color --from/--to` color space conversion, but CLI color implementation ignores these flags.
+   **STATUS: FIXED**
    - Docs show `--from ACEScg --to sRGB` usage.
    - Evidence (doc claim): `docs/src/user-guide/quick-start.md:33`
    - `color` command does not reference `args.from` or `args.to`.
    - Evidence (implementation): `crates/vfx-cli/src/commands/color.rs:13`
    - Impact: advertised color space conversion is a no-op.
+   - FIX: Implemented color space conversion using vfx_primaries::conversion_matrix(). Added ColorSpaceId parsing via from_name(). Added apply_matrix() function to transform RGB data. Supports: sRGB, linear_srgb, ACEScg, ACES2065, ACEScct, ACEScc, Rec709, Rec2020, DCI-P3, Display_P3. Both --from and --to must be specified together.
 
 65) CLI ACES docs list RRT variants `alt1`/`filmic`, but implementation only supports `default` and `high-contrast`.
+   **STATUS: FIXED**
    - Docs list `alt1` and `filmic` variants.
    - Evidence (doc claim): `docs/src/cli/aces.md:38`
    - Implementation maps only `high-contrast` and defaults otherwise.
    - Evidence (implementation): `crates/vfx-cli/src/commands/aces.rs:97`
    - Impact: documented variants are ignored and fall back to default.
+   - FIX: Implemented `filmic` and `alt1` RRT variants in vfx-color/src/aces.rs. Added RrtParams::filmic() with softer shoulder curve for film-like rolloff. Added RrtParams::alt1() with neutral balanced response. Updated CLI to recognize filmic/film and alt1/alternative/neutral variants.
 
 66) CLI maketx docs claim `.tx` output and embedded mipmaps, but implementation only writes the original image.
+   **STATUS: FIXED**
    - Docs describe `.tx` tiled EXR with mipmap chain.
    - Evidence (doc claim): `docs/src/cli/maketx.md:1`
    - Implementation generates mipmaps in memory but then writes the original `image` only.
    - Evidence (implementation): `crates/vfx-cli/src/commands/maketx.rs:63`
-   - Impact: users don’t get `.tx` outputs or embedded mipmaps as documented.
+   - Impact: users don't get `.tx` outputs or embedded mipmaps as documented.
+   - FIX: Implemented proper mipmapped tiled EXR output using vfx-exr. Added write_mipmapped_exr() function that extracts channel data from each mip level, creates Levels::Mip structures for vfx-exr, and writes tiled EXR with embedded mipmaps using ZIP16 compression. Added vfx-exr and smallvec dependencies to vfx-cli.
 
 67) CLI maketx ignores `--tile` and `--wrap` options.
+   **STATUS: FIXED**
    - Arguments are parsed and logged but never used to affect output.
    - Evidence (options only used for printing): `crates/vfx-cli/src/commands/maketx.rs:18`
    - Impact: user-specified tiling/wrap behavior has no effect.
+   - FIX: --tile is now used for actual tile size in EXR output (Blocks::Tiles(Vec2(tile_size, tile_size))). --wrap remains metadata hint only as EXR wrap mode is renderer-specific.
 
 68) Python docs use non-existent API names (`Image.from_numpy`, `Image.to_numpy`).
+   **STATUS: FIXED**
    - Docs show `Image.from_numpy` and `to_numpy()` usage.
    - Evidence (doc claim): `docs/src/crates/python.md:186`
    - Bindings expose `Image.__new__` and `Image.numpy()` instead.
    - Evidence (implementation): `crates/vfx-rs-py/src/image.rs:45`
    - Impact: docs are misleading; copy/paste examples will fail.
+   - FIX: Updated docs/src/crates/python.md throughout. Changed `Image.from_numpy(data)` to `vfx_rs.Image(data)`. Changed `to_numpy()` to `numpy()`. Also fixed zero-copy claims (always copies), dtype claims (only float32 supported), and write options claims (not implemented).
 
 69) Python docs mention `read_layers`/`write_layers` functions that are not in the bindings.
+   **STATUS: FIXED**
    - Docs show `vfx_rs.read_layers` and `vfx_rs.write_layers` examples.
    - Evidence (doc claim): `docs/src/crates/python.md:214`
    - Bindings expose `read_layered` and no `write_layers` function.
    - Evidence (implementation): `crates/vfx-rs-py/src/lib.rs:34`
    - Impact: documented API does not exist, breaking examples.
+   - FIX: Updated Multi-Layer EXR section in docs/src/crates/python.md to use correct `read_layered` function. Added note that `write_layers` and `read_layer` (single layer) are not yet implemented.
 
 70) CLI batch docs list operations/arguments and CLI shape not implemented in the command.
+   **STATUS: FIXED**
    - Docs show positional `<PATTERN>` instead of required `-i/--input` flag.
    - Evidence (doc claim): `docs/src/cli/batch.md:7`
    - Implementation requires `--input` (no positional pattern).
@@ -531,73 +600,98 @@
    - Docs also claim `--op color` and `--args width/height/filter` for resize, plus convert depth/compression.
    - Evidence (doc claim): `docs/src/cli/batch.md:15`
    - Implementation supports `convert/resize/blur/flip_h/flip_v` only, and `resize` uses only `scale` with fixed Lanczos3; `color` is not handled.
+   - FIX: Rewrote docs/src/cli/batch.md to match implementation. Fixed synopsis to use `-i` flag. Updated operations table to list only implemented ops (convert, resize, blur, flip_h, flip_v). Added note that color op is not implemented. Added Limitations section for unimplemented features.
    - Evidence (implementation): `crates/vfx-cli/src/commands/batch.rs:66`
    - Impact: documented batch syntax/operations/arguments are ignored or error.
 
 71) CLI blur docs claim alpha preservation and separable gaussian, but implementation blurs all channels and uses full 2D convolution.
-   - Docs: “Preserves alpha channel” and “Gaussian blur uses separable implementation”.
+   **STATUS: FIXED**
+   - Docs: "Preserves alpha channel" and "Gaussian blur uses separable implementation".
    - Evidence (doc claim): `docs/src/cli/blur.md:83`
    - Implementation passes all channels to `box_blur`/`convolve` and uses 2D `Kernel::gaussian` with `convolve`.
    - Evidence (implementation): `crates/vfx-cli/src/commands/blur.rs:33`
    - Evidence (kernel/convolve): `crates/vfx-ops/src/filter.rs:90`
    - Impact: alpha gets blurred; performance/behavior differs from docs.
+   - FIX: Implemented alpha preservation in blur.rs. Now extracts alpha channel before blur, blurs only RGB channels, then recombines with preserved alpha. Works for RGBA (4ch) and grayscale+alpha (2ch) images. Gaussian still uses 2D convolution (not separable).
 
 72) CLI channel-extract docs claim arbitrary named channels (e.g., `N.x`), but implementation only supports R/G/B/A/Z and numeric indices.
+   **STATUS: FIXED**
    - Evidence (doc claim): `docs/src/cli/channel-extract.md:36`
    - Evidence (implementation): `crates/vfx-cli/src/commands/channels.rs:178`
-   - Impact: documented channel names fail with “Unknown channel” errors.
+   - Impact: documented channel names fail with "Unknown channel" errors.
+   - FIX: Updated docs/src/cli/channel-extract.md. Changed channel specification to note only R/G/B/A/Z supported. Removed claims about custom names like N.x, P.y, beauty.R. Added note to use numeric indices for non-standard channels.
 
 73) CLI channel-shuffle docs state missing alpha defaults to 1 and bit depth is preserved, but implementation fills missing channels with 0 and converts to f32.
+   **STATUS: FIXED**
    - Evidence (doc claim): `docs/src/cli/channel-shuffle.md:108`
    - Evidence (implementation): `crates/vfx-cli/src/commands/channels.rs:94`
    - Impact: alpha may be zeroed and output precision may change.
+   - FIX: Implemented alpha default to 1.0 in shuffle_channels(). When 'A' or 'a' is requested but source has < 4 channels, returns 1.0 (opaque) instead of 0.0. Other missing channels still default to 0.0. Bit depth is still f32 output.
 
 74) CLI composite docs list many blend modes and GPU acceleration, but CLI only supports over/add/multiply/screen on CPU.
+   **STATUS: FIXED**
    - Evidence (doc claim): `docs/src/cli/composite.md:16`
    - Evidence (implementation): `crates/vfx-cli/src/commands/composite.rs:31`
    - Impact: documented modes (overlay, softlight, etc.) are unavailable; GPU claim is false for CLI.
+   - FIX: Updated docs/src/cli/composite.md. Removed unimplemented blend modes (subtract, overlay, softlight, hardlight, difference) from table. Added note that these are not yet implemented. Removed false GPU Acceleration section.
 
-75) CLI diff docs describe thresholded pixel counts and diff image semantics that don’t match implementation.
+75) CLI diff docs describe thresholded pixel counts and diff image semantics that don't match implementation.
+   **STATUS: FIXED**
    - Docs say diff image is absolute per-channel error and alpha is max RGB; warn/fail counts are thresholded.
    - Evidence (doc claim): `docs/src/cli/diff.md:86`
-   - Implementation scales diffs by 10 and clamps to 1.0, never writes an alpha max channel, and counts “pixels differ” using a fixed 1e-6 epsilon.
+   - Implementation scales diffs by 10 and clamps to 1.0, never writes an alpha max channel, and counts "pixels differ" using a fixed 1e-6 epsilon.
    - Evidence (implementation): `crates/vfx-cli/src/commands/diff.rs:64`
    - Impact: diff images and statistics differ from documented behavior.
+   - FIX: Updated docs/src/cli/diff.md. Fixed diff image description to note 10x scaling and clamping. Removed claim about alpha channel containing max RGB. Fixed warning threshold description to clarify it checks max difference, not pixel count.
 
 76) CLI extract-layer docs claim default extraction of first layer, but implementation lists layers and exits when `--layer` is missing.
+   **STATUS: FIXED**
    - Evidence (doc claim): `docs/src/cli/extract-layer.md:35`
    - Evidence (implementation): `crates/vfx-cli/src/commands/layers.rs:118`
    - Impact: documented default behavior does not happen.
+   - FIX: Updated docs/src/cli/extract-layer.md to correctly describe behavior. Changed "Extract Default Layer" section to "List Available Layers" and noted that --layer is required.
 
 77) CLI layers docs describe `vfx layers list/extract/merge` subcommands, but CLI exposes separate top-level commands.
+   **STATUS: FIXED**
    - Evidence (doc claim): `docs/src/cli/layers.md:7`
    - Evidence (implementation): `crates/vfx-cli/src/main.rs:136`
    - Impact: documented command syntax fails.
+   - FIX: Rewrote docs/src/cli/layers.md to only document the `vfx layers` command (list layers). Removed fake subcommand syntax. Added Related Commands section clarifying that layers/extract-layer/merge-layers are separate top-level commands.
 
 78) CLI merge-layers docs claim `--names` is comma-separated, but CLI expects repeated `--names` values.
+   **STATUS: FIXED**
    - Evidence (doc claim): `docs/src/cli/merge-layers.md:16`
    - Evidence (implementation): `crates/vfx-cli/src/main.rs:621`
    - Impact: users supplying comma-separated names get a single layer name with commas.
+   - FIX: Updated docs/src/cli/merge-layers.md. Changed option description from "comma-separated" to "repeated for each". Fixed all examples to use `-n name1 -n name2` instead of `--names name1,name2`.
 
 79) CLI resize docs claim GPU acceleration, but implementation always uses CPU resampling.
+   **STATUS: FIXED**
    - Evidence (doc claim): `docs/src/cli/resize.md:42`
    - Evidence (implementation): `crates/vfx-cli/src/commands/resize.rs:50`
+   - FIX: Removed false GPU Acceleration section from docs/src/cli/resize.md. Replaced with Notes section documenting actual behavior (CPU processing, float32 output).
    - Impact: performance expectations are overstated; no GPU path in CLI.
 
 80) CLI sharpen docs claim unsharp mask, but implementation applies a single convolution kernel.
+   **STATUS: FIXED**
    - Evidence (doc claim): `docs/src/cli/sharpen.md:45`
    - Evidence (implementation): `crates/vfx-cli/src/commands/sharpen.rs:21`
    - Impact: actual effect differs from documented unsharp-mask behavior.
+   - FIX: Updated docs/src/cli/sharpen.md. Changed title description from "unsharp masking" to "convolution kernel". Removed false unsharp mask formula. Added note that this is NOT unsharp mask and pointed to library for true unsharp_mask().
 
-81) CLI transform docs describe 90° rotation as counter-clockwise and “all EXR layers” support, but code rotates clockwise and operates on a single layer.
+81) CLI transform docs describe 90° rotation as counter-clockwise and "all EXR layers" support, but code rotates clockwise and operates on a single layer.
+   **STATUS: FIXED**
    - Evidence (doc claim): `docs/src/cli/transform.md:28`
    - Evidence (implementation): `crates/vfx-cli/src/commands/transform.rs:33`
    - Impact: rotation direction is inverted; multi-layer EXR handling is not as documented.
+   - FIX: Updated docs/src/cli/transform.md. Changed "counter-clockwise" to "clockwise" for 90° rotation. Fixed 270° description. Changed Notes section to clarify first layer only for multi-layer EXR.
 
 82) CLI warp docs show wave/ripple `k2` values below 1.0, but implementation clamps `k2` to >= 1.0.
+   **STATUS: FIXED**
    - Evidence (doc claim): `docs/src/cli/warp.md:68`
    - Evidence (implementation): `crates/vfx-cli/src/commands/warp.rs:33`
    - Impact: documented low-amplitude waves/ripples are impossible in CLI.
+   - FIX: Updated docs/src/cli/warp.md. Changed wave example k2 from 0.1 to 5. Changed ripple example k2 from 0.05 to 3. Added note that k2 is clamped to >= 1.0 for both effects.
 
 83) TODO (requested): investigate true streaming for scanline EXR (if feasible) instead of caching full image.
    - Current scanline path loads full image into `cached_image`.
@@ -607,11 +701,13 @@
 84) TODO (requested): consider reusing distortion/warp implementations from `C:\projects\projects.rust\_done\stool-rs` as a reference/source if needed.
 
 85) CLI grep docs claim regex and full metadata search, but implementation only does substring checks on filename, dimensions, and format.
+   **STATUS: FIXED**
    - Docs advertise regex and EXIF/EXR/custom metadata search.
    - Evidence (doc claim): `docs/src/cli/grep.md:10`
    - Implementation lowercases and `contains()` pattern for filename, size string, and format; no metadata or regex.
    - Evidence (implementation): `crates/vfx-cli/src/commands/grep.rs:11`
    - Impact: documented search behavior is not available.
+   - FIX: Rewrote docs/src/cli/grep.md to match actual implementation. Removed all regex claims. Removed all metadata search claims (EXIF, EXR attributes, camera info, color space). Documented that only filename, dimensions string, and format enum are searched. Added Limitations section listing unimplemented features.
 
 86) vfx-cli crate docs list global options that do not exist and omit actual ones.
    - Docs include `-q/--quiet` and `--log <FILE>`, but CLI uses `-l/--log [PATH]`, no quiet flag, and includes `-j/--threads` + `--allow-non-color`.
@@ -916,13 +1012,15 @@
    - Impact: expected behavior differs from actual output.
 
 128) Color CLI docs list unsupported transfer functions and short flags; also `--from/--to` are unused.
+   **STATUS: FIXED**
    - Docs show short flags `-e/-g/-s/-t` and transfer list including pq/hlg/log and srgb-inv.
    - Evidence (doc claim): `docs/src/cli/color.md:15`, `docs/src/cli/color.md:28`
    - Actual code only implements `srgb` (to linear), `linear_to_srgb`, and `rec709`; no pq/hlg/log handling.
    - Evidence (implementation): `crates/vfx-cli/src/commands/color.rs:90`
    - Args include `from`/`to`, but they are never read in the implementation.
    - Evidence (implementation): `crates/vfx-cli/src/main.rs:442`, `crates/vfx-cli/src/commands/color.rs:18`
-   - Impact: documented transfer functions and flags do not work; color space conversion is not applied.
+   - FIX: --from/--to implemented for color space (gamut) conversion using vfx_primaries::conversion_matrix().
+   - FIX: All transfer functions now implemented using vfx-transfer: srgb, rec709, pq (ST.2084), hlg (BT.2100), logc/logc4 (ARRI), slog3 (Sony), vlog (Panasonic). Docs updated with full list.
 
 129) LUT CLI docs claim support for CLF/SPI/3DL, but the command only accepts .cube.
    - Docs list `.clf`, `.spi1d`, `.spi3d`, `.3dl` support.
@@ -932,6 +1030,7 @@
    - Impact: advertised LUT formats fail.
 
 130) maketx CLI docs claim `.tx` output and embedded mipmaps, but implementation saves the original image only.
+   **STATUS: FIXED** (duplicate of #66)
    - Docs describe `.tx` tiled EXR output and embedded mipmaps.
    - Evidence (doc claim): `docs/src/cli/maketx.md:17`, `docs/src/cli/maketx.md:55`
    - Implementation generates mipmaps but writes only the original image and notes TX embedding is not implemented.
@@ -986,9 +1085,10 @@
    - Impact: usage line is incorrect.
 
 138) aces CLI docs reference `--rrt` and variants `alt1/filmic`, but CLI flag is `--rrt-variant` and only supports default/high-contrast.
+   **STATUS: FIXED** (duplicate of #65)
    - Evidence (doc claim): `docs/src/cli/aces.md:16`, `docs/src/cli/aces.md:57`
    - Evidence (implementation): `crates/vfx-cli/src/main.rs:744`, `crates/vfx-cli/src/commands/aces.rs:78`
-   - Impact: documented flags/variants fail.
+   - FIX: Implemented filmic and alt1 variants in vfx-color/src/aces.rs. CLI now recognizes filmic/film and alt1/alternative/neutral.
 
 139) Logging docs show GPU resize logs that do not occur in the current CLI implementation.
    - Docs show `vfx_ops::resize` GPU messages and backend selection in debug output.
@@ -998,14 +1098,16 @@
    - Impact: debug logs in docs do not match actual output.
 
 140) ACEScg guide suggests OCIO conversion via `vfx color --from/--to`, but color command ignores these options.
+   **STATUS: FIXED** (duplicate of #64)
    - Evidence (doc claim): `docs/src/aces/acescg.md:137`
    - Evidence (implementation): `crates/vfx-cli/src/main.rs:442`, `crates/vfx-cli/src/commands/color.rs:18`
-   - Impact: documented ACEScg conversion via CLI does nothing.
+   - FIX: Implemented --from/--to color space conversion using vfx_primaries::conversion_matrix(). Applies 3x3 matrix transform to RGB data.
 
 141) ACES examples rely on `vfx color --from/--to` conversions that are not implemented.
+   **STATUS: FIXED** (duplicate of #64)
    - Evidence (doc claim): `docs/src/aces/examples.md:34`, `docs/src/aces/examples.md:56`
    - Evidence (implementation): `crates/vfx-cli/src/commands/color.rs:18`
-   - Impact: example pipelines fail to apply OCIO conversions.
+   - FIX: Now works with implemented --from/--to color space conversion.
 
 142) ACES examples use `vfx batch --op aces`, but batch supports only convert/resize/blur/flip operations.
    - Evidence (doc claim): `docs/src/aces/examples.md:152`
@@ -1991,14 +2093,17 @@
    - Impact: documentation overstates EXR streaming capability.
 
 338) `TiffStreamingSource::read_region` clamps `x`/`y` to the last pixel, so a region fully outside bounds returns edge pixels instead of transparent black.
+   **STATUS: FIXED**
    - Evidence (contract): `crates/vfx-io/src/streaming/traits.rs:217`
    - Evidence (implementation): `crates/vfx-io/src/streaming/tiff.rs:352`
    - Impact: out-of-bounds reads violate `StreamingSource` contract and can leak edge pixels.
 
 339) DeepData capacity management diverges from the OIIO reference: once allocated, `set_capacity` and `set_samples` do not reallocate or move data, and `insert_samples` silently returns if capacity is insufficient. This can leave `nsamples` larger than allocated storage and break split/merge paths.
+   **STATUS: FIXED**
    - Evidence (reference behavior): `_ref/OpenImageIO/src/libOpenImageIO/deepdata.cpp:506`, `_ref/OpenImageIO/src/libOpenImageIO/deepdata.cpp:536`, `_ref/OpenImageIO/src/libOpenImageIO/deepdata.cpp:591`
    - Evidence (implementation): `crates/vfx-io/src/deepdata.rs:337`, `crates/vfx-io/src/deepdata.rs:363`, `crates/vfx-io/src/deepdata.rs:379`, `crates/vfx-io/src/deepdata.rs:409`
    - Impact: sample insertion/merge can become no-ops or lead to out-of-bounds access in subsequent writes.
+   - FIX: Added `reallocate_for_pixel()` for proper capacity reallocation. `set_capacity()` now reallocates when data is already allocated. `insert_samples()` auto-grows capacity if needed (doubles or uses min 8).
 
 340) DDS module docs claim support for cube maps/texture arrays, but `read()`/`read_all_mips()` decode a flat surface and only return the first width*height layer, dropping additional faces/layers.
    - Evidence (doc claim): `crates/vfx-io/src/dds.rs:9`
@@ -2006,9 +2111,11 @@
    - Impact: cubemap/array DDS reads return incomplete data without warning.
 
 341) `probe_dimensions` docs say TIFF reads only IFD tags, but implementation does a full TIFF decode via `tiff::read`.
+   **STATUS: FIXED**
    - Evidence (doc claim): `crates/vfx-io/src/lib.rs:368`
    - Evidence (implementation): `crates/vfx-io/src/lib.rs:495`
    - Impact: dimension probing loads full TIFF image data, negating performance guarantees for large files.
+   - FIX: Added `tiff::probe_dimensions()` that uses `Decoder::dimensions()` without `read_image()`. Updated `probe_dimensions` in lib.rs to use the new optimized function.
 
 342) Feature matrix marks CinemaDNG as "Done", but implementation is a thin wrapper over generic TIFF decoding; no DNG-specific tags/RAW/CFA handling is present.
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:189`
@@ -2461,9 +2568,11 @@
    - Impact: пример `-h` не работает; CLI ожидает `-H`.
 
 432) В `cli/color.md` используются короткие флаги `-e/-g/-s/-t` и заявлены `pq/hlg/log/srgb-inv`, но CLI поддерживает только длинные флаги и фактически обрабатывает только `srgb/srgb_to_linear/linear_to_srgb/rec709`.
+   **STATUS: FIXED** (duplicate of #128)
    - Evidence (doc claim): `docs/src/cli/color.md:15`, `docs/src/cli/color.md:16`, `docs/src/cli/color.md:17`, `docs/src/cli/color.md:18`, `docs/src/cli/color.md:28`, `docs/src/cli/color.md:29`, `docs/src/cli/color.md:30`, `docs/src/cli/color.md:31`, `docs/src/cli/color.md:32`, `docs/src/cli/color.md:33`, `docs/src/cli/color.md:51`
    - Evidence (implementation): `crates/vfx-cli/src/main.rs:448`, `crates/vfx-cli/src/main.rs:456`, `crates/vfx-cli/src/main.rs:460`, `crates/vfx-cli/src/main.rs:464`, `crates/vfx-cli/src/main.rs:468`, `crates/vfx-cli/src/commands/color.rs:74`, `crates/vfx-cli/src/commands/color.rs:115`, `crates/vfx-cli/src/commands/color.rs:125`
    - Impact: короткие флаги и заявленные transfer-функции не работают.
+   - FIX: All transfer functions implemented via vfx-transfer: pq, hlg, logc, logc4, slog3, vlog. Docs updated.
 
 433) В `cli/aces.md` используется `--rrt` и варианты `alt1/filmic`, но CLI имеет только `--rrt-variant` (long) и поддерживает `default` или `high-contrast`.
    - Evidence (doc claim): `docs/src/cli/aces.md:16`, `docs/src/cli/aces.md:49`, `docs/src/cli/aces.md:57`, `docs/src/cli/aces.md:58`

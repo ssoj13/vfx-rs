@@ -13,7 +13,7 @@ vfx aces [OPTIONS] <INPUT> -o <OUTPUT>
 | Option | Description |
 |--------|-------------|
 | `-t, --transform <T>` | Transform to apply |
-| `--rrt <VARIANT>` | RRT variant (default, alt1, filmic) |
+| `--rrt <VARIANT>` | RRT variant (default, high-contrast, filmic, alt1) |
 
 ## Transforms
 
@@ -45,8 +45,11 @@ vfx aces acescg.exr -o output.png -t odt
 # Full display transform (RRT + ODT)
 vfx aces render.exr -o display.png -t rrt-odt
 
-# Alternative RRT curve (less contrast)
-vfx aces render.exr -o alt.png -t rrt-odt --rrt alt1
+# High contrast RRT curve
+vfx aces render.exr -o punchy.png -t rrt-odt --rrt high-contrast
+
+# Filmic look (softer highlights)
+vfx aces render.exr -o filmic.png -t rrt-odt --rrt filmic
 ```
 
 ## RRT Variants
@@ -54,8 +57,9 @@ vfx aces render.exr -o alt.png -t rrt-odt --rrt alt1
 | Variant | Description |
 |---------|-------------|
 | `default` | Standard ACES RRT |
-| `alt1` | Reduced highlight rolloff |
-| `filmic` | S-curve with toe/shoulder |
+| `high-contrast` | Higher contrast curve with punchier midtones |
+| `filmic` | Softer shoulder, more film-like rolloff |
+| `alt1` | Neutral balanced response, smooth transitions |
 
 ## Workflow Example
 

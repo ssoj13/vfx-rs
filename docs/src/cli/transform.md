@@ -37,7 +37,7 @@ vfx transform input.exr -o flipped.exr --flip-v
 ### Rotate 90°
 
 ```bash
-# Rotate 90° counter-clockwise
+# Rotate 90° clockwise
 vfx transform input.exr -o rotated.exr -r 90
 ```
 
@@ -51,7 +51,7 @@ vfx transform input.exr -o upside_down.exr -r 180
 ### Rotate 270°
 
 ```bash
-# Rotate 270° (or 90° clockwise)
+# Rotate 270° clockwise (or 90° counter-clockwise)
 vfx transform input.exr -o rotated.exr -r 270
 ```
 
@@ -123,9 +123,10 @@ All transforms are:
 ## Notes
 
 - Rotation is lossless (exact pixel mapping)
-- Preserves all metadata
+- 90° rotation is clockwise
 - Works on any image format
-- EXR layers are all transformed together
+- Multi-layer EXR: first layer only (use `--layer` on other commands for specific layers)
+- Output is always float32
 
 ## See Also
 

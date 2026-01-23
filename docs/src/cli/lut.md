@@ -13,7 +13,7 @@ vfx lut <INPUT> -o <OUTPUT> -l <LUT> [--invert]
 | Option | Description |
 |--------|-------------|
 | `-o, --output` | Output file path |
-| `-l, --lut` | LUT file path (.cube, .clf) |
+| `-l, --lut` | LUT file path (.cube) |
 | `--invert` | Invert the LUT (if supported) |
 
 ## Supported Formats
@@ -21,10 +21,9 @@ vfx lut <INPUT> -o <OUTPUT> -l <LUT> [--invert]
 | Format | Extension | Type |
 |--------|-----------|------|
 | Resolve/Adobe Cube | `.cube` | 1D/3D |
-| Common LUT Format | `.clf` | 1D/3D + operations |
-| Sony Spi1d | `.spi1d` | 1D |
-| Sony Spi3d | `.spi3d` | 3D |
-| Autodesk 3DL | `.3dl` | 3D |
+
+**Note:** CLF, SPI1D, SPI3D, and 3DL formats are not yet implemented.
+Use vfx-lut library directly for additional format support.
 
 ## Examples
 
@@ -40,13 +39,6 @@ vfx lut input.exr -o graded.exr -l film_look.cube
 ```bash
 # Apply gamma curve
 vfx lut input.exr -o adjusted.exr -l gamma_22.cube
-```
-
-### Apply CLF
-
-```bash
-# Apply ACES-compatible CLF
-vfx lut input.exr -o output.exr -l transform.clf
 ```
 
 ### Invert LUT
@@ -78,19 +70,6 @@ LUT_3D_SIZE 33
 0.03125 0.0 0.0
 0.0625 0.0 0.0
 ...
-```
-
-### CLF Format
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<ProcessList id="FilmLook">
-  <LUT3D interpolation="tetrahedral">
-    <Array dim="17 17 17 3">
-      <!-- LUT data -->
-    </Array>
-  </LUT3D>
-</ProcessList>
 ```
 
 ## Use Cases
@@ -127,8 +106,7 @@ vfx lut footage.exr -o styled.exr -l cinematic_teal_orange.cube
 
 1. **Apply in correct space** - Most LUTs expect specific input (log, linear, etc.)
 2. **Check LUT size** - Larger LUTs (33³, 65³) are more accurate
-3. **CLF for ACES** - Use CLF for ACES-compatible workflows
-4. **Test extremes** - Check highlights and shadows
+3. **Test extremes** - Check highlights and shadows
 
 ## Technical Notes
 

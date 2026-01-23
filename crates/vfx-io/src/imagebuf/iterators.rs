@@ -111,6 +111,7 @@ pub struct ScanlineIterator {
     xbegin: i32,
     xend: i32,
     y: i32,
+    ybegin: i32,
     yend: i32,
     z: i32,
     zend: i32,
@@ -124,6 +125,7 @@ impl ScanlineIterator {
             xbegin: roi.xbegin,
             xend: roi.xend,
             y: roi.ybegin,
+            ybegin: roi.ybegin,
             yend: roi.yend,
             z: roi.zbegin,
             zend: roi.zend,
@@ -149,7 +151,7 @@ impl Iterator for ScanlineIterator {
 
         self.y += 1;
         if self.y >= self.yend {
-            self.y = 0; // Reset to first row
+            self.y = self.ybegin; // Reset to ROI start row
             self.z += 1;
         }
 
@@ -157,7 +159,11 @@ impl Iterator for ScanlineIterator {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = ((self.zend - self.z) * (self.yend - self.y)) as usize;
+        // Calculate remaining scanlines considering ROI bounds
+        let rows_per_slice = (self.yend - self.ybegin) as usize;
+        let remaining_in_current = (self.yend - self.y) as usize;
+        let remaining_slices = (self.zend - self.z - 1).max(0) as usize;
+        let remaining = remaining_in_current + remaining_slices * rows_per_slice;
         (remaining, Some(remaining))
     }
 }

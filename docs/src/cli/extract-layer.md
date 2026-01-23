@@ -33,12 +33,18 @@ vfx extract-layer render.exr -o beauty.exr --layer beauty
 vfx extract-layer render.exr -o first.exr --layer 0
 ```
 
-### Extract Default Layer
+### List Available Layers (no extraction)
 
 ```bash
-# Without --layer, extracts first/main layer
+# Without --layer, lists available layers and exits
 vfx extract-layer render.exr -o main.exr
+# No layer specified. Available layers:
+#   [0] beauty
+#   [1] diffuse
+#   ...
 ```
+
+**Note:** `--layer` is required. Without it, the command shows available layers but does not extract.
 
 ### Batch Extract
 

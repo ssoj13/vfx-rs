@@ -84,14 +84,14 @@ vfx --allow-non-color blur id_pass.exr -o id_smooth.exr -r 2
 | 10-20 | 100-500ms |
 | 50+ | 1-5s |
 
-Gaussian blur uses separable implementation (O(n) per pixel).
-
 ## Technical Notes
 
-- Preserves alpha channel
+- **Alpha channel is preserved** (only RGB is blurred)
+- Uses 2D convolution (not separable, O(n²) per pixel)
 - Edge pixels are clamped (no wrap)
-- Works on any bit depth
+- Output is always float32
 - Parallel processing via rayon
+- Works with RGBA (4ch) and grayscale+alpha (2ch) images
 
 ## See Also
 

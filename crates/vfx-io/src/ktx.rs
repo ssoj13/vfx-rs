@@ -5,15 +5,16 @@
 //!
 //! # Features
 //!
-//! - Read KTX2 file headers and metadata
-//! - Support for uncompressed textures (RGBA8, RGBA16F, RGBA32F)
-//! - Support for BC-compressed textures (BC1-BC7) via image_dds
+//! - Read KTX2 file headers and metadata (key-value pairs)
+//! - Support for uncompressed textures (R8, RG8, RGBA8, RGBA16F, RGBA32F)
 //! - Mipmap chain access
 //!
 //! # Limitations
 //!
-//! - Basis Universal transcoding requires external tooling
+//! - BC-compressed textures (BC1-BC7) not supported - use DDS format instead
+//! - Basis Universal transcoding requires external tooling (ktx2-rw, basisu)
 //! - ASTC/ETC decompression not yet implemented
+//! - Supercompressed textures (zstd, BasisLZ) not supported
 //!
 //! # Example
 //!
@@ -183,94 +184,53 @@ const KTX2_IDENTIFIER: [u8; 12] = [
 
 /// Reads KTX2 texture info without fully loading pixel data.
 pub fn read_info<P: AsRef<Path>>(path: P) -> IoResult<KtxInfo> {
-    let file = File::open(path.as_ref())?;
-    let mut reader = BufReader::new(file);
-    read_info_impl(&mut reader)
+    // Read file to memory to enable metadata parsing (needs full buffer access)
+    let data = std::fs::read(path.as_ref())?;
+    read_info_from_memory(&data)
 }
 
 /// Reads KTX2 info from memory.
 pub fn read_info_from_memory(data: &[u8]) -> IoResult<KtxInfo> {
-    let mut cursor = std::io::Cursor::new(data);
-    read_info_impl(&mut cursor)
+    read_info_impl_with_metadata(data)
 }
 
-fn read_info_impl<R: Read>(reader: &mut R) -> IoResult<KtxInfo> {
-    // Read header
-    let mut header_bytes = [0u8; 80]; // Full KTX2 header size
-    reader.read_exact(&mut header_bytes)?;
+/// Parses KTX2 info from a full data buffer (supports metadata parsing).
+fn read_info_impl_with_metadata(data: &[u8]) -> IoResult<KtxInfo> {
+    if data.len() < 80 {
+        return Err(IoError::Format("KTX2 file too small for header".into()));
+    }
 
     // Check magic bytes
-    if &header_bytes[0..12] != &KTX2_IDENTIFIER {
+    if &data[0..12] != &KTX2_IDENTIFIER {
         return Err(IoError::Format("Not a valid KTX2 file".into()));
     }
 
     // Parse header fields (little-endian)
-    let vk_format = u32::from_le_bytes([
-        header_bytes[12],
-        header_bytes[13],
-        header_bytes[14],
-        header_bytes[15],
-    ]);
-    let _type_size = u32::from_le_bytes([
-        header_bytes[16],
-        header_bytes[17],
-        header_bytes[18],
-        header_bytes[19],
-    ]);
-    let pixel_width = u32::from_le_bytes([
-        header_bytes[20],
-        header_bytes[21],
-        header_bytes[22],
-        header_bytes[23],
-    ]);
-    let pixel_height = u32::from_le_bytes([
-        header_bytes[24],
-        header_bytes[25],
-        header_bytes[26],
-        header_bytes[27],
-    ]);
-    let pixel_depth = u32::from_le_bytes([
-        header_bytes[28],
-        header_bytes[29],
-        header_bytes[30],
-        header_bytes[31],
-    ]);
-    let layer_count = u32::from_le_bytes([
-        header_bytes[32],
-        header_bytes[33],
-        header_bytes[34],
-        header_bytes[35],
-    ]);
-    let face_count = u32::from_le_bytes([
-        header_bytes[36],
-        header_bytes[37],
-        header_bytes[38],
-        header_bytes[39],
-    ]);
-    let level_count = u32::from_le_bytes([
-        header_bytes[40],
-        header_bytes[41],
-        header_bytes[42],
-        header_bytes[43],
-    ]);
-    let supercompression_scheme = u32::from_le_bytes([
-        header_bytes[44],
-        header_bytes[45],
-        header_bytes[46],
-        header_bytes[47],
-    ]);
+    let vk_format = u32::from_le_bytes([data[12], data[13], data[14], data[15]]);
+    let pixel_width = u32::from_le_bytes([data[20], data[21], data[22], data[23]]);
+    let pixel_height = u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
+    let pixel_depth = u32::from_le_bytes([data[28], data[29], data[30], data[31]]);
+    let layer_count = u32::from_le_bytes([data[32], data[33], data[34], data[35]]);
+    let face_count = u32::from_le_bytes([data[36], data[37], data[38], data[39]]);
+    let level_count = u32::from_le_bytes([data[40], data[41], data[42], data[43]]);
+    let supercompression_scheme = u32::from_le_bytes([data[44], data[45], data[46], data[47]]);
+
+    // KV data offset and length (bytes 56-63)
+    let kvd_offset = u32::from_le_bytes([data[56], data[57], data[58], data[59]]) as usize;
+    let kvd_length = u32::from_le_bytes([data[60], data[61], data[62], data[63]]) as usize;
 
     // Determine format
     let mut format = KtxFormat::from_vk_format(vk_format);
 
     // Check for Basis supercompression
     if supercompression_scheme == 1 {
-        // BasisLZ
         format = KtxFormat::BasisEtc1s;
     } else if vk_format == 0 {
-        // VK_FORMAT_UNDEFINED with supercompression indicates UASTC
         format = KtxFormat::BasisUastc;
     }
+
+    // Parse metadata from Key/Value Data section
+    let metadata = parse_ktx2_metadata(data, kvd_offset, kvd_length);
 
     Ok(KtxInfo {
         width: pixel_width,
@@ -281,8 +241,50 @@ fn read_info_impl<R: Read>(reader: &mut R) -> IoResult<KtxInfo> {
         face_count: face_count.max(1),
         format,
         is_supercompressed: supercompression_scheme != 0,
-        metadata: Vec::new(), // Metadata parsing not yet implemented
+        metadata,
     })
+}
+
+/// Parses KTX2 Key/Value Data section.
+/// Format: repeated [keyAndValueByteLength: u32, keyAndValue: bytes, padding]
+fn parse_ktx2_metadata(data: &[u8], offset: usize, length: usize) -> Vec<(String, Vec<u8>)> {
+    let mut metadata = Vec::new();
+
+    if offset == 0 || length == 0 || offset + length > data.len() {
+        return metadata; // No metadata or invalid range
+    }
+
+    let kvd = &data[offset..offset + length];
+    let mut pos = 0;
+
+    while pos + 4 <= kvd.len() {
+        // Read keyAndValueByteLength
+        let kv_len = u32::from_le_bytes([
+            kvd[pos],
+            kvd[pos + 1],
+            kvd[pos + 2],
+            kvd[pos + 3],
+        ]) as usize;
+        pos += 4;
+
+        if kv_len == 0 || pos + kv_len > kvd.len() {
+            break; // Invalid or truncated entry
+        }
+
+        // Key is null-terminated string, value follows
+        let kv_data = &kvd[pos..pos + kv_len];
+        if let Some(null_pos) = kv_data.iter().position(|&b| b == 0) {
+            let key = String::from_utf8_lossy(&kv_data[..null_pos]).into_owned();
+            let value = kv_data[null_pos + 1..].to_vec();
+            metadata.push((key, value));
+        }
+
+        // Advance to next entry (4-byte aligned)
+        pos += kv_len;
+        pos = (pos + 3) & !3; // Round up to 4-byte boundary
+    }
+
+    metadata
 }
 
 /// Reads a KTX2 file and returns the top mip level as RGBA image.
@@ -290,12 +292,13 @@ fn read_info_impl<R: Read>(reader: &mut R) -> IoResult<KtxInfo> {
 /// # Supported Formats
 ///
 /// - Uncompressed: R8, RG8, RGBA8, RGBA16F, RGBA32F
-/// - BC-compressed: BC1-BC7 (via image_dds)
 ///
 /// # Errors
 ///
 /// Returns error for:
+/// - BC-compressed formats (BC1-BC7) - use DDS format instead
 /// - Supercompressed textures (zstd, BasisLZ, etc.)
+/// - Basis Universal formats (ETC1S, UASTC) - requires external tooling
 /// - ASTC/ETC formats (not yet implemented)
 /// - Invalid or corrupted files
 pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {

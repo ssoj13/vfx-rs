@@ -112,16 +112,7 @@ pub fn parse_vf<R: Read>(reader: R) -> LutResult<VfFile> {
                     })?;
                 }
 
-                // Unscale matrix by LUT size (Nuke pre-scales it)
-                let s0 = size[0] as f64;
-                let s1 = size[1] as f64;
-                let s2 = size[2] as f64;
-                for i in 0..4 {
-                    m[4 * i] *= s0;
-                    m[4 * i + 1] *= s1;
-                    m[4 * i + 2] *= s2;
-                }
-
+                // Store raw matrix - will unscale after parsing when size is known
                 matrix = Some(m);
                 continue;
             }
@@ -164,6 +155,20 @@ pub fn parse_vf<R: Read>(reader: R) -> LutResult<VfFile> {
     // VF data is read sequentially and stored in Blue-major format
     // (same as our internal format: B + G*size + R*size²)
     let lut_size = size[0];
+
+    // Unscale matrix by LUT size now that we know the final size (OCIO behavior)
+    // This ensures parsing is order-independent (global_transform can appear before grid_size)
+    let matrix = matrix.map(|mut m| {
+        let s0 = size[0] as f64;
+        let s1 = size[1] as f64;
+        let s2 = size[2] as f64;
+        for i in 0..4 {
+            m[4 * i] *= s0;
+            m[4 * i + 1] *= s1;
+            m[4 * i + 2] *= s2;
+        }
+        m
+    });
 
     Ok(VfFile {
         matrix,

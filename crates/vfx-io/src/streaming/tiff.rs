@@ -348,17 +348,25 @@ impl StreamingSource for TiffStreamingSource {
     }
 
     fn read_region(&mut self, x: u32, y: u32, w: u32, h: u32) -> IoResult<Region> {
-        // Clamp region to image bounds
-        let x = x.min(self.width.saturating_sub(1));
-        let y = y.min(self.height.saturating_sub(1));
-        let w = w.min(self.width - x);
-        let h = h.min(self.height - y);
-
-        // Find overlapping chunks
-        let chunks = self.chunks_for_region(x, y, w, h);
-
-        // Create output buffer
+        // Create output buffer filled with zeros (transparent black for out-of-bounds)
         let mut result = vec![0.0f32; (w * h) as usize * RGBA_CHANNELS as usize];
+
+        // Check if region is completely outside image bounds
+        if x >= self.width || y >= self.height {
+            // Return transparent black (zeros) per StreamingSource contract
+            return Ok(Region::new(x, y, w, h, result));
+        }
+
+        // Calculate intersection with image bounds
+        let clipped_w = w.min(self.width.saturating_sub(x));
+        let clipped_h = h.min(self.height.saturating_sub(y));
+
+        if clipped_w == 0 || clipped_h == 0 {
+            return Ok(Region::new(x, y, w, h, result));
+        }
+
+        // Find overlapping chunks for the clipped region
+        let chunks = self.chunks_for_region(x, y, clipped_w, clipped_h);
 
         // Read and blit each chunk
         for &(chunk_x, chunk_y, chunk_px, chunk_py) in &chunks {
@@ -370,8 +378,8 @@ impl StreamingSource for TiffStreamingSource {
             let dst_x = chunk_px.saturating_sub(x);
             let dst_y = chunk_py.saturating_sub(y);
 
-            let copy_w = (chunk_w - src_x).min(w - dst_x);
-            let copy_h = (chunk_h - src_y).min(h - dst_y);
+            let copy_w = (chunk_w - src_x).min(clipped_w - dst_x);
+            let copy_h = (chunk_h - src_y).min(clipped_h - dst_y);
 
             // Copy pixels row by row
             for row in 0..copy_h {

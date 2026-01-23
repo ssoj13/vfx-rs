@@ -18,12 +18,17 @@ vfx-ops = { workspace = true }
 vfx-compute = { workspace = true }
 vfx-color = { workspace = true }
 vfx-lut = { workspace = true }
+vfx-primaries = { workspace = true }
+vfx-exr = { workspace = true }
+vfx-math = { workspace = true }
+vfx-transfer = { workspace = true }
 vfx-view = { path = "../vfx-view", optional = true }
 
 clap = { workspace = true }
 anyhow = { workspace = true }
 glob = { workspace = true }
 rayon = { workspace = true }
+smallvec = "1.13"
 
 # Logging
 tracing = "0.1"

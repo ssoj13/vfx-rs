@@ -121,6 +121,34 @@ impl RrtParams {
             white: 1.0,
         }
     }
+    
+    /// Filmic curve - softer shoulder, more film-like rolloff.
+    /// Lower contrast than default, with extended highlight range.
+    pub fn filmic() -> Self {
+        Self {
+            a: 2.20,
+            b: 0.03,
+            c: 2.10,
+            d: 0.65,
+            e: 0.18,
+            f: 0.18,
+            white: 1.0,
+        }
+    }
+    
+    /// Alternative curve 1 - neutral, balanced response.
+    /// Slightly lower contrast with smooth transitions.
+    pub fn alt1() -> Self {
+        Self {
+            a: 2.35,
+            b: 0.025,
+            c: 2.30,
+            d: 0.62,
+            e: 0.16,
+            f: 0.16,
+            white: 1.0,
+        }
+    }
 }
 
 /// Apply ACES RRT filmic tonemap to a single channel.

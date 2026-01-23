@@ -20,10 +20,12 @@ vfx channel-extract <INPUT> -o <OUTPUT> -c <CHANNELS>
 ## Channel Specification
 
 Channels can be specified by:
-- **Name**: `R`, `G`, `B`, `A`, `Z`, or custom names
+- **Name**: `R`, `G`, `B`, `A`, `Z` (standard names only)
 - **Index**: `0`, `1`, `2`, `3`, ...
 
 Multiple channels separated by commas.
+
+**Note:** Custom/arbitrary channel names (like `N.x`, `P.y`, `beauty.R`) are **not yet supported**. Use numeric indices for non-standard channels.
 
 ## Examples
 
@@ -47,14 +49,14 @@ vfx channel-extract input.exr -o output.exr -c 0,1,2
 vfx channel-extract input.exr -o fourth.exr -c 3
 ```
 
-### Extract Custom Channels
+### Extract Depth Channel
 
 ```bash
 # Extract depth channel
 vfx channel-extract render.exr -o depth.exr -c Z
 
-# Extract specific named channels
-vfx channel-extract render.exr -o normal.exr -c N.x,N.y,N.z
+# For non-standard channels, use numeric indices
+vfx channel-extract render.exr -o ch5.exr -c 5
 ```
 
 ### Extract Subset
@@ -64,14 +66,13 @@ vfx channel-extract render.exr -o normal.exr -c N.x,N.y,N.z
 vfx channel-extract input.exr -o rg.exr -c R,G
 ```
 
-## Channel Names in EXR
+## Supported Channel Names
 
-Standard EXR channel names:
-- `R`, `G`, `B`, `A` - Main RGBA
-- `Z` - Depth
-- `N.x`, `N.y`, `N.z` - Normals
-- `P.x`, `P.y`, `P.z` - Position
-- `beauty.R`, `beauty.G`, `beauty.B` - Layer channels
+Currently supported names:
+- `R`, `G`, `B`, `A` - Main RGBA (indices 0-3)
+- `Z` - Depth (index 4)
+
+For other channels (normals, position, layer channels), use numeric indices.
 
 ## Use Cases
 
@@ -123,7 +124,7 @@ vfx channel-shuffle input.exr -o rgb.exr -p RGB
 
 - Output has exactly the number of extracted channels
 - Channel order matches specification order
-- Works with any EXR channel naming convention
+- Only standard names supported (use indices for custom channels)
 - Fast operation (direct channel copy)
 
 ## See Also

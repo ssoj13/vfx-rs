@@ -42,9 +42,11 @@ fn apply_warp(input: &ImageData, args: &WarpArgs) -> Result<ImageData> {
         "pincushion" => warp::pincushion(&data, w, h, ch, args.k1, args.k2),
         "fisheye" => warp::fisheye(&data, w, h, ch, args.k1),
         "twist" | "swirl" => warp::twist(&data, w, h, ch, args.k1, args.radius),
-        "wave" | "sine" => warp::wave(&data, w, h, ch, args.k1, args.k2.max(1.0)),
+        // wave: k1 = frequency, k2 = amplitude (per docs)
+        "wave" | "sine" => warp::wave(&data, w, h, ch, args.k2, args.k1),
         "spherize" | "bulge" => warp::spherize(&data, w, h, ch, args.k1, args.radius),
-        "ripple" => warp::ripple(&data, w, h, ch, args.k1, args.k2.max(1.0), args.radius),
+        // ripple: k1 = frequency, k2 = amplitude (per docs)
+        "ripple" => warp::ripple(&data, w, h, ch, args.k2, args.k1, args.radius),
         _ => bail!(
             "Unknown warp type: '{}'. Valid: barrel, pincushion, fisheye, twist, wave, spherize, ripple",
             args.warp_type

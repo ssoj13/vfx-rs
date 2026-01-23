@@ -360,12 +360,57 @@ pub const DJI_D_GAMUT: Primaries = Primaries {
 // ============================================================================
 
 /// Converts xy chromaticity to XYZ (with Y=1).
-fn xy_to_xyz(x: f32, y: f32) -> Vec3 {
+/// Returns None if y is near zero (invalid chromaticity).
+fn try_xy_to_xyz(x: f32, y: f32) -> Option<Vec3> {
     if y.abs() < 1e-10 {
-        Vec3::ZERO
+        None
     } else {
-        Vec3::new(x / y, 1.0, (1.0 - x - y) / y)
+        Some(Vec3::new(x / y, 1.0, (1.0 - x - y) / y))
     }
+}
+
+/// Converts xy chromaticity to XYZ (with Y=1).
+/// Returns Vec3::ZERO if y is near zero (invalid chromaticity).
+#[inline]
+fn xy_to_xyz(x: f32, y: f32) -> Vec3 {
+    try_xy_to_xyz(x, y).unwrap_or(Vec3::ZERO)
+}
+
+/// Computes the RGB to XYZ matrix for a set of primaries.
+///
+/// Returns `None` if primaries are invalid (y coordinate near zero, or
+/// resulting matrix is singular and cannot be inverted).
+///
+/// # Algorithm
+///
+/// 1. Convert xy chromaticities to XYZ (with Y=1)
+/// 2. Compute scaling factors so white point maps correctly
+/// 3. Multiply primaries by scaling factors
+///
+/// # Example
+///
+/// ```rust
+/// use vfx_primaries::{SRGB, try_rgb_to_xyz_matrix};
+///
+/// let m = try_rgb_to_xyz_matrix(&SRGB).expect("valid primaries");
+/// ```
+pub fn try_rgb_to_xyz_matrix(primaries: &Primaries) -> Option<Mat3> {
+    // Convert primaries from xy to XYZ
+    let r_xyz = try_xy_to_xyz(primaries.r.0, primaries.r.1)?;
+    let g_xyz = try_xy_to_xyz(primaries.g.0, primaries.g.1)?;
+    let b_xyz = try_xy_to_xyz(primaries.b.0, primaries.b.1)?;
+    let w_xyz = try_xy_to_xyz(primaries.w.0, primaries.w.1)?;
+
+    // Build matrix from primaries as columns
+    let m = Mat3::from_col_vecs(r_xyz, g_xyz, b_xyz);
+
+    // Solve for scaling factors: M * S = W
+    // S = M^-1 * W
+    let m_inv = m.inverse()?;
+    let s = m_inv * w_xyz;
+
+    // Scale each column by the corresponding factor
+    Some(Mat3::from_col_vecs(r_xyz * s.x, g_xyz * s.y, b_xyz * s.z))
 }
 
 /// Computes the RGB to XYZ matrix for a set of primaries.
@@ -374,11 +419,11 @@ fn xy_to_xyz(x: f32, y: f32) -> Vec3 {
 /// that converts RGB values to CIE XYZ, given the chromaticity coordinates
 /// of the primaries and white point.
 ///
-/// # Algorithm
+/// # Fallback Behavior
 ///
-/// 1. Convert xy chromaticities to XYZ (with Y=1)
-/// 2. Compute scaling factors so white point maps correctly
-/// 3. Multiply primaries by scaling factors
+/// If primaries are invalid (y near zero or singular matrix), returns a
+/// fallback matrix that may produce incorrect results. Use [`try_rgb_to_xyz_matrix`]
+/// if you need to detect invalid primaries.
 ///
 /// # Example
 ///
@@ -414,7 +459,28 @@ pub fn rgb_to_xyz_matrix(primaries: &Primaries) -> Mat3 {
 
 /// Computes the XYZ to RGB matrix for a set of primaries.
 ///
+/// This is the inverse of [`try_rgb_to_xyz_matrix`].
+/// Returns `None` if primaries are invalid or matrix is singular.
+///
+/// # Example
+///
+/// ```rust
+/// use vfx_primaries::{SRGB, try_xyz_to_rgb_matrix};
+///
+/// let to_rgb = try_xyz_to_rgb_matrix(&SRGB).expect("valid primaries");
+/// ```
+pub fn try_xyz_to_rgb_matrix(primaries: &Primaries) -> Option<Mat3> {
+    try_rgb_to_xyz_matrix(primaries)?.inverse()
+}
+
+/// Computes the XYZ to RGB matrix for a set of primaries.
+///
 /// This is the inverse of [`rgb_to_xyz_matrix`].
+///
+/// # Fallback Behavior
+///
+/// If primaries are invalid or matrix is singular, returns `Mat3::IDENTITY`.
+/// Use [`try_xyz_to_rgb_matrix`] if you need to detect invalid primaries.
 ///
 /// # Example
 ///
@@ -597,11 +663,30 @@ mod tests {
             CANON_CGAMUT, RED_WIDE_GAMUT, V_GAMUT,
             DAVINCI_WIDE_GAMUT, DJI_D_GAMUT,
         ];
-        
+
         for space in spaces {
             let m = rgb_to_xyz_matrix(&space);
             let white = m * Vec3::ONE;
             assert!(white.y > 0.9 && white.y < 1.1, "{} white Y = {}", space.name, white.y);
         }
+    }
+
+    #[test]
+    fn test_invalid_primaries_try_functions() {
+        // Primaries with y=0 should return None
+        let invalid = Primaries {
+            r: (0.64, 0.0), // y = 0 is invalid
+            g: (0.30, 0.60),
+            b: (0.15, 0.06),
+            w: D65_XY,
+            name: "Invalid",
+        };
+
+        assert!(try_rgb_to_xyz_matrix(&invalid).is_none());
+        assert!(try_xyz_to_rgb_matrix(&invalid).is_none());
+
+        // Valid primaries should return Some
+        assert!(try_rgb_to_xyz_matrix(&SRGB).is_some());
+        assert!(try_xyz_to_rgb_matrix(&SRGB).is_some());
     }
 }

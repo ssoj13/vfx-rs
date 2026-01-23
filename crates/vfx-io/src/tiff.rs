@@ -286,6 +286,41 @@ impl TiffReader {
             (ColorType::RGBA(32), DecodingResult::F32(buf)) => {
                 (PixelData::F32(buf), PixelFormat::F32, 4)
             }
+            // 8-bit CMYK -> RGB (convert to RGB on read)
+            (ColorType::CMYK(8), DecodingResult::U8(buf)) => {
+                let f32_data: Vec<f32> = buf
+                    .chunks(4)
+                    .flat_map(|cmyk| {
+                        let c = cmyk[0] as f32 / 255.0;
+                        let m = cmyk[1] as f32 / 255.0;
+                        let y = cmyk[2] as f32 / 255.0;
+                        let k = cmyk[3] as f32 / 255.0;
+                        // CMYK to RGB conversion
+                        let r = (1.0 - c) * (1.0 - k);
+                        let g = (1.0 - m) * (1.0 - k);
+                        let b = (1.0 - y) * (1.0 - k);
+                        [r, g, b]
+                    })
+                    .collect();
+                (PixelData::F32(f32_data), PixelFormat::F32, 3)
+            }
+            // 16-bit CMYK -> RGB
+            (ColorType::CMYK(16), DecodingResult::U16(buf)) => {
+                let f32_data: Vec<f32> = buf
+                    .chunks(4)
+                    .flat_map(|cmyk| {
+                        let c = cmyk[0] as f32 / 65535.0;
+                        let m = cmyk[1] as f32 / 65535.0;
+                        let y = cmyk[2] as f32 / 65535.0;
+                        let k = cmyk[3] as f32 / 65535.0;
+                        let r = (1.0 - c) * (1.0 - k);
+                        let g = (1.0 - m) * (1.0 - k);
+                        let b = (1.0 - y) * (1.0 - k);
+                        [r, g, b]
+                    })
+                    .collect();
+                (PixelData::F32(f32_data), PixelFormat::F32, 3)
+            }
             (ct, _) => {
                 return Err(IoError::DecodeError(format!(
                     "unsupported TIFF color type: {:?}",
@@ -559,13 +594,46 @@ impl TiffWriter {
         data: &[f32],
         image: &ImageData,
     ) -> IoResult<()> {
-        // Note: tiff crate has limited f32 support
-        // For now, convert to u16 as fallback
-        let u16_data: Vec<u16> = data
-            .iter()
-            .map(|&v| (v.clamp(0.0, 1.0) * 65535.0) as u16)
-            .collect();
-        self.write_u16(encoder, width, height, channels, &u16_data, image)
+        use tiff::encoder::colortype;
+
+        // Note: f32 tiffs don't support compression (horizontal_predict is unreachable)
+        let mut encoder = encoder.with_compression(tiff::encoder::Compression::Uncompressed);
+        match channels {
+            1 => {
+                let mut image_encoder = encoder
+                    .new_image::<colortype::Gray32Float>(width, height)
+                    .map_err(|e| IoError::EncodeError(e.to_string()))?;
+                apply_tiff_metadata(&mut image_encoder, image)?;
+                image_encoder
+                    .write_data(data)
+                    .map_err(|e| IoError::EncodeError(e.to_string()))?;
+            }
+            3 => {
+                let mut image_encoder = encoder
+                    .new_image::<colortype::RGB32Float>(width, height)
+                    .map_err(|e| IoError::EncodeError(e.to_string()))?;
+                apply_tiff_metadata(&mut image_encoder, image)?;
+                image_encoder
+                    .write_data(data)
+                    .map_err(|e| IoError::EncodeError(e.to_string()))?;
+            }
+            4 => {
+                let mut image_encoder = encoder
+                    .new_image::<colortype::RGBA32Float>(width, height)
+                    .map_err(|e| IoError::EncodeError(e.to_string()))?;
+                apply_tiff_metadata(&mut image_encoder, image)?;
+                image_encoder
+                    .write_data(data)
+                    .map_err(|e| IoError::EncodeError(e.to_string()))?;
+            }
+            _ => {
+                return Err(IoError::EncodeError(format!(
+                    "unsupported channel count for f32: {}",
+                    channels
+                )));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -678,6 +746,33 @@ impl FormatWriter<TiffWriterOptions> for TiffWriter {
 /// ```
 pub fn read<P: AsRef<Path>>(path: P) -> IoResult<ImageData> {
     TiffReader::new().read(path)
+}
+
+/// Probe TIFF dimensions without decoding pixel data.
+///
+/// Reads only the IFD header to extract width/height, much faster
+/// than full decode for large files.
+///
+/// # Example
+///
+/// ```ignore
+/// use vfx_io::tiff;
+///
+/// let (width, height) = tiff::probe_dimensions("large.tiff")?;
+/// ```
+pub fn probe_dimensions<P: AsRef<Path>>(path: P) -> IoResult<(u32, u32)> {
+    use std::io::BufReader;
+    use std::fs::File;
+    use tiff::decoder::Decoder;
+    
+    let file = File::open(path.as_ref())?;
+    let buf_reader = BufReader::new(file);
+    let mut decoder = Decoder::new(buf_reader)
+        .map_err(|e| IoError::DecodeError(e.to_string()))?;
+    
+    decoder
+        .dimensions()
+        .map_err(|e| IoError::DecodeError(e.to_string()))
 }
 
 /// Writes a TIFF file with default options (16-bit, LZW).

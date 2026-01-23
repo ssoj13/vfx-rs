@@ -1,6 +1,8 @@
-# grep - Metadata Search
+# grep - Simple Image Search
 
-Search for patterns in image metadata (like OIIO's igrep).
+Search for patterns in image filenames and basic properties.
+
+**Note:** This is a simplified search tool. It does NOT support regex or metadata search (EXIF, EXR attributes).
 
 ## Synopsis
 
@@ -12,120 +14,58 @@ vfx grep <PATTERN> <INPUT>... [-i]
 
 | Option | Description |
 |--------|-------------|
-| `<PATTERN>` | Search pattern (regex supported) |
+| `<PATTERN>` | Search pattern (substring match, NOT regex) |
 | `<INPUT>` | Image file(s) to search |
 | `-i, --ignore-case` | Case-insensitive search |
 
+## What Gets Searched
+
+Only three things are checked:
+1. **Filename** - the input filename
+2. **Dimensions** - format `WIDTHxHEIGHT CHANNELSch`
+3. **Format** - format enum like `Exr`, `Jpeg`, `Png`
+
+**NOT searched:** EXIF, EXR attributes, camera info, color space, compression, or any other metadata.
+
 ## Examples
 
-### Basic Search
+### Search by Filename
 
 ```bash
-# Find images with specific camera
-vfx grep "ARRI" *.exr
+# Find files with "shot" in name
+vfx grep "shot" *.exr
+```
 
-# Output:
-# shot_001.exr: camera: ARRI Alexa Mini
-# shot_005.exr: camera: ARRI Alexa 65
+### Search by Dimensions
+
+```bash
+# Find 1920 wide images
+vfx grep "1920" *.exr
 ```
 
 ### Case-Insensitive
 
 ```bash
-# Find color space info regardless of case
-vfx grep -i "srgb" *.exr
-```
-
-### Regex Patterns
-
-```bash
-# Find images with resolution info
-vfx grep "[0-9]+x[0-9]+" *.exr
-
-# Find images with specific date format
-vfx grep "2024-[0-9]{2}-[0-9]{2}" *.exr
+vfx grep -i "jpeg" *.jpg
 ```
 
 ### Multiple Files
 
 ```bash
-# Search all EXR files in directory
-vfx grep "ACEScg" shots/*.exr
-
-# Search multiple formats
-vfx grep "Adobe RGB" *.jpg *.tif *.exr
+vfx grep "alpha" shots/*.exr
 ```
 
-## Searched Metadata
+## Limitations
 
-The command searches through:
+The following features are **not implemented**:
+- Regex patterns
+- EXIF metadata search
+- EXR attribute search
+- Custom metadata search
+- Camera or lens info search
+- Color space search
 
-- **Standard attributes**: resolution, channels, bit depth
-- **EXIF data**: camera, lens, exposure settings
-- **EXR attributes**: chromaticities, compression, author
-- **Custom attributes**: any embedded metadata
-
-## Use Cases
-
-### Find Camera Footage
-
-```bash
-# Find all ARRI footage
-vfx grep -i "alexa" footage/*.dpx
-
-# Find all Sony footage
-vfx grep -i "venice\|fx9" footage/*.mxf
-```
-
-### Check Color Space
-
-```bash
-# Find images in specific color space
-vfx grep "ACEScg" project/*.exr
-vfx grep "sRGB" project/*.jpg
-```
-
-### Find by Date
-
-```bash
-# Find images from specific date
-vfx grep "2024-01-15" *.exr
-```
-
-### Find by Compression
-
-```bash
-# Find PIZ compressed EXR files
-vfx grep "piz" *.exr
-```
-
-## Output Format
-
-```
-<filename>: <matching_line>
-```
-
-If no match is found, file is not listed.
-
-## Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| 0 | Matches found |
-| 1 | No matches found |
-| 2 | Error (file not found, etc.) |
-
-## Integration with Other Tools
-
-```bash
-# Find and process matching files
-vfx grep "ACEScg" *.exr | cut -d: -f1 | while read f; do
-    vfx aces "$f" -o "output/${f%.exr}_srgb.png" -t rrt-odt
-done
-
-# Count matches
-vfx grep "ARRI" *.exr | wc -l
-```
+For detailed metadata inspection, use `vfx info` instead.
 
 ## See Also
 

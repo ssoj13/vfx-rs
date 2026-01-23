@@ -207,7 +207,8 @@ impl JpegReader {
                 (3, rgb)
             }
             jpeg_decoder::PixelFormat::CMYK32 => {
-                // CMYK to RGB (approximate conversion)
+                // CMYK to RGB - JPEG stores CMYK as inverted (1-x) values (OIIO behavior)
+                // So R = C * K, G = M * K, B = Y * K (direct multiplication)
                 let rgb: Vec<u8> = pixels
                     .chunks(4)
                     .flat_map(|cmyk| {
@@ -216,9 +217,9 @@ impl JpegReader {
                         let y = cmyk[2] as f32 / 255.0;
                         let k = cmyk[3] as f32 / 255.0;
 
-                        let r = ((1.0 - c) * (1.0 - k) * 255.0) as u8;
-                        let g = ((1.0 - m) * (1.0 - k) * 255.0) as u8;
-                        let b = ((1.0 - y) * (1.0 - k) * 255.0) as u8;
+                        let r = (c * k * 255.0) as u8;
+                        let g = (m * k * 255.0) as u8;
+                        let b = (y * k * 255.0) as u8;
 
                         [r, g, b]
                     })

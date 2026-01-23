@@ -16,7 +16,7 @@ vfx merge-layers <INPUT>... -o <OUTPUT> [-n <NAMES>]
 |--------|-------------|
 | `<INPUT>` | Input files (each becomes a layer) |
 | `-o, --output` | Output multi-layer EXR file |
-| `-n, --names` | Custom layer names (comma-separated) |
+| `-n, --names` | Custom layer names (repeated for each) |
 
 ## Examples
 
@@ -30,9 +30,9 @@ vfx merge-layers beauty.exr diffuse.exr specular.exr -o combined.exr
 ### With Custom Names
 
 ```bash
-# Specify layer names
+# Specify layer names (one --names per input)
 vfx merge-layers a.exr b.exr c.exr -o combined.exr \
-    --names beauty,diffuse,specular
+    -n beauty -n diffuse -n specular
 ```
 
 ### From Render Passes
@@ -45,7 +45,7 @@ vfx merge-layers \
     render_specular.exr \
     render_depth.exr \
     -o render_combined.exr \
-    --names beauty,diffuse,specular,depth
+    -n beauty -n diffuse -n specular -n depth
 ```
 
 ## Workflow
@@ -61,7 +61,7 @@ vfx merge-layers \
     passes/emission.exr \
     passes/depth.exr \
     -o shot_v001.exr \
-    --names beauty,diffuse,specular,emission,depth
+    -n beauty -n diffuse -n specular -n emission -n depth
 ```
 
 ### Add Layer to Existing File
@@ -71,7 +71,7 @@ vfx merge-layers \
 vfx extract-layer existing.exr -o temp_beauty.exr --layer beauty
 vfx extract-layer existing.exr -o temp_diff.exr --layer diffuse
 vfx merge-layers temp_beauty.exr temp_diff.exr new_layer.exr \
-    -o updated.exr --names beauty,diffuse,new_layer
+    -o updated.exr -n beauty -n diffuse -n new_layer
 ```
 
 ### Combine Different Formats
@@ -97,7 +97,7 @@ vfx merge-layers beauty.exr diffuse.exr -o combined.exr
 ### Custom Names
 
 ```bash
-vfx merge-layers a.exr b.exr -o combined.exr --names main,secondary
+vfx merge-layers a.exr b.exr -o combined.exr -n main -n secondary
 # Layers: main, secondary
 ```
 

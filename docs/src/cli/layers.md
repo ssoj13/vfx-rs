@@ -1,19 +1,29 @@
-# layers - EXR Layer Operations
+# layers - List EXR Layers
 
-Work with multi-layer OpenEXR files (AOVs, render passes).
+List layers and channels in multi-layer OpenEXR files.
 
-## Commands
+**Alias:** `l`
+
+**Note:** This is a separate command from `extract-layer` and `merge-layers`. There are no subcommands.
+
+## Synopsis
 
 ```bash
-vfx layers list <INPUT>           # List layers
-vfx layers extract <INPUT> -o <OUTPUT> --layer <NAME>
-vfx layers merge <INPUTS>... -o <OUTPUT>
+vfx layers <INPUT> [--json]
 ```
 
-## List Layers
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--json` | Output in JSON format |
+
+## Examples
+
+### List Layers
 
 ```bash
-vfx layers list render.exr
+vfx layers render.exr
 # Output:
 # render.exr
 #   Layers: 5
@@ -26,27 +36,22 @@ vfx layers list render.exr
 #     [4] normals (1920x1080, 3 channels)
 ```
 
-## Extract Layer
+### JSON Output
 
 ```bash
-# Extract specific layer to separate file
-vfx layers extract render.exr -o depth.exr --layer depth
-
-# Extract with verbose output
-vfx layers extract -v render.exr -o diffuse.exr --layer diffuse
+vfx layers render.exr --json
+# Outputs structured JSON for scripting
 ```
 
-## Merge Layers
+## Related Commands
 
-Combine multiple images into a multi-layer EXR:
+| Command | Purpose |
+|---------|---------|
+| `vfx layers` | List layers in EXR |
+| `vfx extract-layer` | Extract single layer to file |
+| `vfx merge-layers` | Combine images into multi-layer EXR |
 
-```bash
-# Merge separate passes
-vfx layers merge beauty.exr diffuse.exr specular.exr -o combined.exr
-
-# Layers are named from source filenames
-# combined.exr will contain: beauty, diffuse, specular
-```
+**Note:** Unlike the documentation previously suggested, these are separate top-level commands, not subcommands of `layers`.
 
 ## Use with Other Commands
 
@@ -69,3 +74,8 @@ vfx-rs follows OpenEXR conventions:
 - Default layer: `R`, `G`, `B`, `A`
 - Named layers: `layername.R`, `layername.G`, `layername.B`
 - Arbitrary channels: `layername.channelname`
+
+## See Also
+
+- [extract-layer](./extract-layer.md) - Extract single layer
+- [merge-layers](./merge-layers.md) - Combine into multi-layer

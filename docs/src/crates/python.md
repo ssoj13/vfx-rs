@@ -38,14 +38,14 @@ import numpy as np
 img = vfx_rs.read("input.exr")
 print(f"Size: {img.width}x{img.height}, {img.channels} channels")
 
-# Access as NumPy array
-data = img.to_numpy()  # Shape: (height, width, channels)
+# Access as NumPy array (copies data)
+data = img.numpy()  # Shape: (height, width, channels)
 
 # Process
 data *= 1.5  # Exposure adjustment
 
-# Create from NumPy
-result = vfx_rs.Image.from_numpy(data)
+# Create from NumPy (copies data)
+result = vfx_rs.Image(data)
 
 # Write
 vfx_rs.write("output.exr", result)
@@ -64,11 +64,8 @@ print(img.channels)   # int
 print(img.format)     # "f32", "f16", "u8", "u16"
 
 # NumPy conversion
-arr = img.to_numpy()           # Returns np.ndarray (H, W, C)
-img = vfx_rs.Image.from_numpy(arr)  # From np.ndarray
-
-# Data access
-data = img.data()              # Raw bytes
+arr = img.numpy()              # Returns np.ndarray (H, W, C), copies data
+img = vfx_rs.Image(arr)        # From np.ndarray, copies data
 ```
 
 ## I/O Functions
@@ -83,10 +80,6 @@ img = vfx_rs.read("photo.jpg")
 # Write (format from extension)
 vfx_rs.write("output.png", img)
 vfx_rs.write("output.exr", img)
-
-# With options
-vfx_rs.write("output.jpg", img, quality=90)
-vfx_rs.write("output.exr", img, compression="zip")
 ```
 
 ## Color Transforms
@@ -99,7 +92,7 @@ linear = color.srgb_eotf(0.5)
 encoded = color.srgb_oetf(linear)
 
 # Batch processing
-data = img.to_numpy()
+data = img.numpy()
 color.apply_srgb_eotf(data)  # In-place
 
 # ACES
@@ -117,7 +110,7 @@ import numpy as np
 matrix = color.rgb_to_rgb_matrix("sRGB", "ACEScg")
 
 # Apply to pixels
-pixels = img.to_numpy().reshape(-1, 3)
+pixels = img.numpy().reshape(-1, 3)
 result = pixels @ matrix.T
 ```
 
@@ -131,7 +124,7 @@ lut_3d = lut.read_cube_3d("grade.cube")
 lut_1d = lut.read_cube_1d("gamma.cube")
 
 # Apply
-data = img.to_numpy()
+data = img.numpy()
 lut.apply_3d(data, lut_3d)
 lut.apply_1d(data, lut_1d)
 ```
@@ -168,7 +161,7 @@ config = ocio.builtin_aces_1_3()
 proc = config.processor("ACEScg", "sRGB")
 
 # Apply
-data = img.to_numpy()
+data = img.numpy()
 proc.apply(data)
 
 # Display processor
@@ -183,18 +176,12 @@ proc = config.display_processor("ACEScg", "sRGB", "Film")
 import numpy as np
 import vfx_rs
 
-# Float32 (default for processing)
+# Only float32 is currently supported
 data = np.zeros((1080, 1920, 3), dtype=np.float32)
-img = vfx_rs.Image.from_numpy(data)
-
-# Uint8 (for display)
-data = np.zeros((1080, 1920, 3), dtype=np.uint8)
-img = vfx_rs.Image.from_numpy(data)
-
-# Uint16
-data = np.zeros((1080, 1920, 3), dtype=np.uint16)
-img = vfx_rs.Image.from_numpy(data)
+img = vfx_rs.Image(data)
 ```
+
+**Note:** Only `np.float32` dtype is currently supported. Other dtypes (uint8, uint16) are not yet implemented.
 
 ### Memory Layout
 
@@ -203,19 +190,21 @@ img = vfx_rs.Image.from_numpy(data)
 # Shape: (height, width, channels)
 # Memory: RGBRGBRGB...
 
-data = img.to_numpy()
+data = img.numpy()
 assert data.flags['C_CONTIGUOUS']
 ```
 
-### Zero-Copy (when possible)
+### Copy Behavior
+
+Data is always copied between Python and Rust:
 
 ```python
-# to_numpy() returns a view when data is compatible
-data = img.to_numpy()
-data *= 2.0  # Modifies original!
+# img.numpy() always copies data
+data = img.numpy()
+data *= 2.0  # Does NOT modify original image
 
-# Force copy
-data = img.to_numpy().copy()
+# To apply changes, create new Image
+modified = vfx_rs.Image(data)
 ```
 
 ## Multi-Layer EXR
@@ -223,21 +212,20 @@ data = img.to_numpy().copy()
 ```python
 import vfx_rs
 
-# Read all layers
-layers = vfx_rs.read_layers("render.exr")
-for name, layer in layers.items():
+# Read all layers as LayeredImage
+layered = vfx_rs.read_layered("render.exr")
+
+# Access layers by name
+beauty = layered["beauty"]
+depth = layered["depth"]
+
+# List available layers
+for name in layered.layer_names():
+    layer = layered[name]
     print(f"{name}: {layer.width}x{layer.height}")
-
-# Read specific layer
-beauty = vfx_rs.read_layer("render.exr", "beauty")
-
-# Write layers
-vfx_rs.write_layers("output.exr", {
-    "beauty": beauty_img,
-    "diffuse": diffuse_img,
-    "specular": specular_img,
-})
 ```
+
+**Note:** `write_layers` and `read_layer` (single layer) are not yet implemented.
 
 ## Error Handling
 
@@ -254,14 +242,16 @@ except vfx_rs.FormatError as e:
 
 ## Performance Tips
 
-1. **Use in-place operations** - Avoid copies
-2. **Process as float32** - Native format
-3. **Batch operations** - Minimize Python↔Rust crossings
-4. **Use NumPy views** - Zero-copy when possible
+1. **Process as float32** - Native format
+2. **Batch operations** - Minimize Python↔Rust crossings
+3. **Use Image methods** - Operations like `blur()`, `resize()` stay in Rust
 
 ```python
 # Good: single Rust call for entire image
 vfx_rs.color.apply_srgb_eotf(data)
+
+# Good: use Image methods (stays in Rust)
+result = img.blur(sigma=2.0)
 
 # Bad: Python loop with per-pixel calls
 for y in range(height):

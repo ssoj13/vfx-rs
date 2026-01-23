@@ -82,6 +82,16 @@ pub fn parse_mga<R: Read>(reader: R) -> LutResult<Lut3D> {
         }
 
         if lower.starts_with("values:") {
+            // Validate that order is "red green blue" (OCIO requirement)
+            if parts.len() != 4
+                || !parts[1].eq_ignore_ascii_case("red")
+                || !parts[2].eq_ignore_ascii_case("green")
+                || !parts[3].eq_ignore_ascii_case("blue")
+            {
+                return Err(LutError::ParseError(
+                    "only RGB LUTs supported (values: red green blue)".into()
+                ));
+            }
             in_lut = true;
             continue;
         }
@@ -119,15 +129,33 @@ pub fn parse_mga<R: Read>(reader: R) -> LutResult<Lut3D> {
         return Err(LutError::ParseError("no LUT data found".into()));
     }
 
-    // Calculate LUT size (cube root of count)
+    // Calculate LUT size from `in:` value if specified, otherwise from data count
     let count = raw_data.len();
-    let size = (count as f64).cbrt().round() as usize;
-    if size * size * size != count {
-        return Err(LutError::ParseError(format!(
-            "{} entries is not a perfect cube",
-            count
-        )));
-    }
+    let size = if in_count > 0 {
+        // Use declared 'in:' value to compute edge length (OCIO behavior)
+        let edge = (in_count as f64).cbrt().round() as usize;
+        if edge * edge * edge != in_count {
+            return Err(LutError::ParseError(format!(
+                "'in: {}' is not a perfect cube", in_count
+            )));
+        }
+        // Validate data matches declared size
+        if count != in_count {
+            return Err(LutError::ParseError(format!(
+                "data count {} does not match declared 'in: {}'", count, in_count
+            )));
+        }
+        edge
+    } else {
+        // Fallback: infer from data count
+        let edge = (count as f64).cbrt().round() as usize;
+        if edge * edge * edge != count {
+            return Err(LutError::ParseError(format!(
+                "{} entries is not a perfect cube", count
+            )));
+        }
+        edge
+    };
 
     // Scale and convert to float
     // Pandora uses blue-fastest, same as our internal Blue-major format

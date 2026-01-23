@@ -125,8 +125,8 @@ vfx channel-shuffle render.exr -o blue.exr -p BBB
 ## Notes
 
 - Works on any number of input channels
-- Missing channels default to 0 (except A which defaults to 1)
-- Preserves bit depth and color space
+- Missing channels default to 0, except **alpha (A) defaults to 1** (opaque)
+- Output is always float32 (bit depth is not preserved)
 - Fast operation (no pixel processing)
 
 ## See Also

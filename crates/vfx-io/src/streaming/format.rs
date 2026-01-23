@@ -278,11 +278,22 @@ impl ProcessingStrategy {
 ///     estimate.width, estimate.height, estimate.f32_mb());
 /// ```
 pub fn estimate_memory<P: AsRef<Path>>(path: P) -> IoResult<MemoryEstimate> {
+    use std::io::Read;
+    
     let path = path.as_ref();
     
-    // Read first bytes for format detection
-    let header = std::fs::read(path)
+    // Read only first 4KB for format detection and header parsing
+    // This is sufficient for all supported formats (PNG/JPEG/DPX headers fit in <1KB)
+    const HEADER_SIZE: usize = 4096;
+    
+    let mut file = std::fs::File::open(path)
         .map_err(|e| IoError::Io(e))?;
+    
+    let mut header = vec![0u8; HEADER_SIZE];
+    let bytes_read = file.read(&mut header)
+        .map_err(|e| IoError::Io(e))?;
+    
+    header.truncate(bytes_read);
     
     if header.len() < 8 {
         return Err(IoError::InvalidFile("File too small for header detection".into()));

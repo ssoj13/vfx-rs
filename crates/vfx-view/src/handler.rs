@@ -425,11 +425,15 @@ impl ViewerHandler {
         let channels = img.channels as usize;
         let pixel_count = img.pixel_count();
 
-        // Apply exposure (simple 2^EV multiplier)
+        // Apply exposure (simple 2^EV multiplier) - RGB only, not alpha
         if self.exposure.abs() > 0.001 {
             let mult = self.exposure.exp2();
-            for p in &mut pixels {
-                *p *= mult;
+            for i in 0..pixel_count {
+                let base = i * channels;
+                // Only multiply RGB, leave alpha unchanged
+                for c in 0..channels.min(3) {
+                    pixels[base + c] *= mult;
+                }
             }
         }
 

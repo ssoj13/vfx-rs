@@ -66,13 +66,15 @@ vfx diff expected.exr actual.exr -t 0.01
 ### Warning Threshold
 
 ```bash
-# Warn on pixels with error > 0.001, fail on > 0.01
+# Warn if max error exceeds 0.001, fail if > 0.01
 vfx diff a.exr b.exr -t 0.01 -w 0.001
 
 # Output:
-# WARNING: 127 pixels exceed warning threshold (0.001)
-# PASS: Max error 0.008 within fail threshold
+# WARNING: Max difference 0.003 exceeds warning threshold 0.001
+# PASS
 ```
+
+**Note:** Warning threshold checks max difference, not pixel count.
 
 ## Use Cases
 
@@ -101,14 +103,14 @@ vfx diff comp_v1.exr comp_v2.exr -o changes.exr
 ## Difference Image
 
 The output difference image contains:
-- Absolute difference per channel: `|A - B|`
-- Alpha channel: max difference across RGB
-- Can be visualized with gain for subtle differences
+- Per-channel difference scaled by 10x: `min(|A - B| * 10, 1.0)`
+- Same channel count as input (no special alpha handling)
+- Already amplified for visibility
 
 ```bash
-# Boost difference visibility
+# Generate difference image
 vfx diff a.exr b.exr -o diff.exr
-vfx color diff.exr -o diff_visible.exr --exposure 5.0
+# Note: differences are pre-scaled 10x, clamped to 1.0
 ```
 
 ## Exit Codes

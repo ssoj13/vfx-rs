@@ -627,9 +627,7 @@ pub fn probe_dimensions<P: AsRef<Path>>(path: P) -> IoResult<(u32, u32)> {
         #[cfg(feature = "tiff")]
         Format::Tiff => {
             // TIFF: parse IFD for ImageWidth/ImageLength tags
-            // For simplicity, use full decode (TIFF headers are complex)
-            let img = tiff::read(path)?;
-            Ok((img.width, img.height))
+            tiff::probe_dimensions(path)
         }
         
         // Fallback: full read for unsupported formats

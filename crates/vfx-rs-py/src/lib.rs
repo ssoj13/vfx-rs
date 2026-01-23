@@ -29,7 +29,10 @@ pub use processor::Processor;
 
 /// Read an image from file.
 ///
-/// Supports: EXR, PNG, JPEG, TIFF, DPX, HDR, WebP, AVIF, JP2
+/// Supports: EXR, PNG, JPEG, TIFF, DPX, HDR
+///
+/// **Note:** WebP, AVIF, JP2 require optional features to be enabled.
+/// AVIF is write-only (reading requires dav1d library setup).
 ///
 /// # Example
 /// ```python

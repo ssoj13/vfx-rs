@@ -1,7 +1,10 @@
 //! WebP format support.
 //!
 //! Read/write WebP images via the `image` crate.
-//! Supports lossy and lossless compression, alpha channel.
+//! Supports lossless compression and alpha channel.
+//!
+//! **Note**: The pure-Rust WebP encoder only supports lossless mode.
+//! Lossy encoding with quality control requires the native libwebp library.
 //!
 //! # Example
 //!
@@ -21,11 +24,17 @@ use image::{DynamicImage, ImageFormat, ImageReader};
 use crate::{ImageData, IoError, IoResult, PixelData, PixelFormat, Metadata};
 
 /// WebP writer options.
+///
+/// **Note**: The pure-Rust encoder only supports lossless mode.
+/// The `quality` and `lossless` fields are kept for API compatibility
+/// but lossy encoding is not available without native libwebp.
 #[derive(Debug, Clone)]
 pub struct WebpWriterOptions {
     /// Quality for lossy compression (0-100). Default: 80.
+    /// **Note**: Currently ignored (pure-Rust encoder is lossless-only).
     pub quality: u8,
-    /// Use lossless compression. Default: false.
+    /// Use lossless compression. Default: true.
+    /// **Note**: Currently always true (pure-Rust encoder is lossless-only).
     pub lossless: bool,
 }
 
@@ -33,7 +42,7 @@ impl Default for WebpWriterOptions {
     fn default() -> Self {
         Self {
             quality: 80,
-            lossless: false,
+            lossless: true, // Pure-Rust encoder only supports lossless
         }
     }
 }
@@ -65,17 +74,20 @@ pub fn write_with_options<P: AsRef<Path>>(
     let writer = BufWriter::new(file);
     
     let dyn_img = image_data_to_dynamic(image)?;
-    
-    // image crate WebP encoder
+
+    // Pure-Rust WebP encoder only supports lossless mode
+    // Options (quality, lossless flag) are documented but not functional
+    // For lossy encoding with quality control, use native libwebp via `webp` crate
+    if !options.lossless {
+        // Log warning - lossy mode requested but not available
+        #[cfg(feature = "tracing")]
+        tracing::warn!("WebP lossy encoding requested but only lossless is available (pure-Rust encoder)");
+    }
+
     let encoder = image::codecs::webp::WebPEncoder::new_lossless(writer);
-    
-    // Note: image crate's WebP encoder only supports lossless mode
-    // For lossy encoding with quality control, consider using libwebp directly
-    let _ = options; // Silence unused warning
-    
     dyn_img.write_with_encoder(encoder)
         .map_err(|e| IoError::EncodeError(e.to_string()))?;
-    
+
     Ok(())
 }
 

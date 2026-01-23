@@ -360,11 +360,30 @@ impl DeepData {
     }
 
     /// Sets the capacity for the given pixel.
+    ///
+    /// If data is already allocated and the new capacity is larger,
+    /// this will reallocate and move data to accommodate the change.
     pub fn set_capacity(&self, pixel: i64, cap: u32) {
         let mut inner = self.inner.write().unwrap();
-        if (pixel as usize) < inner.capacity.len() {
-            inner.capacity[pixel as usize] = cap;
+        let pidx = pixel as usize;
+        if pidx >= inner.capacity.len() {
+            return;
         }
+
+        let old_cap = inner.capacity[pidx];
+        if cap == old_cap {
+            return;
+        }
+
+        inner.capacity[pidx] = cap;
+
+        // If not yet allocated, just update capacity array
+        if !inner.allocated {
+            return;
+        }
+
+        // Need to reallocate and move data
+        Self::reallocate_for_pixel(&mut inner, pidx, old_cap, cap);
     }
 
     /// Returns the capacity for the given pixel.
@@ -376,6 +395,11 @@ impl DeepData {
     /// Allocates data storage if not already done.
     fn ensure_allocated(&self) {
         let mut inner = self.inner.write().unwrap();
+        Self::ensure_allocated_inner(&mut inner);
+    }
+
+    /// Internal allocation helper that works with mutable reference.
+    fn ensure_allocated_inner(inner: &mut DeepDataInner) {
         if inner.allocated {
             return;
         }
@@ -392,11 +416,68 @@ impl DeepData {
         inner.allocated = true;
     }
 
-    /// Inserts `n` samples at the given position in the pixel.
-    pub fn insert_samples(&self, pixel: i64, samplepos: usize, n: usize) {
-        self.ensure_allocated();
+    /// Reallocates data when a pixel's capacity changes.
+    ///
+    /// Moves all subsequent pixel data to accommodate the change.
+    fn reallocate_for_pixel(inner: &mut DeepDataInner, pidx: usize, old_cap: u32, new_cap: u32) {
+        if !inner.allocated {
+            return;
+        }
 
+        let samplesize = inner.samplesize;
+        let cap_delta = new_cap as i64 - old_cap as i64;
+        let byte_delta = cap_delta * samplesize as i64;
+
+        if byte_delta == 0 {
+            return;
+        }
+
+        // Get old offset for this pixel's data
+        let old_pixel_offset = inner.cumcapacity[pidx] as usize * samplesize;
+        let old_pixel_end = old_pixel_offset + old_cap as usize * samplesize;
+
+        if byte_delta > 0 {
+            // Growing: need to expand data and move subsequent pixels forward
+            let growth = byte_delta as usize;
+            inner.data.resize(inner.data.len() + growth, 0);
+
+            // Move all data after this pixel's old end to make room
+            if old_pixel_end < inner.data.len() - growth {
+                let src_end = inner.data.len() - growth;
+                inner.data.copy_within(old_pixel_end..src_end, old_pixel_end + growth);
+            }
+
+            // Zero the new capacity space
+            let new_space_start = old_pixel_offset + old_cap as usize * samplesize;
+            let new_space_end = new_space_start + growth;
+            if new_space_end <= inner.data.len() {
+                inner.data[new_space_start..new_space_end].fill(0);
+            }
+        } else {
+            // Shrinking: move subsequent pixels backward
+            let shrink = (-byte_delta) as usize;
+
+            // Move all data after this pixel's old end backward
+            if old_pixel_end < inner.data.len() {
+                inner.data.copy_within(old_pixel_end.., old_pixel_end - shrink);
+            }
+
+            inner.data.truncate(inner.data.len() - shrink);
+        }
+
+        // Update cumulative capacities for all subsequent pixels
+        for i in (pidx + 1)..inner.npixels as usize {
+            inner.cumcapacity[i] = (inner.cumcapacity[i] as i64 + cap_delta) as u32;
+        }
+    }
+
+    /// Inserts `n` samples at the given position in the pixel.
+    ///
+    /// Automatically grows capacity if needed.
+    pub fn insert_samples(&self, pixel: i64, samplepos: usize, n: usize) {
         let mut inner = self.inner.write().unwrap();
+        Self::ensure_allocated_inner(&mut inner);
+
         let pidx = pixel as usize;
         if pidx >= inner.nsamples.len() {
             return;
@@ -405,11 +486,14 @@ impl DeepData {
         let old_samples = inner.nsamples[pidx] as usize;
         let new_samples = old_samples + n;
 
-        // Check if we need more capacity
-        if new_samples > inner.capacity[pidx] as usize {
-            // For simplicity, we don't reallocate here - caller should set_capacity first
-            // In a full implementation, this would reallocate
-            return;
+        // Check if we need more capacity and grow if necessary
+        let current_cap = inner.capacity[pidx] as usize;
+        if new_samples > current_cap {
+            // Grow capacity to at least new_samples (with some headroom)
+            let new_cap = (new_samples as u32).max(current_cap as u32 * 2).max(8);
+            let old_cap = inner.capacity[pidx];
+            inner.capacity[pidx] = new_cap;
+            Self::reallocate_for_pixel(&mut inner, pidx, old_cap, new_cap);
         }
 
         // Get data offset for this pixel

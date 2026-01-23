@@ -35,7 +35,9 @@
 //!
 //! - **HDR10 PQ**: Absolute luminance via SMPTE ST 2084 transfer (up to 10000 nits)
 //! - **HLG**: Hybrid Log-Gamma for broadcast compatibility (relative luminance)
-//! - **Gain Map**: SDR base + gain map for adaptive HDR (iPhone, future ISO 21496-1)
+//!
+//! **Note**: Gain Map HDR (SDR base + gain map for adaptive HDR, iPhone/ISO 21496-1)
+//! is not currently supported - only NCLX metadata is extracted.
 //!
 //! # Example
 //!

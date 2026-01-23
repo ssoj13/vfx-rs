@@ -1,6 +1,6 @@
 # Backend Architecture
 
-Unified compute backends for GPU/CPU image processing with automatic tiling and streaming.
+Unified compute backends for GPU/CPU image processing with automatic tiling and region-based I/O.
 
 ## Core Design
 
@@ -13,7 +13,7 @@ TiledExecutor<G: GpuPrimitives>
 
 All backends implement `GpuPrimitives` trait and use the same `TiledExecutor` for:
 - Automatic VRAM-aware tiling for large images
-- Streaming I/O for images exceeding RAM
+- Region-based I/O for tiled processing
 - Unified API regardless of backend
 
 ## Modules
@@ -124,9 +124,9 @@ let limits = GpuLimits::with_vram(8 * 1024 * 1024 * 1024); // 8 GB
 let tile_size = limits.optimal_tile_size(8192, 8192, 4);   // Power-of-2 aligned
 ```
 
-## Streaming I/O
+## Region-Based I/O
 
-For images larger than RAM:
+For tiled processing of large images:
 
 ```rust
 pub trait StreamingSource: Send {
@@ -144,7 +144,8 @@ pub trait StreamingOutput: Send {
 
 Implementations:
 - `MemorySource` / `MemoryOutput` - in-memory buffers
-- `ExrStreamingSource` / `ExrStreamingOutput` - tiled EXR files (feature = "io")
+- `ExrStreamingSource` / `ExrStreamingOutput` - EXR files (feature = "io")
+  - **Note:** Currently loads full file into memory; true tile-on-demand streaming is planned
 
 ## Backend Detection
 

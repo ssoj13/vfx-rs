@@ -69,6 +69,9 @@ impl Default for PixelStorage {
 
 impl PixelStorage {
     /// Allocates storage for the given spec.
+    ///
+    /// If `zero` is true, all pixels are initialized to zero.
+    /// If `zero` is false, memory is allocated but not initialized (for performance).
     pub fn allocate(spec: &ImageSpec, zero: bool) -> Self {
         let width = spec.width as usize;
         let height = spec.height as usize;
@@ -86,10 +89,14 @@ impl PixelStorage {
                 let data = if zero {
                     vec![0u8; total]
                 } else {
-                    Vec::with_capacity(total)
+                    // Allocate without initialization for performance
+                    let mut v = Vec::with_capacity(total);
+                    // SAFETY: u8 is Copy and any bit pattern is valid
+                    unsafe { v.set_len(total); }
+                    v
                 };
                 Self::OwnedU8 {
-                    data: if zero { data } else { vec![0u8; total] },
+                    data,
                     width,
                     height,
                     depth,
@@ -97,8 +104,17 @@ impl PixelStorage {
                 }
             }
             DataFormat::U16 => {
+                let data = if zero {
+                    vec![0u16; total]
+                } else {
+                    // Allocate without initialization for performance
+                    let mut v = Vec::with_capacity(total);
+                    // SAFETY: u16 is Copy and any bit pattern is valid
+                    unsafe { v.set_len(total); }
+                    v
+                };
                 Self::OwnedU16 {
-                    data: if zero { vec![0u16; total] } else { vec![0u16; total] },
+                    data,
                     width,
                     height,
                     depth,
@@ -107,8 +123,17 @@ impl PixelStorage {
             }
             DataFormat::F16 | DataFormat::F32 | DataFormat::U32 => {
                 // Store as f32 internally for flexibility
+                let data = if zero {
+                    vec![0.0f32; total]
+                } else {
+                    // Allocate without initialization for performance
+                    let mut v = Vec::with_capacity(total);
+                    // SAFETY: f32 is Copy - uninitialized floats may be NaN but valid
+                    unsafe { v.set_len(total); }
+                    v
+                };
                 Self::OwnedF32 {
-                    data: if zero { vec![0.0f32; total] } else { vec![0.0f32; total] },
+                    data,
                     width,
                     height,
                     depth,

@@ -87,53 +87,77 @@ pub struct OutputTransform {
 
 impl OutputTransform {
     /// Create a new output transform for the given display type.
+    ///
+    /// For SDR displays, uses sRGB/Rec.709 primaries.
+    /// For HDR displays (Hdr1000, Hdr2000, Hdr4000), uses Rec.2020 primaries.
     pub fn new(display: DisplayType) -> Self {
-        Self::with_peak(display.peak_luminance())
+        let is_hdr = matches!(display, DisplayType::Hdr1000 | DisplayType::Hdr2000 | DisplayType::Hdr4000);
+        Self::with_display_params(display.peak_luminance(), is_hdr)
     }
 
-    /// Create a new output transform with custom peak luminance.
+    /// Create a new output transform with custom peak luminance (SDR primaries).
+    ///
+    /// For HDR output with Rec.2020 primaries, use `with_display_params()` instead.
     pub fn with_peak(peak_luminance: f32) -> Self {
+        // Default to SDR primaries for backwards compatibility
+        Self::with_display_params(peak_luminance, false)
+    }
+
+    /// Create a new output transform with explicit display parameters.
+    ///
+    /// # Arguments
+    /// * `peak_luminance` - Display peak luminance in cd/m² (nits)
+    /// * `use_rec2020` - Use Rec.2020 primaries (true for HDR, false for sRGB/SDR)
+    pub fn with_display_params(peak_luminance: f32, use_rec2020: bool) -> Self {
         // ACEScg (AP1) to XYZ matrix
         let ap1_to_xyz = ap1_to_xyz_matrix();
-        
-        // sRGB to XYZ for display (assuming sRGB primaries for SDR)
-        let srgb_to_xyz = srgb_to_xyz_matrix();
-        
+
+        // Display primaries to XYZ (Rec.2020 for HDR, sRGB for SDR)
+        let display_to_xyz = if use_rec2020 {
+            rec2020_to_xyz_matrix()
+        } else {
+            srgb_to_xyz_matrix()
+        };
+
         // Initialize JMh parameters
         let input_jmh = JMhParams::new(&ap1_to_xyz);
-        let limit_jmh = JMhParams::new(&srgb_to_xyz);
-        
+        let limit_jmh = JMhParams::new(&display_to_xyz);
+
         // Initialize tonescale
         let tonescale = TonescaleParams::new(peak_luminance);
-        
+
         // Initialize compression params
         let chroma_compress = ChromaCompressParams::new(peak_luminance, &tonescale);
-        
+
         // Calculate limit J max
         let limit_j_max = y_to_j(peak_luminance / REFERENCE_LUMINANCE, &limit_jmh);
         let model_gamma_inv = 1.0 / (SURROUND[1] * (1.48 + (Y_B / REFERENCE_LUMINANCE).sqrt()));
-        
+
         // Build cusp corner tables
         let (cusp_rgb, cusp_jmh) = build_cusp_corners(&limit_jmh, peak_luminance);
-        
+
         // Build reach M table
         let reach_m_table = build_reach_m_table(&input_jmh, limit_j_max, 10000.0);
-        
+
         // Build gamut cusp table
         let gamut_cusp_table = build_gamut_cusp_table(&cusp_rgb, &cusp_jmh, &limit_jmh);
-        
+
         let shared_compress = SharedCompressionParams {
             limit_j_max,
             model_gamma_inv,
             reach_m_table: reach_m_table.data.clone(),
         };
-        
+
         let gamut_compress = GamutCompressParams::new(peak_luminance, &input_jmh, &limit_jmh);
-        
-        // AP1 to sRGB matrix (with D60 to D65 adaptation)
-        let ap1_to_display = ap1_to_srgb_matrix();
+
+        // AP1 to display matrix (Rec.2020 for HDR, sRGB for SDR)
+        let ap1_to_display = if use_rec2020 {
+            ap1_to_rec2020_matrix()
+        } else {
+            ap1_to_srgb_matrix()
+        };
         let display_to_ap1 = invert_m33(&ap1_to_display);
-        
+
         Self {
             peak_luminance,
             input_jmh,
@@ -322,6 +346,26 @@ fn ap1_to_srgb_matrix() -> M33 {
     ]
 }
 
+/// Rec.2020 to XYZ matrix (D65 white point).
+fn rec2020_to_xyz_matrix() -> M33 {
+    // ITU-R BT.2020 primaries with D65 illuminant
+    [
+        0.6369580, 0.1446169, 0.1688810,
+        0.2627002, 0.6779981, 0.0593017,
+        0.0000000, 0.0280727, 1.0609851,
+    ]
+}
+
+/// AP1 to Rec.2020 matrix (with D60 to D65 Bradford adaptation).
+fn ap1_to_rec2020_matrix() -> M33 {
+    // Pre-computed AP1 -> XYZ -> Bradford D60->D65 -> Rec.2020
+    [
+        1.0258246, 0.0090107, -0.0348354,
+        -0.0027449, 1.0045701, -0.0018252,
+        -0.0050561, -0.0255723, 1.0306284,
+    ]
+}
+
 // ============================================================================
 // Convenience Functions
 // ============================================================================
@@ -406,18 +450,34 @@ mod tests {
     fn test_hdr_vs_sdr() {
         let sdr = OutputTransform::new(DisplayType::Sdr);
         let hdr = OutputTransform::new(DisplayType::Hdr1000);
-        
+
         // At high values, HDR should preserve more detail
         let input = [2.0, 2.0, 2.0];
         let sdr_out = sdr.forward(&input);
         let hdr_out = hdr.forward(&input);
-        
+
         // HDR output should have more headroom (higher values)
         let sdr_lum = sdr_out[0] + sdr_out[1] + sdr_out[2];
         let hdr_lum = hdr_out[0] + hdr_out[1] + hdr_out[2];
-        
+
         // Note: This test may need adjustment based on actual algorithm behavior
         assert!(sdr_lum > 0.0 && hdr_lum > 0.0);
+    }
+
+    #[test]
+    fn test_hdr_uses_rec2020_primaries() {
+        // HDR transforms should use Rec.2020 primaries
+        let hdr = OutputTransform::new(DisplayType::Hdr1000);
+
+        // The ap1_to_display matrix for HDR should be the AP1->Rec.2020 matrix
+        // For Rec.2020, the matrix diagonal should be close to 1.0 (similar gamuts)
+        assert!((hdr.ap1_to_display[0] - 1.0258246).abs() < 1e-5,
+            "HDR should use Rec.2020: got {}", hdr.ap1_to_display[0]);
+
+        // SDR should use sRGB matrix (larger values on diagonal due to gamut difference)
+        let sdr = OutputTransform::new(DisplayType::Sdr);
+        assert!((sdr.ap1_to_display[0] - 1.7050510).abs() < 1e-5,
+            "SDR should use sRGB: got {}", sdr.ap1_to_display[0]);
     }
 
     #[test]

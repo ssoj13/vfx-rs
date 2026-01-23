@@ -2,8 +2,13 @@
 //!
 //! Provides lens distortion and artistic warp effects.
 //! Based on ST map approach - each effect computes source coordinates for each destination pixel.
+//!
+//! When the `parallel` feature is enabled, uses rayon for multi-threaded processing.
 
 use std::f32::consts::PI;
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 /// Normalize pixel coordinate to [0, 1] range.
 #[inline]
@@ -48,6 +53,32 @@ fn sample_bilinear(src: &[f32], w: usize, h: usize, ch: usize, x: f32, y: f32) -
 }
 
 /// Apply a generic warp using a coordinate generator function.
+/// 
+/// Uses rayon for parallel processing when the `parallel` feature is enabled.
+#[cfg(feature = "parallel")]
+fn apply_warp<F>(src: &[f32], w: usize, h: usize, ch: usize, coord_fn: F) -> Vec<f32>
+where
+    F: Fn(usize, usize, usize, usize) -> (f32, f32) + Sync, // (x, y, w, h) -> (src_x, src_y)
+{
+    let mut dst = vec![0.0; w * h * ch];
+    
+    // Process rows in parallel
+    dst.par_chunks_mut(w * ch)
+        .enumerate()
+        .for_each(|(y, row)| {
+            for x in 0..w {
+                let (sx, sy) = coord_fn(x, y, w, h);
+                let sample = sample_bilinear(src, w, h, ch, sx, sy);
+                let idx = x * ch;
+                row[idx..idx + ch].copy_from_slice(&sample);
+            }
+        });
+    
+    dst
+}
+
+/// Apply a generic warp using a coordinate generator function (single-threaded fallback).
+#[cfg(not(feature = "parallel"))]
 fn apply_warp<F>(src: &[f32], w: usize, h: usize, ch: usize, coord_fn: F) -> Vec<f32>
 where
     F: Fn(usize, usize, usize, usize) -> (f32, f32), // (x, y, w, h) -> (src_x, src_y)

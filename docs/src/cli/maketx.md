@@ -1,78 +1,91 @@
-# maketx - Texture Creation
+# maketx - Texture Preparation
 
-Create tiled, mipmapped textures for rendering (like OIIO's maketx).
+Prepare images for texture use with tiled mipmapped EXR output.
 
 **Alias:** `tx`
 
 ## Synopsis
 
 ```bash
-vfx maketx <INPUT> -o <OUTPUT> [-m] [-t <TILE>] [-f <FILTER>] [-w <WRAP>]
+vfx maketx <INPUT> -o <OUTPUT> [-m] [-f <FILTER>] [-t <TILE>]
 ```
 
 ## Options
 
 | Option | Description |
 |--------|-------------|
-| `-o, --output` | Output texture file (.tx, .exr) |
-| `-m, --mipmap` | Generate mipmaps |
-| `-t, --tile` | Tile size in pixels (default: 64) |
+| `-o, --output` | Output file path |
+| `-m, --mipmap` | Generate and embed mipmaps |
 | `-f, --filter` | Mipmap filter: `box`, `bilinear`, `lanczos`, `mitchell` (default: lanczos) |
-| `-w, --wrap` | Wrap mode: `black`, `clamp`, `periodic` (default: black) |
+| `-t, --tile` | Tile size in pixels (default: 64) |
+| `-w, --wrap` | Wrap mode hint (metadata only) |
+
+## Features
+
+### Mipmapped EXR Output
+
+With `-m` flag and `.exr` output:
+1. Loads input image
+2. Generates mipmap chain using GPU backend
+3. Writes tiled mipmapped EXR with all levels embedded
+4. Uses ZIP16 compression for optimal quality/size
+
+### GPU-Accelerated Generation
+
+Mipmap generation uses the vfx-compute backend:
+- Automatic GPU/CPU selection
+- High-quality Lanczos filtering
+- Parallel mip level generation
 
 ## Examples
 
-### Basic Texture
+### Create Mipmapped Texture
 
 ```bash
-# Create tiled texture
-vfx maketx source.exr -o texture.tx -t 64
+# Create production-ready texture with mipmaps
+vfx maketx source.exr -o texture.exr -m -t 64
+
+# Verbose output shows mip levels
+vfx maketx source.exr -o texture.exr -m -v
 ```
 
-### With Mipmaps
+Output:
+```
+Creating texture from source.exr
+  Size: 2048x2048
+  Tile size: 64
+  Backend: wgpu
+  Generating mipmaps...
+    Level 1: 1024x1024
+    Level 2: 512x512
+    Level 3: 256x256
+    ...
+  Generated 12 mip levels
+  Writing mipmapped tiled EXR...
+Done.
+```
+
+### Different Filters
 
 ```bash
-# Create tiled, mipmapped texture
-vfx maketx source.exr -o texture.tx -m -t 64
+# Fast box filter
+vfx maketx source.exr -o texture.exr -m -f box
+
+# High quality lanczos
+vfx maketx source.exr -o texture.exr -m -f lanczos
+
+# Balanced mitchell
+vfx maketx source.exr -o texture.exr -m -f mitchell
 ```
 
-### Periodic Texture
+### Custom Tile Size
 
 ```bash
-# Tileable texture with wrap mode
-vfx maketx tile.exr -o tile.tx -m -t 64 -w periodic
-```
+# Larger tiles (better compression, less random access)
+vfx maketx source.exr -o texture.exr -m -t 128
 
-### High Quality Mipmaps
-
-```bash
-# Lanczos filter for best quality
-vfx maketx hdri.exr -o hdri.tx -m -t 64 -f lanczos
-```
-
-## Texture Format
-
-The `.tx` format is tiled EXR optimized for rendering:
-
-```
-┌─────┬─────┬─────┬─────┐
-│Tile │Tile │Tile │Tile │  Level 0 (full res)
-│ 0   │ 1   │ 2   │ 3   │
-├─────┼─────┼─────┼─────┤
-│Tile │Tile │Tile │Tile │
-│ 4   │ 5   │ 6   │ 7   │
-└─────┴─────┴─────┴─────┘
-
-┌─────┬─────┐
-│  0  │  1  │  Level 1 (1/2 res)
-├─────┼─────┤
-│  2  │  3  │
-└─────┴─────┘
-
-┌─────┐
-│  0  │  Level 2 (1/4 res)
-└─────┘
-  ...
+# Smaller tiles (better random access)
+vfx maketx source.exr -o texture.exr -m -t 32
 ```
 
 ## Mipmap Filters
@@ -81,64 +94,30 @@ The `.tx` format is tiled EXR optimized for rendering:
 |--------|---------|-------|----------|
 | `box` | Low | Fast | Quick preview |
 | `bilinear` | Medium | Fast | General use |
-| `lanczos` | High | Slow | Final textures |
 | `mitchell` | High | Medium | Balanced |
+| `lanczos` | Highest | Slower | Production |
 
-## Wrap Modes
+## Output Format
 
-| Mode | Behavior |
-|------|----------|
-| `black` | Black outside bounds |
-| `clamp` | Repeat edge pixels |
-| `periodic` | Tile infinitely |
+### EXR with Mipmaps
+- Tiled format with configurable tile size
+- All mip levels embedded in single file
+- ZIP16 compression
+- Level mode: MipMap (inferred from data)
 
-## Use Cases
-
-### Rendering Textures
-
-```bash
-# Prepare textures for Arnold/RenderMan
-for f in textures/*.exr; do
-    vfx maketx "$f" -o "${f%.exr}.tx" -m -t 64
-done
-```
-
-### HDRI Environment
-
-```bash
-# Create environment texture
-vfx maketx hdri_spherical.exr -o hdri.tx -m -t 64 -w clamp
-```
-
-### Tileable Textures
-
-```bash
-# Seamless texture with proper wrapping
-vfx maketx seamless_wood.exr -o wood.tx -m -t 64 -w periodic
-```
-
-## Performance Tips
-
-1. **Tile size 64** - Best for most renderers
-2. **PIZ compression** - Good for most textures
-3. **Half-float** - Sufficient for most textures
-4. **Pre-convert** - Convert from other formats first
-
-```bash
-# Full preparation pipeline
-vfx convert source.tif -o temp.exr -d half -c piz
-vfx maketx temp.exr -o final.tx -m -t 64
-rm temp.exr
-```
+### Non-EXR Output
+- Only base level saved (no mipmap embedding)
+- Warning printed in verbose mode
 
 ## Technical Notes
 
-- Output is always tiled EXR
-- Mipmaps go down to 1x1
-- Preserves color space metadata
-- Parallel mipmap generation
+- Uses vfx-exr for mipmapped EXR writing
+- Mip sizes halve until 1x1
+- RoundingMode::Down for size calculations
+- Preserves all channels (RGB, RGBA, etc.)
 
 ## See Also
 
 - [convert](./convert.md) - Format conversion
 - [resize](./resize.md) - Image scaling
+- [info](./info.md) - Inspect mipmaps

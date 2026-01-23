@@ -1,6 +1,6 @@
 # sharpen - Image Sharpening
 
-Enhance image sharpness using unsharp masking.
+Enhance image sharpness using a convolution kernel.
 
 ## Synopsis
 
@@ -58,13 +58,9 @@ vfx sharpen resized.exr -o final.exr -a 0.5
 
 ## Algorithm
 
-Unsharp masking formula:
+Uses a sharpen convolution kernel. The `amount` parameter scales the edge enhancement.
 
-```
-sharpened = original + amount * (original - blurred)
-```
-
-The `amount` parameter controls how much of the edge enhancement is added.
+**Note:** This is NOT unsharp mask. For true unsharp masking with blur radius control, use `vfx_io::imagebufalgo::unsharp_mask()` from the library.
 
 ## Non-Color Channels
 

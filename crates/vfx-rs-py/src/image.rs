@@ -17,18 +17,22 @@ use crate::ops::{ResizeFilter, BayerPattern, DemosaicAlgorithm, MipmapOptions, F
 
 /// An image buffer with width, height, and channels.
 ///
-/// Supports zero-copy interop with numpy arrays.
+/// Provides easy interop with numpy arrays.
+///
+/// **Note:** Data is copied when converting between Image and numpy.
+/// True zero-copy interop requires careful lifetime management that
+/// is not yet implemented.
 ///
 /// # Example
 /// ```python
 /// import numpy as np
 /// import vfx_rs
 ///
-/// # From numpy
+/// # From numpy (copies data)
 /// arr = np.zeros((1080, 1920, 4), dtype=np.float32)
 /// img = vfx_rs.Image(arr)
 ///
-/// # To numpy (view when possible)
+/// # To numpy (copies data)
 /// arr = img.numpy()
 /// ```
 #[pyclass]
@@ -42,7 +46,7 @@ impl Image {
     /// Create an image from a numpy array.
     ///
     /// Array shape must be (height, width, channels).
-    /// Supported dtypes: float32, float16, uint16, uint8.
+    /// Only float32 dtype is currently supported.
     #[new]
     #[pyo3(signature = (array, copy=false))]
     fn new(array: &Bound<'_, PyArray3<f32>>, copy: bool) -> PyResult<Self> {

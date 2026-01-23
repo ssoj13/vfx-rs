@@ -107,6 +107,11 @@ fn shuffle_channels(input: &ImageData, pattern: &str) -> Result<ImageData> {
             _ => bail!("Unknown channel specifier '{}' in pattern", ch),
         };
         
+        // Determine default value for missing channel
+        // Alpha channel (A/a) defaults to 1.0 (opaque), others to 0.0 (black)
+        let is_alpha = matches!(ch, 'A' | 'a');
+        let missing_default = if is_alpha { 1.0 } else { 0.0 };
+        
         // Fill output channel
         for px in 0..pixel_count {
             let value = match ch {
@@ -117,7 +122,7 @@ fn shuffle_channels(input: &ImageData, pattern: &str) -> Result<ImageData> {
                         if src_idx < in_channels {
                             src_data[px * in_channels + src_idx]
                         } else {
-                            0.0 // Missing channel = black
+                            missing_default // Missing channel: alpha=1.0, others=0.0
                         }
                     } else {
                         0.0

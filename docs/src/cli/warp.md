@@ -71,8 +71,8 @@ vfx warp input.exr -o twisted.exr -t twist -k 0.3 -r 0.8
 
 ```bash
 # Horizontal wave distortion
-vfx warp input.exr -o wavy.exr -t wave -k 10 --k2 0.1
-# k1 = frequency, k2 = amplitude
+vfx warp input.exr -o wavy.exr -t wave -k 10 --k2 5
+# k1 = frequency, k2 = amplitude (clamped to >= 1.0)
 ```
 
 ### Spherize
@@ -86,8 +86,8 @@ vfx warp input.exr -o bulge.exr -t spherize -k 0.5 -r 0.6
 
 ```bash
 # Concentric ripples
-vfx warp input.exr -o ripple.exr -t ripple -k 20 --k2 0.05
-# k1 = frequency, k2 = amplitude
+vfx warp input.exr -o ripple.exr -t ripple -k 20 --k2 3
+# k1 = frequency, k2 = amplitude (clamped to >= 1.0)
 ```
 
 ## Distortion Formulas

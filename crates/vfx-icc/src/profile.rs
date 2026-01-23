@@ -190,11 +190,10 @@ impl Profile {
     /// Creates a CIE Lab profile.
     ///
     /// CIE L*a*b* perceptually uniform color space (D50).
-    pub fn lab() -> Self {
-        // Use XYZ profile as Lab is typically converted through XYZ
-        Self {
-            inner: LcmsProfile::new_xyz(),
-        }
+    pub fn lab() -> IccResult<Self> {
+        let inner = LcmsProfile::new_lab4_context(lcms2::GlobalContext::new(), &lcms2::CIExyY::d50())
+            .map_err(|e| IccError::CreateFailed(e.to_string()))?;
+        Ok(Self { inner })
     }
 
     /// Returns the profile description.
@@ -301,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_lab() {
-        let profile = Profile::lab();
+        let profile = Profile::lab().unwrap();
         assert!(!profile.is_rgb());
     }
 

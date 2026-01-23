@@ -90,6 +90,8 @@ pub fn run(args: AcesArgs, verbose: u8) -> Result<()> {
 fn get_rrt_params(variant: &str) -> RrtParams {
     match variant.to_lowercase().as_str() {
         "high-contrast" | "highcontrast" | "high" => RrtParams::aces_high_contrast(),
+        "filmic" | "film" => RrtParams::filmic(),
+        "alt1" | "alternative" | "neutral" => RrtParams::alt1(),
         _ => RrtParams::default(),
     }
 }

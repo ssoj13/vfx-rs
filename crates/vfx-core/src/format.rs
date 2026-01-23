@@ -99,9 +99,10 @@ impl BitDepth {
     }
 
     /// Whether this is an integer format.
+    /// Returns false for Unknown.
     #[inline]
     pub const fn is_integer(&self) -> bool {
-        !self.is_float()
+        matches!(self, Self::U8 | Self::U10 | Self::U12 | Self::U16 | Self::U32)
     }
 
     /// Whether this is a packed format (not byte-aligned).
@@ -961,6 +962,19 @@ mod tests {
         assert!(!BitDepth::U10.is_float());
         assert!(BitDepth::F16.is_float());
         assert!(BitDepth::F32.is_float());
+    }
+
+    #[test]
+    fn test_is_integer() {
+        assert!(BitDepth::U8.is_integer());
+        assert!(BitDepth::U10.is_integer());
+        assert!(BitDepth::U12.is_integer());
+        assert!(BitDepth::U16.is_integer());
+        assert!(BitDepth::U32.is_integer());
+        assert!(!BitDepth::F16.is_integer());
+        assert!(!BitDepth::F32.is_integer());
+        // Unknown should NOT be considered integer
+        assert!(!BitDepth::Unknown.is_integer());
     }
 
     #[test]

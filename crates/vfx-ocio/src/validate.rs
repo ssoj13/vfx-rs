@@ -20,7 +20,9 @@
 //! ```
 
 use crate::config::Config;
+use crate::transform::Transform;
 use std::collections::HashSet;
+use std::path::Path;
 
 /// Severity level for validation issues.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,8 +210,7 @@ fn check_colorspaces(config: &Config, issues: &mut Vec<Issue>) {
 
 /// Checks for missing transform files.
 fn check_files(config: &Config, issues: &mut Vec<Issue>) {
-    // This would check FileTransform references
-    // For now, we just validate that search paths exist
+    // Check search paths exist
     for path in config.search_paths() {
         if !path.exists() {
             issues.push(Issue {
@@ -220,6 +221,82 @@ fn check_files(config: &Config, issues: &mut Vec<Issue>) {
             });
         }
     }
+
+    // Check FileTransform LUT files exist
+    let search_paths = config.search_paths();
+    for cs in config.colorspaces() {
+        if let Some(transform) = cs.to_reference() {
+            check_transform_files(transform, &search_paths, cs.name(), "to_reference", issues);
+        }
+        if let Some(transform) = cs.from_reference() {
+            check_transform_files(transform, &search_paths, cs.name(), "from_reference", issues);
+        }
+    }
+}
+
+/// Recursively checks transform tree for FileTransform paths.
+fn check_transform_files(
+    transform: &Transform,
+    search_paths: &[std::path::PathBuf],
+    cs_name: &str,
+    direction: &str,
+    issues: &mut Vec<Issue>,
+) {
+    match transform {
+        Transform::FileTransform(ft) => {
+            check_file_exists(&ft.src, search_paths, cs_name, direction, issues);
+        }
+        Transform::Group(g) => {
+            for t in &g.transforms {
+                check_transform_files(t, search_paths, cs_name, direction, issues);
+            }
+        }
+        // Other transform types don't reference external files
+        _ => {}
+    }
+}
+
+/// Checks if a file exists in any search path.
+fn check_file_exists(
+    src: &Path,
+    search_paths: &[std::path::PathBuf],
+    cs_name: &str,
+    direction: &str,
+    issues: &mut Vec<Issue>,
+) {
+    // If absolute path, check directly
+    if src.is_absolute() {
+        if !src.exists() {
+            issues.push(Issue {
+                severity: Severity::Error,
+                category: IssueCategory::MissingFile,
+                message: format!(
+                    "LUT file not found: {} (in {}.{})",
+                    src.display(), cs_name, direction
+                ),
+                context: Some(format!("{}:{}", cs_name, src.display())),
+            });
+        }
+        return;
+    }
+
+    // Check in search paths
+    for base in search_paths {
+        if base.join(src).exists() {
+            return; // Found
+        }
+    }
+
+    // Not found in any search path
+    issues.push(Issue {
+        severity: Severity::Error,
+        category: IssueCategory::MissingFile,
+        message: format!(
+            "LUT file not found in search paths: {} (in {}.{})",
+            src.display(), cs_name, direction
+        ),
+        context: Some(format!("{}:{}", cs_name, src.display())),
+    });
 }
 
 /// Returns true if there are any errors.

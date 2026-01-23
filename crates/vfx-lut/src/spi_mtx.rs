@@ -238,13 +238,24 @@ pub fn parse_spimtx<R: Read>(mut reader: R) -> LutResult<SpiMatrix> {
     let mut content = String::new();
     reader.read_to_string(&mut content)?;
 
-    // Split by whitespace, filter comments
-    let values: Vec<f64> = content
+    // Split by whitespace, filter comments, strictly parse floats (OCIO behavior)
+    let tokens: Vec<&str> = content
         .lines()
         .filter(|line| !line.trim().starts_with('#'))
         .flat_map(|line| line.split_whitespace())
-        .filter_map(|s| s.parse::<f64>().ok())
         .collect();
+
+    let mut values: Vec<f64> = Vec::with_capacity(12);
+    for token in &tokens {
+        match token.parse::<f64>() {
+            Ok(v) => values.push(v),
+            Err(_) => {
+                return Err(LutError::ParseError(format!(
+                    "invalid float value in spimtx: '{}'", token
+                )));
+            }
+        }
+    }
 
     if values.len() != 12 {
         return Err(LutError::ParseError(format!(

@@ -584,16 +584,31 @@ impl DpxReader {
         let pixel_count = (header.width * header.height) as usize;
         let channels = header.channels();
 
-        // Read pixel data based on bit depth
-        let data = match header.bit_depth {
-            8 => read_8bit(reader, pixel_count)?,
-            10 => read_10bit(reader, pixel_count, header.is_big_endian, header.packing)?,
-            12 => read_12bit(reader, pixel_count, header.is_big_endian)?,
-            16 => read_16bit(reader, pixel_count, header.is_big_endian)?,
+        // Read pixel data based on bit depth (use actual channel count from descriptor)
+        let mut data = match header.bit_depth {
+            8 => read_8bit(reader, pixel_count, channels as usize)?,
+            10 => read_10bit(reader, pixel_count, channels as usize, header.is_big_endian, header.packing)?,
+            12 => read_12bit(reader, pixel_count, channels as usize, header.is_big_endian)?,
+            16 => read_16bit(reader, pixel_count, channels as usize, header.is_big_endian)?,
             _ => return Err(IoError::UnsupportedBitDepth(format!(
                 "DPX {} bit", header.bit_depth
             ))),
         };
+
+        // Handle ABGR descriptor (52) - swap A,B,G,R to R,G,B,A
+        if header.descriptor == 52 && channels == 4 {
+            for chunk in data.chunks_exact_mut(4) {
+                // ABGR -> RGBA: swap [A,B,G,R] to [R,G,B,A]
+                let a = chunk[0];
+                let b = chunk[1];
+                let g = chunk[2];
+                let r = chunk[3];
+                chunk[0] = r;
+                chunk[1] = g;
+                chunk[2] = b;
+                chunk[3] = a;
+            }
+        }
 
         // Build metadata
         let mut metadata = Metadata::default();
@@ -807,6 +822,9 @@ impl DpxWriter {
             ));
         }
 
+        // Determine output channels (3 or 4)
+        let out_channels = if channels >= 4 { 4 } else { 3 };
+
         let mut bit_depth = self.options.bit_depth;
         if let Some(bits) = image.metadata.attrs.get("BitDepth").and_then(|v| v.as_u32()) {
             if let Some(depth) = BitDepth::from_bits(bits as u8) {
@@ -815,12 +833,19 @@ impl DpxWriter {
         }
         let is_be = self.options.endianness == Endianness::Big;
 
-        // Calculate image data size
+        // Calculate image data size based on channels
         let pixel_count = (width * height) as usize;
         let image_size = match bit_depth {
-            BitDepth::Bit8 => pixel_count * 3,
-            BitDepth::Bit10 => pixel_count * 4,  // Packed
-            BitDepth::Bit12 | BitDepth::Bit16 => pixel_count * 6,
+            BitDepth::Bit8 => pixel_count * out_channels,
+            BitDepth::Bit10 => {
+                // 10-bit: 3 values per 32-bit word. For RGBA, need 2 words per pixel.
+                if out_channels == 4 {
+                    pixel_count * 8  // 2 x 32-bit words
+                } else {
+                    pixel_count * 4  // 1 x 32-bit word
+                }
+            }
+            BitDepth::Bit12 | BitDepth::Bit16 => pixel_count * out_channels * 2,
         };
         let file_size = HEADER_SIZE + image_size as u32;
 
@@ -830,22 +855,22 @@ impl DpxWriter {
             _ => 0,
         };
 
-        // Write header
-        self.write_header(writer, width, height, file_size, bit_depth, packing, is_be)?;
+        // Write header with correct descriptor
+        self.write_header(writer, width, height, file_size, bit_depth, packing, is_be, out_channels)?;
 
         // Write pixel data
         match bit_depth {
             BitDepth::Bit8 => {
-                write_8bit(writer, &f32_data, pixel_count, channels)?;
+                write_8bit(writer, &f32_data, pixel_count, channels, out_channels)?;
             }
             BitDepth::Bit10 => {
-                write_10bit_packed(writer, &f32_data, pixel_count, channels, is_be)?;
+                write_10bit_packed(writer, &f32_data, pixel_count, channels, out_channels, is_be)?;
             }
             BitDepth::Bit12 => {
-                write_12bit(writer, &f32_data, pixel_count, channels, is_be)?;
+                write_12bit(writer, &f32_data, pixel_count, channels, out_channels, is_be)?;
             }
             BitDepth::Bit16 => {
-                write_16bit(writer, &f32_data, pixel_count, channels, is_be)?;
+                write_16bit(writer, &f32_data, pixel_count, channels, out_channels, is_be)?;
             }
         }
 
@@ -862,6 +887,7 @@ impl DpxWriter {
         bit_depth: BitDepth,
         packing: u16,
         is_be: bool,
+        out_channels: usize,
     ) -> IoResult<()> {
         let mut header = vec![0u8; HEADER_SIZE as usize];
 
@@ -869,25 +895,25 @@ impl DpxWriter {
         // Magic
         let magic = if is_be { MAGIC_BE } else { MAGIC_LE };
         write_u32_at(&mut header, 0, magic, is_be);
-        
+
         // Image offset
         write_u32_at(&mut header, 4, HEADER_SIZE, is_be);
-        
+
         // Version "V2.0"
         header[8..12].copy_from_slice(b"V2.0");
-        
+
         // File size
         write_u32_at(&mut header, 16, file_size, is_be);
-        
+
         // Ditto key (1 = same as previous frame)
         write_u32_at(&mut header, 20, 1, is_be);
-        
+
         // Generic header size
         write_u32_at(&mut header, 24, 1664, is_be);
-        
+
         // Industry header size
         write_u32_at(&mut header, 28, 384, is_be);
-        
+
         // User data size
         write_u32_at(&mut header, 32, 0, is_be);
 
@@ -904,34 +930,34 @@ impl DpxWriter {
         // Image header (768-1023)
         // Orientation (0 = left-to-right, top-to-bottom)
         write_u16_at(&mut header, 768, 0, is_be);
-        
+
         // Number of image elements
         write_u16_at(&mut header, 770, 1, is_be);
-        
+
         // Width
         write_u32_at(&mut header, 772, width, is_be);
-        
+
         // Height
         write_u32_at(&mut header, 776, height, is_be);
 
         // Image element 0 (offset 780)
         // Data sign (0 = unsigned)
         write_u32_at(&mut header, 780, 0, is_be);
-        
+
         // Low data code value
         write_u32_at(&mut header, 784, 0, is_be);
-        
+
         // Low quantity (0.0)
         write_f32_at(&mut header, 788, 0.0, is_be);
-        
+
         // High data code value
         write_u32_at(&mut header, 792, bit_depth.max_value(), is_be);
-        
+
         // High quantity (1.0 for normalized)
         write_f32_at(&mut header, 796, 1.0, is_be);
 
-        // Descriptor (50 = RGB)
-        header[800] = 50;
+        // Descriptor: 50 = RGB, 51 = RGBA
+        header[800] = if out_channels >= 4 { 51 } else { 50 };
         
         // Transfer (1 = print density / log)
         header[801] = 1;
@@ -1084,8 +1110,8 @@ trait Pipe: Sized {
 }
 impl<T> Pipe for T {}
 
-fn read_8bit<R: Read>(reader: &mut R, pixel_count: usize) -> IoResult<Vec<f32>> {
-    let mut buf = vec![0u8; pixel_count * 3];
+fn read_8bit<R: Read>(reader: &mut R, pixel_count: usize, channels: usize) -> IoResult<Vec<f32>> {
+    let mut buf = vec![0u8; pixel_count * channels];
     reader.read_exact(&mut buf)
         .map_err(|e| IoError::DecodeError(e.to_string()))?;
     Ok(buf.iter().map(|&v| v as f32 / 255.0).collect())
@@ -1094,56 +1120,101 @@ fn read_8bit<R: Read>(reader: &mut R, pixel_count: usize) -> IoResult<Vec<f32>> 
 fn read_10bit<R: Read>(
     reader: &mut R,
     pixel_count: usize,
+    channels: usize,
     big_endian: bool,
     packing: u16,
 ) -> IoResult<Vec<f32>> {
     // DPX 10-bit packing modes:
-    // 0 = packed (method B, bitstream, no padding)
-    // 1 = filled method A (32-bit aligned, MSB justified)
-    // 2 = filled method B (32-bit aligned, LSB justified)
+    // 0 = packed (bitstream, no padding between values)
+    // 1 = filled method A (32-bit aligned, MSB justified, padding in LSBs)
+    // 2 = filled method B (32-bit aligned, LSB justified, padding in MSBs)
     match packing {
-        0 => read_10bit_method_b(reader, pixel_count),
-        1 | 2 => read_10bit_method_a(reader, pixel_count, big_endian),
-        _ => read_10bit_method_a(reader, pixel_count, big_endian), // fallback
+        0 => read_10bit_packed(reader, pixel_count, channels),
+        1 => read_10bit_msb(reader, pixel_count, channels, big_endian),
+        2 => read_10bit_lsb(reader, pixel_count, channels, big_endian),
+        _ => read_10bit_msb(reader, pixel_count, channels, big_endian), // fallback to MSB
     }
 }
 
-/// Method A: 32-bit aligned, 3x10-bit + 2 padding bits
-fn read_10bit_method_a<R: Read>(
+/// MSB justified (packing 1): 32-bit aligned, R bits 31-22, G bits 21-12, B bits 11-2, padding bits 1-0
+/// For RGBA (4 channels), uses two 32-bit words per pixel
+fn read_10bit_msb<R: Read>(
     reader: &mut R,
     pixel_count: usize,
+    channels: usize,
     big_endian: bool,
 ) -> IoResult<Vec<f32>> {
-    let mut data = Vec::with_capacity(pixel_count * 3);
+    let mut data = Vec::with_capacity(pixel_count * channels);
     let max_val = 1023.0f32;
 
     for _ in 0..pixel_count {
+        // First word contains R, G, B (MSB justified)
         let word = read_u32(reader, big_endian)?;
-        // 10-bit packed: [RR RRRR RRRR GG GGGG GGGG BB BBBB BBBB XX]
-        // Bits: 31-22 = R, 21-12 = G, 11-2 = B, 1-0 = unused
+        // Bits: 31-22 = R, 21-12 = G, 11-2 = B, 1-0 = padding
         let r = ((word >> 22) & 0x3FF) as f32 / max_val;
         let g = ((word >> 12) & 0x3FF) as f32 / max_val;
         let b = ((word >> 2) & 0x3FF) as f32 / max_val;
         data.push(r);
         data.push(g);
         data.push(b);
+
+        // For 4 channels, read second word containing alpha
+        if channels >= 4 {
+            let word2 = read_u32(reader, big_endian)?;
+            let a = ((word2 >> 22) & 0x3FF) as f32 / max_val;
+            data.push(a);
+        }
     }
 
     Ok(data)
 }
 
-/// Method B: Bit-stream, no padding between pixels
-fn read_10bit_method_b<R: Read>(
+/// LSB justified (packing 2): 32-bit aligned, padding bits 31-30, R bits 29-20, G bits 19-10, B bits 9-0
+/// For RGBA (4 channels), uses two 32-bit words per pixel
+fn read_10bit_lsb<R: Read>(
     reader: &mut R,
     pixel_count: usize,
+    channels: usize,
+    big_endian: bool,
 ) -> IoResult<Vec<f32>> {
-    let mut data = Vec::with_capacity(pixel_count * 3);
+    let mut data = Vec::with_capacity(pixel_count * channels);
     let max_val = 1023.0f32;
-    let total_samples = pixel_count * 3;
-    
+
+    for _ in 0..pixel_count {
+        // First word contains R, G, B (LSB justified)
+        let word = read_u32(reader, big_endian)?;
+        // Bits: 31-30 = padding, 29-20 = R, 19-10 = G, 9-0 = B
+        let r = ((word >> 20) & 0x3FF) as f32 / max_val;
+        let g = ((word >> 10) & 0x3FF) as f32 / max_val;
+        let b = (word & 0x3FF) as f32 / max_val;
+        data.push(r);
+        data.push(g);
+        data.push(b);
+
+        // For 4 channels, read second word containing alpha
+        if channels >= 4 {
+            let word2 = read_u32(reader, big_endian)?;
+            let a = ((word2 >> 20) & 0x3FF) as f32 / max_val;
+            data.push(a);
+        }
+    }
+
+    Ok(data)
+}
+
+/// Packed bitstream (packing 0): no padding between 10-bit values
+fn read_10bit_packed<R: Read>(
+    reader: &mut R,
+    pixel_count: usize,
+    channels: usize,
+) -> IoResult<Vec<f32>> {
+    let mut data = Vec::with_capacity(pixel_count * channels);
+    let max_val = 1023.0f32;
+    let total_samples = pixel_count * channels;
+
     let mut bits: u32 = 0;
     let mut n_bits = 0;
-    
+
     for _ in 0..total_samples {
         while n_bits < 10 {
             let byte = read_u8(reader)?;
@@ -1161,13 +1232,14 @@ fn read_10bit_method_b<R: Read>(
 fn read_12bit<R: Read>(
     reader: &mut R,
     pixel_count: usize,
+    channels: usize,
     big_endian: bool,
 ) -> IoResult<Vec<f32>> {
-    let mut data = Vec::with_capacity(pixel_count * 3);
+    let mut data = Vec::with_capacity(pixel_count * channels);
     let max_val = 4095.0f32;
 
     for _ in 0..pixel_count {
-        for _ in 0..3 {
+        for _ in 0..channels {
             let val = read_u16(reader, big_endian)?;
             // 12-bit stored in high bits of 16-bit word
             data.push((val >> 4) as f32 / max_val);
@@ -1180,13 +1252,14 @@ fn read_12bit<R: Read>(
 fn read_16bit<R: Read>(
     reader: &mut R,
     pixel_count: usize,
+    channels: usize,
     big_endian: bool,
 ) -> IoResult<Vec<f32>> {
-    let mut data = Vec::with_capacity(pixel_count * 3);
+    let mut data = Vec::with_capacity(pixel_count * channels);
     let max_val = 65535.0f32;
 
     for _ in 0..pixel_count {
-        for _ in 0..3 {
+        for _ in 0..channels {
             let val = read_u16(reader, big_endian)?;
             data.push(val as f32 / max_val);
         }
@@ -1228,15 +1301,21 @@ fn write_8bit<W: Write>(
     writer: &mut W,
     data: &[f32],
     pixel_count: usize,
-    channels: usize,
+    src_channels: usize,
+    out_channels: usize,
 ) -> IoResult<()> {
     for i in 0..pixel_count {
-        let base = i * channels;
+        let base = i * src_channels;
         let r = (data.get(base).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 255.0) as u8;
         let g = (data.get(base + 1).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 255.0) as u8;
         let b = (data.get(base + 2).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 255.0) as u8;
         writer.write_all(&[r, g, b])
             .map_err(|e| IoError::EncodeError(e.to_string()))?;
+        if out_channels >= 4 {
+            let a = (data.get(base + 3).copied().unwrap_or(1.0).clamp(0.0, 1.0) * 255.0) as u8;
+            writer.write_all(&[a])
+                .map_err(|e| IoError::EncodeError(e.to_string()))?;
+        }
     }
     Ok(())
 }
@@ -1245,18 +1324,19 @@ fn write_10bit_packed<W: Write>(
     writer: &mut W,
     data: &[f32],
     pixel_count: usize,
-    channels: usize,
+    src_channels: usize,
+    out_channels: usize,
     big_endian: bool,
 ) -> IoResult<()> {
     for i in 0..pixel_count {
-        let base = i * channels;
+        let base = i * src_channels;
         let r = (data.get(base).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 1023.0) as u32;
         let g = (data.get(base + 1).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 1023.0) as u32;
         let b = (data.get(base + 2).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 1023.0) as u32;
-        
-        // Pack: R in bits 31-22, G in bits 21-12, B in bits 11-2
+
+        // Pack RGB: R in bits 31-22, G in bits 21-12, B in bits 11-2 (MSB justified)
         let word = (r << 22) | (g << 12) | (b << 2);
-        
+
         let bytes = if big_endian {
             word.to_be_bytes()
         } else {
@@ -1264,6 +1344,19 @@ fn write_10bit_packed<W: Write>(
         };
         writer.write_all(&bytes)
             .map_err(|e| IoError::EncodeError(e.to_string()))?;
+
+        // For RGBA, write second word with alpha
+        if out_channels >= 4 {
+            let a = (data.get(base + 3).copied().unwrap_or(1.0).clamp(0.0, 1.0) * 1023.0) as u32;
+            let word2 = a << 22;  // Alpha in bits 31-22, rest padding
+            let bytes2 = if big_endian {
+                word2.to_be_bytes()
+            } else {
+                word2.to_le_bytes()
+            };
+            writer.write_all(&bytes2)
+                .map_err(|e| IoError::EncodeError(e.to_string()))?;
+        }
     }
     Ok(())
 }
@@ -1272,17 +1365,33 @@ fn write_12bit<W: Write>(
     writer: &mut W,
     data: &[f32],
     pixel_count: usize,
-    channels: usize,
+    src_channels: usize,
+    out_channels: usize,
     big_endian: bool,
 ) -> IoResult<()> {
     for i in 0..pixel_count {
-        let base = i * channels;
+        let base = i * src_channels;
+        // Write RGB
         for c in 0..3 {
             let val = data.get(base + c).copied().unwrap_or(0.0).clamp(0.0, 1.0);
             // 12-bit value stored in high bits of 16-bit word
             let u12 = (val * 4095.0) as u16;
             let u16_val = u12 << 4;
-            
+
+            let bytes = if big_endian {
+                u16_val.to_be_bytes()
+            } else {
+                u16_val.to_le_bytes()
+            };
+            writer.write_all(&bytes)
+                .map_err(|e| IoError::EncodeError(e.to_string()))?;
+        }
+        // Write alpha if RGBA
+        if out_channels >= 4 {
+            let val = data.get(base + 3).copied().unwrap_or(1.0).clamp(0.0, 1.0);
+            let u12 = (val * 4095.0) as u16;
+            let u16_val = u12 << 4;
+
             let bytes = if big_endian {
                 u16_val.to_be_bytes()
             } else {
@@ -1299,15 +1408,30 @@ fn write_16bit<W: Write>(
     writer: &mut W,
     data: &[f32],
     pixel_count: usize,
-    channels: usize,
+    src_channels: usize,
+    out_channels: usize,
     big_endian: bool,
 ) -> IoResult<()> {
     for i in 0..pixel_count {
-        let base = i * channels;
+        let base = i * src_channels;
+        // Write RGB
         for c in 0..3 {
             let val = data.get(base + c).copied().unwrap_or(0.0).clamp(0.0, 1.0);
             let u16_val = (val * 65535.0) as u16;
-            
+
+            let bytes = if big_endian {
+                u16_val.to_be_bytes()
+            } else {
+                u16_val.to_le_bytes()
+            };
+            writer.write_all(&bytes)
+                .map_err(|e| IoError::EncodeError(e.to_string()))?;
+        }
+        // Write alpha if RGBA
+        if out_channels >= 4 {
+            let val = data.get(base + 3).copied().unwrap_or(1.0).clamp(0.0, 1.0);
+            let u16_val = (val * 65535.0) as u16;
+
             let bytes = if big_endian {
                 u16_val.to_be_bytes()
             } else {

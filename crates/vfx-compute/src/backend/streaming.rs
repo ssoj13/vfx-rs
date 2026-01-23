@@ -1,7 +1,11 @@
-//! Streaming I/O traits for processing images larger than RAM.
+//! Streaming I/O traits for processing images region by region.
 //!
-//! These traits allow reading/writing image regions directly from/to disk
-//! without loading the entire image into memory.
+//! These traits provide an API for reading/writing image regions, enabling
+//! tiled processing of large images.
+//!
+//! **Current Limitations:**
+//! - `ExrStreamingSource` loads the entire file into memory (true streaming planned)
+//! - For very large files (>RAM), consider using `vfx_io::streaming` module instead
 //!
 //! # Example
 //!

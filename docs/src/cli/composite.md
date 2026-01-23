@@ -22,11 +22,8 @@ vfx composite [OPTIONS] <FG> <BG> -o <OUTPUT>
 | `multiply` | Darken (A × B) |
 | `screen` | Lighten (1 - (1-A)(1-B)) |
 | `add` | Linear dodge (A + B) |
-| `subtract` | A - B |
-| `overlay` | Contrast enhancement |
-| `softlight` | Gentle contrast |
-| `hardlight` | Strong contrast |
-| `difference` | Absolute difference |
+
+**Note:** `subtract`, `overlay`, `softlight`, `hardlight`, and `difference` modes are **not yet implemented**.
 
 ## Examples
 
@@ -50,11 +47,7 @@ vfx composite flare.exr plate.exr -o result.exr -m add
 - Alpha is used for `over` mode blending
 - Other modes typically ignore alpha
 
-## GPU Acceleration
+## Notes
 
-Compositing uses GPU when available:
-```bash
-vfx composite -vv fg.exr bg.exr -o out.exr
-# DEBUG: Compositing over
-# DEBUG: Using GPU backend
-```
+- Processing is done on CPU
+- Output is always float32

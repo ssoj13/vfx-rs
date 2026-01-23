@@ -25,8 +25,8 @@ proc.saturation(img, 1.2)
 # Save
 vfx_rs.write("output.exr", img)
 
-# numpy interop (zero-copy)
-arr = img.numpy()  # shape: (H, W, C)
+# numpy interop
+arr = img.numpy()  # shape: (H, W, C), dtype: float32
 ```
 
 ## Supported Formats

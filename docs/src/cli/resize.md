@@ -46,16 +46,8 @@ vfx resize input.exr -s 0.1 -f nearest -o thumb.exr
 | `bicubic` | High | Medium | General use |
 | `lanczos` | Highest | Slow | Final output, downscaling |
 
-## GPU Acceleration
+## Notes
 
-Resize automatically uses GPU when available via wgpu. Falls back to CPU if:
-- No GPU detected
-- Image too large for GPU memory
-- wgpu initialization fails
-
-Check with verbose mode:
-```bash
-vfx resize -vv input.exr -s 0.5 -o out.exr
-# DEBUG: Attempting GPU resize
-# DEBUG: Using GPU backend: Vulkan
-```
+- Processing is done on CPU
+- Output is always float32
+- Aspect ratio is preserved when only width or height specified
