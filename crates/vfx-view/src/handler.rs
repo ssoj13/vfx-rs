@@ -40,6 +40,9 @@ pub struct ViewerHandler {
     image: Option<LayeredImage>,
     image_path: Option<PathBuf>,
     
+    // Cached pixel data for fast pixel queries (raw f32, no OCIO)
+    cached_pixels: Option<CachedPixels>,
+    
     // Processing settings
     display: String,
     view: String,
@@ -56,6 +59,14 @@ pub struct ViewerHandler {
     verbose: u8,
 }
 
+/// Cached pixel data for fast pixel inspector queries.
+struct CachedPixels {
+    data: Vec<f32>,
+    width: u32,
+    height: u32,
+    channels: u32,
+}
+
 impl ViewerHandler {
     /// Creates a new handler.
     pub fn new(rx: Receiver<ViewerMsg>, tx: Sender<ViewerEvent>, verbose: u8) -> Self {
@@ -66,6 +77,7 @@ impl ViewerHandler {
             ocio_config: None,
             image: None,
             image_path: None,
+            cached_pixels: None,
             display: String::new(),
             view: String::new(),
             input_colorspace: String::new(),
@@ -348,6 +360,15 @@ impl ViewerHandler {
             }
         };
 
+        // Cache pixel data for fast pixel inspector queries
+        // This avoids re-converting the entire image on every mouse movement
+        self.cached_pixels = Some(CachedPixels {
+            data: img_data.to_f32(),
+            width: img_data.width,
+            height: img_data.height,
+            channels: img_data.channels,
+        });
+
         // Apply channel mode
         let processed = self.apply_channel_mode(&img_data);
 
@@ -504,37 +525,23 @@ impl ViewerHandler {
     }
 
     /// Query pixel value at image coordinates.
+    /// Uses cached pixel data for fast lookup (no re-conversion on each call).
     fn query_pixel(&self, x: u32, y: u32) {
-        let Some(image) = &self.image else { return };
-
-        // Find the layer
-        let layer = image
-            .layers
-            .iter()
-            .find(|l| l.name == self.layer)
-            .or_else(|| image.layers.first());
-
-        let Some(layer) = layer else { return };
+        // Use cached pixels for fast lookup
+        let Some(cache) = &self.cached_pixels else { return };
 
         // Bounds check
-        if x >= layer.width || y >= layer.height {
+        if x >= cache.width || y >= cache.height {
             return;
         }
 
-        // Get pixel data
-        let img_data = match layer.to_image_data() {
-            Ok(d) => d,
-            Err(_) => return,
-        };
+        let channels = cache.channels as usize;
+        let idx = (y as usize * cache.width as usize + x as usize) * channels;
 
-        let pixels = img_data.to_f32();
-        let channels = img_data.channels as usize;
-        let idx = (y as usize * layer.width as usize + x as usize) * channels;
-
-        let r = pixels.get(idx).copied().unwrap_or(0.0);
-        let g = pixels.get(idx + 1).copied().unwrap_or(r);
-        let b = pixels.get(idx + 2).copied().unwrap_or(r);
-        let a = pixels.get(idx + 3).copied().unwrap_or(1.0);
+        let r = cache.data.get(idx).copied().unwrap_or(0.0);
+        let g = cache.data.get(idx + 1).copied().unwrap_or(r);
+        let b = cache.data.get(idx + 2).copied().unwrap_or(r);
+        let a = cache.data.get(idx + 3).copied().unwrap_or(1.0);
 
         self.send(ViewerEvent::PixelValue {
             x,
