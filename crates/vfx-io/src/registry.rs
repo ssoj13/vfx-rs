@@ -173,10 +173,10 @@ impl FormatRegistry {
             can_read: |h| h.len() >= 4 && h[0] == 0x76 && h[1] == 0x2F && h[2] == 0x31 && h[3] == 0x01,
             read_path: |p| crate::exr::read(p),
             read_memory: |d| crate::exr::ExrReader::new().read_from_memory(d),
-            // EXR supports multipart - TODO: implement real subimage support
-            read_subimage_path: None,
-            num_subimages: None,
-            num_miplevels: None,
+            // EXR multipart support - read specific layer/subimage
+            read_subimage_path: Some(|p, subimage, miplevel| crate::exr::read_layer(p, subimage, miplevel)),
+            num_subimages: Some(|p| crate::exr::num_layers(p)),
+            num_miplevels: None, // TODO: implement miplevel counting for EXR
             write_path: Some(|p, i| crate::exr::write(p, i)),
             write_memory: Some(|i| crate::exr::ExrWriter::new().write_to_memory(i)),
             capabilities: &[

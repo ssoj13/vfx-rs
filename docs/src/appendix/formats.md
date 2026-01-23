@@ -13,7 +13,7 @@
 | Half float (f16) | ✓ |
 | Full float (f32) | ✓ |
 | Multi-layer | ✓ |
-| Deep data | ✗ |
+| Deep data | ✓ (via read_deep/write_deep) |
 | Tiled | ✓ |
 | Compression | ZIP, PIZ, RLE, etc. |
 
@@ -25,9 +25,11 @@
 - Custom attributes
 
 ```bash
-# Read specific layer
-vfx info input.exr --layers
-vfx convert input.exr -o output.png --layer "diffuse"
+# List layers
+vfx layers input.exr
+
+# Extract specific layer
+vfx extract-layer input.exr -o diffuse.png --layer diffuse
 ```
 
 ### PNG (.png)
@@ -203,7 +205,7 @@ Rising Sun Pictures format.
 
 ## OCIO Configs
 
-**Feature**: `ocio`
+OCIO support is provided by vfx-ocio crate (always available, no feature flag).
 
 | Format | Support |
 |--------|---------|
@@ -225,13 +227,14 @@ Formats are detected by file extension:
 | `.png` | PNG |
 | `.jpg`, `.jpeg` | JPEG |
 | `.tif`, `.tiff` | TIFF |
-| `.hdr` | Radiance HDR |
+| `.hdr`, `.pic` | Radiance HDR |
 | `.dpx` | DPX |
-| `.psd` | Photoshop |
-| `.cube` | Cube LUT |
-| `.clf` | CLF |
-| `.spi1d`, `.spi3d` | SPI |
-| `.icc`, `.icm` | ICC Profile |
+| `.heif`, `.heic` | HEIF/HEIC |
+| `.webp` | WebP |
+| `.avif` | AVIF |
+| `.jp2` | JPEG2000 |
+
+**Note:** LUT formats (.cube, .clf, .spi1d, .spi3d) and ICC profiles (.icc, .icm) are NOT auto-detected. PSD format requires explicit `psd` feature.
 
 ## Feature Flag Summary
 
@@ -241,18 +244,22 @@ features = [
     "exr",    # OpenEXR (default)
     "png",    # PNG (default)
     "jpeg",   # JPEG (default)
-    "tiff",   # TIFF
-    "hdr",    # Radiance HDR
-    "dpx",    # DPX
+    "tiff",   # TIFF (default)
+    "dpx",    # DPX (default)
+    "hdr",    # Radiance HDR (default)
     "psd",    # Photoshop (read-only)
+    "dds",    # DirectDraw Surface
+    "ktx",    # Khronos Texture
+    "webp",   # WebP via image crate
+    "avif",   # AVIF via image crate
+    "jp2",    # JPEG2000 (requires OpenJPEG)
+    "heif",   # HEIF/HEIC (requires libheif)
+    "text",   # Text rendering
+    "rayon",  # Parallel processing
 ]
 
+# vfx-lut has no feature flags - all LUT formats are always available
 [dependencies.vfx-lut]
-features = [
-    "cube",   # .cube (default)
-    "clf",    # .clf
-    "spi",    # .spi1d/.spi3d
-]
 ```
 
 ## Recommended Formats

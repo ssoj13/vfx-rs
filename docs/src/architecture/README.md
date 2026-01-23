@@ -1,6 +1,6 @@
 # Architecture
 
-vfx-rs is a modular Rust workspace consisting of 16 crates, designed as a native alternative to OpenColorIO and OpenImageIO. This chapter covers the high-level architecture, crate organization, and key design decisions.
+vfx-rs is a modular Rust workspace consisting of 17 crates, designed as a native alternative to OpenColorIO and OpenImageIO. This chapter covers the high-level architecture, crate organization, and key design decisions.
 
 ## Design Philosophy
 
@@ -40,7 +40,7 @@ The goal is to cover the same functionality as:
 | OpenImageIO | vfx-rs equivalent |
 |-------------|-------------------|
 | `ImageBuf` | `vfx_io::ImageData` |
-| `ImageSpec` | `vfx_io::ImageInfo` |
+| `ImageSpec` | `vfx_core::ImageSpec` |
 | `oiiotool` | `vfx-cli` (`vfx` binary) |
 | `iinfo` | `vfx info` |
 | `iconvert` | `vfx convert` |
@@ -56,7 +56,7 @@ The goal is to cover the same functionality as:
 
 ### Foundation (Layer 1)
 
-- **vfx-core** - Core types: `ImageData`, `Pixel`, `ColorSpace`, `Error`
+- **vfx-core** - Core types: `ImageSpec`, `ColorSpace`, `PixelFormat`, `Error`
 - **vfx-math** - Matrices, interpolation, color math utilities
 
 ### Color Science (Layer 2)

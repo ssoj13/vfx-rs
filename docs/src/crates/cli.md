@@ -30,7 +30,9 @@ Binary is at `target/release/vfx` (or `vfx.exe` on Windows).
 | `color` | Color adjustments | `oiiotool --exposure` |
 | `aces` | ACES color transforms | - |
 | `composite` | Layer compositing | `oiiotool --over` |
-| `layers` | EXR layer operations | `oiiotool --ch` |
+| `layers` | List EXR layers | `oiiotool --ch` |
+| `extract-layer` | Extract single EXR layer | - |
+| `merge-layers` | Merge EXR layers | - |
 | `lut` | Apply LUT files | `oiiotool --ociolook` |
 | `batch` | Parallel processing | - |
 | `view` | Image viewer | `iv` |
@@ -41,11 +43,12 @@ Binary is at `target/release/vfx` (or `vfx.exe` on Windows).
 vfx [OPTIONS] <COMMAND>
 
 Options:
-  -v, --verbose    Increase verbosity (-v, -vv, -vvv)
-  -q, --quiet      Suppress output
-  --log <FILE>     Write logs to file
-  -h, --help       Print help
-  -V, --version    Print version
+  -v, --verbose...       Increase verbosity (-v, -vv, -vvv)
+  -l, --log [PATH]       Write logs to file (default: vfx.log)
+  -j, --threads <NUM>    Number of threads (0 = auto)
+  --allow-non-color      Allow processing non-color data (IDs, normals)
+  -h, --help             Print help
+  -V, --version          Print version
 ```
 
 ### Verbosity Levels
@@ -65,11 +68,14 @@ Display image information:
 # Basic info
 vfx info image.exr
 
+# Show detailed stats
+vfx info image.exr --stats
+
+# Show all metadata
+vfx info image.exr --all
+
 # JSON output
 vfx info image.exr --json
-
-# Show layers
-vfx info render.exr --layers
 ```
 
 Output:
@@ -100,16 +106,16 @@ Scale images:
 
 ```bash
 # By dimensions
-vfx resize input.exr output.exr --width 1920 --height 1080
+vfx resize input.exr -o output.exr --width 1920 --height 1080
 
 # By single dimension (preserve aspect)
-vfx resize input.exr output.exr --width 1920
+vfx resize input.exr -o output.exr --width 1920
 
 # By scale factor
-vfx resize input.exr output.exr --scale 0.5
+vfx resize input.exr -o output.exr --scale 0.5
 
 # With filter
-vfx resize input.exr output.exr --width 1920 --filter lanczos
+vfx resize input.exr -o output.exr --width 1920 --filter lanczos
 ```
 
 Filters: `nearest`, `bilinear`, `bicubic`, `lanczos`
@@ -120,19 +126,19 @@ Color adjustments:
 
 ```bash
 # Exposure (stops)
-vfx color input.exr output.exr --exposure 1.0
+vfx color input.exr -o output.exr --exposure 1.0
 
 # Gamma
-vfx color input.exr output.exr --gamma 2.2
+vfx color input.exr -o output.exr --gamma 2.2
 
 # Saturation
-vfx color input.exr output.exr --saturation 1.2
+vfx color input.exr -o output.exr --saturation 1.2
 
 # Transfer function
-vfx color input.exr output.exr --transfer srgb
+vfx color input.exr -o output.exr --transfer srgb
 
 # Combined
-vfx color input.exr output.exr --exposure 0.5 --gamma 1.1 --saturation 1.1
+vfx color input.exr -o output.exr --exposure 0.5 --gamma 1.1 --saturation 1.1
 ```
 
 ## aces
@@ -140,17 +146,17 @@ vfx color input.exr output.exr --exposure 0.5 --gamma 1.1 --saturation 1.1
 ACES color transforms:
 
 ```bash
-# IDT: sRGB → ACEScg
-vfx aces input.jpg output.exr --transform idt
+# IDT: sRGB -> ACEScg
+vfx aces input.jpg -o output.exr --transform idt
 
 # RRT only (tonemap)
-vfx aces input.exr output.exr --transform rrt
+vfx aces input.exr -o output.exr --transform rrt
 
-# ODT: ACEScg → sRGB
-vfx aces input.exr output.png --transform odt
+# ODT: ACEScg -> sRGB
+vfx aces input.exr -o output.png --transform odt
 
 # Full RRT+ODT (most common)
-vfx aces input.exr output.png --transform rrt-odt
+vfx aces input.exr -o output.png --transform rrt-odt
 ```
 
 ## composite
@@ -159,30 +165,48 @@ Layer compositing:
 
 ```bash
 # A over B
-vfx composite fg.exr bg.exr output.exr --mode over
+vfx composite fg.exr bg.exr -o output.exr --mode over
 
 # Blend modes
-vfx composite a.exr b.exr output.exr --mode multiply
-vfx composite a.exr b.exr output.exr --mode screen
-vfx composite a.exr b.exr output.exr --mode add
+vfx composite a.exr b.exr -o output.exr --mode multiply
+vfx composite a.exr b.exr -o output.exr --mode screen
+vfx composite a.exr b.exr -o output.exr --mode add
 ```
 
 ## layers
 
-EXR layer operations:
+List EXR layers:
 
 ```bash
-# List layers
-vfx layers input.exr --list
+# List all layers in EXR file(s)
+vfx layers render.exr
 
-# Extract layer
-vfx layers input.exr output.exr --extract beauty
+# JSON output
+vfx layers render.exr --json
 
-# Merge layers
-vfx layers base.exr overlay.exr output.exr --merge
+# Multiple files
+vfx layers *.exr
+```
 
-# Rename layer
-vfx layers input.exr output.exr --rename "diffuse:diff"
+## extract-layer
+
+Extract a single layer from EXR:
+
+```bash
+# Extract by name
+vfx extract-layer render.exr -o beauty.exr --layer beauty
+
+# Extract by index
+vfx extract-layer render.exr -o layer0.exr --layer 0
+```
+
+## merge-layers
+
+Merge EXR layers:
+
+```bash
+# Merge two EXR files into one with multiple layers
+vfx merge-layers beauty.exr diffuse.exr -o combined.exr
 ```
 
 ## lut
@@ -191,13 +215,13 @@ Apply LUT files:
 
 ```bash
 # Apply 3D LUT
-vfx lut input.exr output.exr --lut grade.cube
+vfx lut input.exr -o output.exr --lut grade.cube
 
 # Apply 1D LUT
-vfx lut input.exr output.exr --lut gamma.cube
+vfx lut input.exr -o output.exr --lut gamma.cube
 
 # Invert LUT
-vfx lut input.exr output.exr --lut grade.cube --inverse
+vfx lut input.exr -o output.exr --lut grade.cube --inverse
 ```
 
 ## batch
@@ -205,60 +229,46 @@ vfx lut input.exr output.exr --lut grade.cube --inverse
 Parallel processing:
 
 ```bash
-# Process all EXR files
-vfx batch "*.exr" --output "./converted/{name}.png" --op convert
+# Process all EXR files with an operation
+vfx batch --input "*.exr" --output-dir ./converted --op convert --format png
 
-# With operation
-vfx batch "render.*.exr" --output "./graded/{name}.exr" \
-    --op "color --exposure 0.5"
-
-# Parallel jobs
-vfx batch "*.exr" --output "./{name}.png" --jobs 8
+# With operation arguments
+vfx batch --input "render.*.exr" --output-dir ./graded --op color --args "exposure=0.5"
 ```
 
-Pattern variables:
-- `{name}` - Filename without extension
-- `{ext}` - Original extension
-- `{dir}` - Original directory
-- `{frame}` - Frame number (for sequences)
+**Note:** The batch command uses `--input` (glob pattern), `--output-dir` (directory), `--op` (operation name), `--args` (key=value arguments), and `--format` (output extension).
 
 ## view
 
-Interactive viewer:
+Interactive viewer (requires `viewer` feature):
 
 ```bash
 # View image
 vfx view image.exr
 
-# With OCIO
+# With OCIO config
 vfx view image.exr --ocio /path/to/config.ocio
 
 # Specific display/view
 vfx view image.exr --display sRGB --view "ACES 1.0 SDR"
 
-# Specific layer
-vfx view render.exr --layer diffuse
-```
-
-## Layer Flag
-
-Many commands support `--layer` for EXR:
-
-```bash
-# Process specific layer
-vfx color render.exr output.exr --layer diffuse --exposure 1.0
-
-# Resize specific layer
-vfx resize render.exr output.exr --layer beauty --width 1920
+# Override input colorspace
+vfx view image.exr --colorspace "ACEScg"
 ```
 
 ## Logging
 
 ```bash
-# Log to file
-vfx -vv convert input.exr output.png --log process.log
+# Log to default file (vfx.log)
+vfx -l convert input.exr output.png
 
-# Structured logging (with tracing)
+# Log to custom file
+vfx -l process.log convert input.exr output.png
+
+# Verbose + logging
+vfx -vv -l convert input.exr output.png
+
+# Environment variable logging
 RUST_LOG=vfx_cli=debug vfx convert input.exr output.png
 ```
 
@@ -270,28 +280,10 @@ RUST_LOG=vfx_cli=debug vfx convert input.exr output.png
 | 1 | General error |
 | 2 | Invalid arguments |
 
-## Shell Completion
-
-Generate completions:
-
-```bash
-# Bash
-vfx --generate-completion bash > /etc/bash_completion.d/vfx
-
-# Zsh
-vfx --generate-completion zsh > ~/.zsh/completions/_vfx
-
-# Fish
-vfx --generate-completion fish > ~/.config/fish/completions/vfx.fish
-
-# PowerShell
-vfx --generate-completion powershell > vfx.ps1
-```
-
 ## Dependencies
 
 - `vfx-core`, `vfx-io`, `vfx-ops`, `vfx-color`, `vfx-lut`
-- `vfx-view` (optional)
+- `vfx-view` (optional, via `viewer` feature)
 - `clap` - Argument parsing
 - `glob` - File patterns
 - `rayon` - Parallel batch

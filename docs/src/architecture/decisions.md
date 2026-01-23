@@ -63,7 +63,7 @@ This page documents key architectural decisions and their rationale.
 
 ```toml
 [features]
-default = ["exr", "png", "jpeg"]
+default = ["exr", "png", "jpeg", "tiff", "dpx", "hdr"]
 heif = ["dep:libheif-rs"]  # Requires system library
 ```
 

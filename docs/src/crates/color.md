@@ -10,15 +10,15 @@ Combines all color-related functionality into a single, composable API. This is 
 
 ```
             vfx-color
-                │
-    ┌───────────┼───────────┐
-    │           │           │
+                |
+    +-----------+-----------+
+    |           |           |
 vfx-transfer  vfx-primaries vfx-lut
-    │           │           │
-    └─────┬─────┴───────────┘
-          │
+    |           |           |
+    +-----+-----+-----------+
+          |
       vfx-math
-          │
+          |
       vfx-core
 ```
 
@@ -39,24 +39,6 @@ let xyz = m * Vec3::new(1.0, 0.5, 0.25);
 let adapt = adapt_matrix(D65, D60, &BRADFORD);
 ```
 
-## ColorProcessor
-
-The main processing API:
-
-```rust
-use vfx_color::ColorProcessor;
-
-let mut proc = ColorProcessor::new();
-
-// Single pixel
-let rgb = [0.5, 0.3, 0.2];
-let result = proc.srgb_to_linear(rgb);
-
-// Image buffer
-let mut data = vec![[0.5f32, 0.3, 0.2]; 1000];
-proc.apply_srgb_to_linear(&mut data);
-```
-
 ## Pipeline
 
 Build transform chains:
@@ -75,11 +57,61 @@ let pipeline = Pipeline::new()
     // Step 4: Encode PQ
     .transfer_out(pq::oetf);
 
-// Apply to pixel
+// Apply to single pixel
 let result = pipeline.apply([0.5, 0.3, 0.2]);
 
-// Apply to buffer
-pipeline.apply_buffer(&mut data);
+// Apply to buffer (iterate manually)
+for pixel in data.iter_mut() {
+    *pixel = pipeline.apply(*pixel);
+}
+```
+
+### Pipeline Methods
+
+```rust
+use vfx_color::Pipeline;
+
+let pipeline = Pipeline::new()
+    .transfer_in(f)          // Input transfer function (decode)
+    .transfer_out(f)         // Output transfer function (encode)
+    .matrix(m)               // 3x3 matrix transform
+    .lut1d(lut)              // 1D LUT
+    .lut3d(lut)              // 3D LUT (NOTE: lut3d, not lut_3d)
+    .scale([sx, sy, sz])     // Per-channel scale
+    .offset([ox, oy, oz])    // Per-channel offset
+    .clamp(min, max)         // Clamp to range
+    .clamp_01();             // Clamp to [0, 1]
+```
+
+## ColorProcessor
+
+High-level processing with optional GPU acceleration:
+
+```rust
+use vfx_color::{ColorProcessor, Pipeline};
+use vfx_color::prelude::*;
+
+// Create processor
+let mut proc = ColorProcessor::new();
+
+// Or with GPU
+let mut proc = ColorProcessor::with_gpu();
+
+// Build a pipeline
+let pipeline = Pipeline::new()
+    .transfer_in(srgb::eotf)
+    .matrix(rgb_to_xyz_matrix(&SRGB))
+    .matrix(xyz_to_rgb_matrix(&REC2020))
+    .transfer_out(pq::oetf);
+
+// Apply to single pixel
+let result = proc.apply(&pipeline, [0.5, 0.3, 0.2]);
+
+// Apply to batch (returns new Vec)
+let results = proc.apply_batch(&pipeline, &pixels);
+
+// Apply in-place
+proc.apply_in_place(&pipeline, &mut pixels);
 ```
 
 ## ACES Workflow
@@ -94,10 +126,10 @@ use vfx_color::aces::{
     RrtParams,
 };
 
-// Full RRT+ODT: ACEScg → sRGB display
+// Full RRT+ODT: ACEScg -> sRGB display
 let display = apply_rrt_odt_srgb(&linear_data, 3);
 
-// Inverse ODT: sRGB → ACEScg
+// Inverse ODT: sRGB -> ACEScg
 let linear = apply_inverse_odt_srgb(&srgb_data, 3);
 
 // RRT only with custom params
@@ -119,24 +151,27 @@ let (r, g, b) = rrt(0.18, 0.18, 0.18, &params);
 ASC CDL standard (slope/offset/power/saturation) with **OCIO-exact** implementation:
 
 ```rust
-use vfx_color::cdl::{Cdl, apply_cdl};
+use vfx_color::cdl::Cdl;
 
-let cdl = Cdl {
-    slope: [1.1, 1.0, 0.9],
-    offset: [0.0, 0.0, 0.02],
-    power: [1.0, 1.0, 1.0],
-    saturation: 1.1,
-};
+let cdl = Cdl::new()
+    .with_slope([1.1, 1.0, 0.9])
+    .with_offset([0.0, 0.0, 0.02])
+    .with_power([1.0, 1.0, 1.0])
+    .with_saturation(1.1);
 
-// Apply: out = (in * slope + offset) ^ power, then saturation
-apply_cdl(&mut data, channels, &cdl);
+// Apply to single pixel
+let mut rgb = [0.5, 0.3, 0.2];
+cdl.apply(&mut rgb);
+
+// Apply to buffer
+cdl.apply_buffer(&mut pixel_buffer);
 ```
 
 ### OCIO Parity
 
 | Property | Status |
 |----------|--------|
-| Algorithm | ASC CDL v1.2 (Slope → Offset → Clamp → Power → Saturation) |
+| Algorithm | ASC CDL v1.2 (Slope -> Offset -> Clamp -> Power -> Saturation) |
 | Power function | `fast_pow` with OCIO-identical Chebyshev polynomials |
 | Luma weights | Rec.709 (0.2126, 0.7152, 0.0722) |
 | Max diff vs OCIO | ~3e-7 (8-22 ULP) |
@@ -148,10 +183,11 @@ See [OCIO Parity Audit](../OCIO_PARITY_AUDIT.md) for details.
 ### Direct Matrix
 
 ```rust
-use vfx_color::convert::RgbConvert;
+use vfx_color::convert::convert_rgb;
+use vfx_color::prelude::*;
 
-let converter = RgbConvert::new(&SRGB, &REC2020);
-let rec2020 = converter.convert([0.5, 0.3, 0.2]);
+// Convert RGB between primaries
+let rec2020 = convert_rgb([0.5, 0.3, 0.2], &SRGB, &REC2020);
 ```
 
 ### With Chromatic Adaptation
@@ -159,11 +195,16 @@ let rec2020 = converter.convert([0.5, 0.3, 0.2]);
 When white points differ:
 
 ```rust
-use vfx_color::convert::RgbConvert;
+use vfx_color::convert::convert_rgb;
+use vfx_color::prelude::*;
 
-// sRGB (D65) → ACES (D60) with Bradford adaptation
-let converter = RgbConvert::with_adaptation(&SRGB, &ACES_AP1, &BRADFORD);
-let aces = converter.convert([0.5, 0.3, 0.2]);
+// sRGB (D65) -> ACES (D60) with Bradford adaptation
+let aces = convert_rgb_adapted(
+    [0.5, 0.3, 0.2],
+    &SRGB, &ACES_AP1,
+    D65, D60,
+    &BRADFORD
+);
 ```
 
 ## Re-exported Modules
@@ -185,11 +226,11 @@ Common imports in one line:
 use vfx_color::prelude::*;
 
 // Includes:
-// - ColorProcessor, Pipeline, TransformOp
+// - Pipeline, TransformOp
 // - Transfer functions: srgb, gamma, pq, hlg
 // - Primaries: SRGB, REC709, REC2020, ACES_AP0, ACES_AP1, etc.
 // - Matrix functions: rgb_to_xyz_matrix, xyz_to_rgb_matrix
-// - LUT types: Lut1D, Lut3D, Interpolation
+// - LUT types: Lut1D, Lut3D
 // - Math: Vec3, Mat3, adapt_matrix
 // - White points: D65, D60, D50
 // - Adaptation: BRADFORD, CAT02, VON_KRIES
@@ -200,10 +241,13 @@ use vfx_color::prelude::*;
 ### HDR to SDR
 
 ```rust
+use vfx_color::Pipeline;
+use vfx_color::prelude::*;
+
 let pipeline = Pipeline::new()
-    .transfer_in(pq::eotf)           // PQ → linear (nits)
-    .scale(1.0 / 10000.0)            // Normalize to 0-1
-    .tonemap_reinhard()              // Simple tonemap
+    .transfer_in(pq::eotf)           // PQ -> linear (nits)
+    .scale([1.0/10000.0; 3])         // Normalize to 0-1
+    .clamp_01()                      // Simple tonemap
     .matrix(rgb_to_rgb_matrix(&REC2020, &SRGB))
     .transfer_out(srgb::oetf);
 ```
@@ -212,19 +256,23 @@ let pipeline = Pipeline::new()
 
 ```rust
 let pipeline = Pipeline::new()
-    .transfer_in(log_c::decode)      // LogC → linear
+    .transfer_in(log_c::decode)      // LogC -> linear
     .matrix(rgb_to_rgb_matrix(&ARRI_WIDE_GAMUT_3, &REC709))
-    .lut_3d(&display_lut)            // Creative grade
+    .lut3d(display_lut)              // Creative grade (NOTE: lut3d, not lut_3d)
     .transfer_out(srgb::oetf);
 ```
 
 ### sRGB to ACEScg
 
 ```rust
+use vfx_color::Pipeline;
+use vfx_color::prelude::*;
+
 let pipeline = Pipeline::new()
     .transfer_in(srgb::eotf)
     .matrix(rgb_to_xyz_matrix(&SRGB))
-    .adapt(D65, D60, &BRADFORD)
+    // Chromatic adaptation D65 -> D60
+    .matrix(adapt_matrix(D65, D60, &BRADFORD))
     .matrix(xyz_to_rgb_matrix(&ACES_AP1));
 ```
 

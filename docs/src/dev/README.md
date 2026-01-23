@@ -33,10 +33,11 @@ vfx-rs/
 ├── crates/           # All library crates
 │   ├── vfx-core/
 │   ├── vfx-io/
+│   ├── vfx-tests/    # Integration tests
 │   └── ...
-├── test/             # Integration tests + test assets
-│   ├── images/       # Test images (EXR, PNG, etc.)
-│   └── luts/         # Test LUTs
+├── test/             # Test assets
+│   ├── assets/       # OCIO configs, reference data
+│   └── *.exr, *.jpg  # Test images
 ├── docs/             # This documentation (mdbook)
 └── Cargo.toml        # Workspace manifest
 ```

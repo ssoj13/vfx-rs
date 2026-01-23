@@ -7,23 +7,23 @@ This guide covers using vfx-rs as a library for building VFX applications.
 vfx-rs provides a modular architecture for image processing:
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Application Layer                           │
-├─────────────────────────────────────────────────────────────────────┤
-│  vfx-cli    │   vfx-view   │   vfx-rs-py   │   Your App           │
-├─────────────────────────────────────────────────────────────────────┤
-│                         Operations Layer                            │
-├─────────────────────────────────────────────────────────────────────┤
-│  vfx-ops    │   vfx-compute   │   vfx-color   │   vfx-ocio         │
-├─────────────────────────────────────────────────────────────────────┤
-│                         Core Layer                                  │
-├─────────────────────────────────────────────────────────────────────┤
-│  vfx-io     │   vfx-core   │   vfx-lut   │   vfx-icc   │   vfx-math│
-├─────────────────────────────────────────────────────────────────────┤
-│                      Foundation Layer                               │
-├─────────────────────────────────────────────────────────────────────┤
-│  vfx-primaries   │   vfx-transfer   │                               │
-└─────────────────────────────────────────────────────────────────────┘
++---------------------------------------------------------------------+
+|                         Application Layer                           |
++---------------------------------------------------------------------+
+|  vfx-cli    |   vfx-view   |   vfx-rs-py   |   Your App           |
++---------------------------------------------------------------------+
+|                         Operations Layer                            |
++---------------------------------------------------------------------+
+|  vfx-ops    |   vfx-compute   |   vfx-color   |   vfx-ocio         |
++---------------------------------------------------------------------+
+|                         Core Layer                                  |
++---------------------------------------------------------------------+
+|  vfx-io     |   vfx-core   |   vfx-lut   |   vfx-icc   |   vfx-math|
++---------------------------------------------------------------------+
+|                      Foundation Layer                               |
++---------------------------------------------------------------------+
+|  vfx-primaries   |   vfx-transfer   |                               |
++---------------------------------------------------------------------+
 ```
 
 ## Getting Started
@@ -46,7 +46,7 @@ use vfx_ops::resize;
 
 fn main() -> anyhow::Result<()> {
     // Read image
-    let mut image = read("input.exr")?;
+    let image = read("input.exr")?;
 
     // Resize to half
     let resized = resize(&image, 960, 540)?;
@@ -62,46 +62,75 @@ fn main() -> anyhow::Result<()> {
 
 ### ImageData
 
-The core image container:
+The core image container (in `vfx_io`):
 
 ```rust
-use vfx_core::ImageData;
+use vfx_io::{ImageData, PixelFormat};
 
-let image = ImageData::new(1920, 1080, 4);  // RGBA
+// Create with specific format
+let image = ImageData::new(1920, 1080, 4, PixelFormat::F32);
+
+// Or create from data
+let data: Vec<f32> = vec![0.0; 1920 * 1080 * 4];
+let image = ImageData::from_f32(1920, 1080, 4, data);
+
+// Access public fields directly
 println!("{}x{} with {} channels",
-    image.width(),
-    image.height(),
-    image.channels()
+    image.width,
+    image.height,
+    image.channels
 );
+
+// Get pixel data
+let pixels = image.to_f32();
 ```
 
 ### ImageSpec
 
-Metadata container (OIIO-compatible):
+Metadata container (in `vfx_core`):
 
 ```rust
-use vfx_core::ImageSpec;
+use vfx_core::{ImageSpec, DataFormat};
 
-let mut spec = ImageSpec::new(1920, 1080, 4);
-spec.set_attribute("author", "VFX Artist");
-spec.set_attribute("compression", "piz");
+// Create with dimensions, channels, and format
+let spec = ImageSpec::new(1920, 1080, 4, DataFormat::F32);
+
+// Or use convenience constructors
+let spec = ImageSpec::rgba(1920, 1080);  // RGBA F32
+let spec = ImageSpec::rgb(1920, 1080);   // RGB F32
+
+// Set colorspace
+let mut spec = ImageSpec::rgba(1920, 1080);
+spec.set_colorspace("ACEScg");
+
+// Access metadata via extra_attribs field
+// spec.extra_attribs is a HashMap<String, AttrValue>
 ```
 
-### Channel Types
+### PixelFormat and DataFormat
 
-Semantic channel classification:
+Pixel type enumerations:
 
 ```rust
-use vfx_core::ChannelType;
+use vfx_io::PixelFormat;      // In vfx_io
+use vfx_core::DataFormat;     // In vfx_core
 
-match channel_type {
-    ChannelType::Color => // RGB, RGBA
-    ChannelType::Alpha => // Transparency
-    ChannelType::Depth => // Z-depth
-    ChannelType::Normal => // Surface normals
-    ChannelType::Id => // Object/material IDs
-    ChannelType::Mask => // Binary masks
-    ChannelType::Generic => // Unclassified
+// PixelFormat (for ImageData)
+match format {
+    PixelFormat::U8 => // 8-bit unsigned
+    PixelFormat::U16 => // 16-bit unsigned
+    PixelFormat::U32 => // 32-bit unsigned
+    PixelFormat::F16 => // 16-bit float
+    PixelFormat::F32 => // 32-bit float
+}
+
+// DataFormat (for ImageSpec)
+match format {
+    DataFormat::U8 => // 8-bit unsigned
+    DataFormat::U16 => // 16-bit unsigned
+    DataFormat::U32 => // 32-bit unsigned
+    DataFormat::F16 => // 16-bit float
+    DataFormat::F32 => // 32-bit float
 }
 ```
 
@@ -109,8 +138,8 @@ match channel_type {
 
 | Crate | Purpose |
 |-------|---------|
-| `vfx-core` | Core types: ImageData, ImageSpec, ChannelType |
-| `vfx-io` | File I/O, format support |
+| `vfx-io` | File I/O, ImageData, format support |
+| `vfx-core` | Core types: Image<C,T,N>, ImageSpec, ColorSpace |
 | `vfx-ops` | Image operations (resize, composite, etc.) |
 | `vfx-color` | Color transforms, ACES |
 | `vfx-compute` | GPU acceleration |

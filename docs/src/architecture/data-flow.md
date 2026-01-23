@@ -11,18 +11,28 @@ pub struct ImageData {
     pub width: u32,
     pub height: u32,
     pub channels: u32,
-    pub data: ImageBuffer,  // u8, u16, f16, or f32
+    pub format: PixelFormat,  // U8, U16, U32, F16, F32
+    pub data: PixelData,      // Actual pixel buffer
+    pub metadata: Metadata,   // Colorspace, DPI, attrs
 }
 ```
 
-The `ImageBuffer` enum supports multiple bit depths:
+The `PixelData` enum holds the raw buffer:
 
 ```rust
-pub enum ImageBuffer {
+pub enum PixelData {
     U8(Vec<u8>),
     U16(Vec<u16>),
-    F16(Vec<half::f16>),
-    F32(Vec<f32>),
+    F32(Vec<f32>),  // Used for both F16 and F32 formats
+    U32(Vec<u32>),
+}
+```
+
+`PixelFormat` (re-exported from `vfx_core::DataFormat`) indicates the logical format:
+
+```rust
+pub enum PixelFormat {
+    U8, U16, U32, F16, F32
 }
 ```
 
@@ -189,9 +199,14 @@ let image = load_image_layer(&path, Some("diffuse"))?;
 // Process only that layer
 let processed = apply_color_transform(&image)?;
 
-// Save back (preserves other layers)
-save_image_layer(&path, &processed, Some("diffuse"))?;
+// Save as single-layer output (does NOT preserve other layers)
+save_image_layer(&output_path, &processed, Some("diffuse"))?;
 ```
+
+**Note:** `save_image_layer` creates a new single-layer EXR file. It does not
+merge back into an existing multi-layer file. To preserve all layers, use
+the EXR-specific `ExrWriter::write_layers` API with a `LayeredImageData`
+containing all layers.
 
 ## Memory Layout
 
@@ -214,11 +229,11 @@ Errors propagate through the call stack:
 
 ```
 vfx_io::read()
-    └── FormatError
-        └── ExrError / PngError / etc.
+    └── IoError
+        └── DecodeError / Format / InvalidFile / etc.
 
 vfx_ops::resize()
-    └── FilterError
+    └── OpsError
         └── InvalidDimension / UnsupportedFilter
 
 vfx_cli::run()

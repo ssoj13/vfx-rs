@@ -103,9 +103,10 @@ vfx merge-layers a.exr b.exr -o combined.exr -n main -n secondary
 
 ## Requirements
 
-- All inputs must have same resolution
-- All inputs must have compatible bit depths
+- All inputs must have same resolution (width and height)
 - Output is always multi-part EXR
+
+**Note:** Bit depth validation is not currently performed. Inputs with different bit depths will be converted to float32.
 
 ## Use Cases
 

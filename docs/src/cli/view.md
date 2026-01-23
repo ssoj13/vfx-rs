@@ -5,8 +5,10 @@ Interactive image viewer with OCIO color management.
 ## Usage
 
 ```bash
-vfx view [OPTIONS] <INPUT>
+vfx view [OPTIONS] [INPUT]
 ```
+
+**Note:** Input is optional. If omitted, opens with no file (use File > Open or drag & drop).
 
 ## Options
 

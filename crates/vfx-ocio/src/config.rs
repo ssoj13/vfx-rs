@@ -1291,6 +1291,183 @@ impl Config {
         )
     }
 
+    /// Expands reference transforms (ColorSpace, Look, DisplayView) to their actual transforms.
+    ///
+    /// This recursively traverses the transform tree and expands:
+    /// - ColorSpaceTransform -> src.to_reference + dst.from_reference
+    /// - LookTransform -> look transforms with process space handling  
+    /// - DisplayViewTransform -> display/view transform chain
+    /// - GroupTransform -> recursively expanded children
+    ///
+    /// Other transforms are returned as-is.
+    pub fn expand_transform(&self, transform: &Transform) -> OcioResult<Transform> {
+        match transform {
+            Transform::ColorSpace(cst) => {
+                // Expand ColorSpaceTransform to actual transforms
+                let src_cs = self.colorspace(&cst.src)
+                    .ok_or_else(|| OcioError::ColorSpaceNotFound { name: cst.src.clone() })?;
+                let dst_cs = self.colorspace(&cst.dst)
+                    .ok_or_else(|| OcioError::ColorSpaceNotFound { name: cst.dst.clone() })?;
+
+                let mut transforms = Vec::new();
+                
+                let forward = cst.direction == TransformDirection::Forward;
+                
+                if forward {
+                    // Forward: src -> reference -> dst
+                    if let Some(t) = src_cs.to_reference() {
+                        transforms.push(self.expand_transform(t)?);
+                    }
+                    if let Some(t) = dst_cs.from_reference() {
+                        transforms.push(self.expand_transform(t)?);
+                    } else if let Some(t) = dst_cs.to_reference() {
+                        transforms.push(self.expand_transform(t)?.inverse());
+                    }
+                } else {
+                    // Inverse: dst -> reference -> src
+                    if let Some(t) = dst_cs.to_reference() {
+                        transforms.push(self.expand_transform(t)?);
+                    }
+                    if let Some(t) = src_cs.from_reference() {
+                        transforms.push(self.expand_transform(t)?);
+                    } else if let Some(t) = src_cs.to_reference() {
+                        transforms.push(self.expand_transform(t)?.inverse());
+                    }
+                }
+
+                Ok(if transforms.is_empty() {
+                    Transform::Group(GroupTransform {
+                        transforms: vec![],
+                        direction: TransformDirection::Forward,
+                    })
+                } else {
+                    Transform::group(transforms)
+                })
+            }
+
+            Transform::Look(lt) => {
+                // Expand LookTransform
+                let mut transforms = Vec::new();
+                
+                // Source to reference
+                if let Some(src_cs) = self.colorspace(&lt.src) {
+                    if let Some(t) = src_cs.to_reference() {
+                        transforms.push(self.expand_transform(t)?);
+                    }
+                }
+
+                // Apply looks
+                self.append_look_transforms(&mut transforms, &lt.looks)?;
+
+                // Reference to destination
+                if let Some(dst_cs) = self.colorspace(&lt.dst) {
+                    if let Some(t) = dst_cs.from_reference() {
+                        transforms.push(self.expand_transform(t)?);
+                    } else if let Some(t) = dst_cs.to_reference() {
+                        transforms.push(self.expand_transform(t)?.inverse());
+                    }
+                }
+
+                let group = Transform::group(transforms);
+                if lt.direction == TransformDirection::Inverse {
+                    Ok(group.inverse())
+                } else {
+                    Ok(group)
+                }
+            }
+
+            Transform::DisplayView(dvt) => {
+                // Expand DisplayViewTransform - delegate to display_processor logic
+                let mut transforms = Vec::new();
+
+                // Source to reference
+                if let Some(src_cs) = self.colorspace(&dvt.src) {
+                    if let Some(t) = src_cs.to_reference() {
+                        transforms.push(self.expand_transform(t)?);
+                    }
+                }
+
+                // Get display and view
+                if let Some(disp) = self.displays.display(&dvt.display) {
+                    if let Some(v) = disp.view(&dvt.view) {
+                        // Apply view transform if defined
+                        if let Some(vt_name) = v.view_transform() {
+                            if let Some(vt) = self.displays.view_transform(vt_name) {
+                                use crate::display::ReferenceSpaceType;
+                                match vt.reference_space_type() {
+                                    ReferenceSpaceType::Scene => {
+                                        if let Some(t) = vt.from_scene_reference() {
+                                            transforms.push(self.expand_transform(t)?);
+                                        }
+                                    }
+                                    ReferenceSpaceType::Display => {
+                                        if let Some(t) = vt.from_display_reference() {
+                                            transforms.push(self.expand_transform(t)?);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Apply view colorspace
+                        if let Some(dst_cs) = self.colorspace(v.colorspace()) {
+                            if let Some(t) = dst_cs.from_reference() {
+                                transforms.push(self.expand_transform(t)?);
+                            } else if let Some(t) = dst_cs.to_reference() {
+                                transforms.push(self.expand_transform(t)?.inverse());
+                            }
+                        }
+                    }
+                }
+
+                let group = Transform::group(transforms);
+                if dvt.direction == TransformDirection::Inverse {
+                    Ok(group.inverse())
+                } else {
+                    Ok(group)
+                }
+            }
+
+            Transform::Group(gt) => {
+                // Recursively expand group members
+                let expanded: Result<Vec<_>, _> = gt.transforms.iter()
+                    .map(|t| self.expand_transform(t))
+                    .collect();
+                Ok(Transform::Group(GroupTransform {
+                    transforms: expanded?,
+                    direction: gt.direction,
+                }))
+            }
+
+            // All other transforms pass through unchanged
+            _ => Ok(transform.clone()),
+        }
+    }
+
+    /// Creates a processor from an arbitrary transform with config context.
+    ///
+    /// This method expands any ColorSpaceTransform, LookTransform, or DisplayViewTransform
+    /// references using the config's color space definitions before compiling.
+    pub fn processor_from_transform(
+        &self,
+        transform: &Transform,
+        direction: TransformDirection,
+    ) -> OcioResult<Processor> {
+        let expanded = self.expand_transform(transform)?;
+        Processor::from_transform(&expanded, direction)
+    }
+
+    /// Creates a processor from transform with optimization level.
+    pub fn processor_from_transform_with_opts(
+        &self,
+        transform: &Transform,
+        direction: TransformDirection,
+        optimization: OptimizationLevel,
+    ) -> OcioResult<Processor> {
+        let expanded = self.expand_transform(transform)?;
+        Processor::from_transform_with_opts(&expanded, direction, optimization)
+    }
+
     fn append_look_transforms(&self, transforms: &mut Vec<Transform>, looks: &str) -> OcioResult<()> {
         use crate::look::parse_looks;
 
@@ -3199,5 +3376,88 @@ displays:
             "Should detect invalid colorspace in Default rule: {:?}",
             errors
         );
+    }
+
+    #[test]
+    fn test_expand_colorspace_transform() {
+        use crate::colorspace::{ColorSpace, Encoding};
+        use crate::transform::{ColorSpaceTransform, MatrixTransform, Transform, TransformDirection};
+
+        let mut config = Config::new();
+
+        // Create colorspaces with transforms
+        // sRGB -> linear (to_reference is sRGB EOTF)
+        let srgb_to_linear = Transform::Matrix(MatrixTransform {
+            matrix: [
+                1.0, 0.0, 0.0, 0.0,
+                0.0, 1.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0,
+            ],
+            offset: [0.1, 0.1, 0.1, 0.0], // offset to verify transform is applied
+            direction: TransformDirection::Forward,
+        });
+
+        let linear_to_rec709 = Transform::Matrix(MatrixTransform {
+            matrix: [
+                1.0, 0.0, 0.0, 0.0,
+                0.0, 1.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0,
+            ],
+            offset: [0.2, 0.2, 0.2, 0.0], // different offset
+            direction: TransformDirection::Forward,
+        });
+
+        let srgb = ColorSpace::builder("sRGB")
+            .encoding(Encoding::Sdr)
+            .to_reference(srgb_to_linear)
+            .build();
+
+        let rec709 = ColorSpace::builder("Rec709")
+            .encoding(Encoding::Sdr)
+            .from_reference(linear_to_rec709)
+            .build();
+
+        let linear = ColorSpace::builder("Linear")
+            .encoding(Encoding::SceneLinear)
+            .build();
+
+        config.add_colorspace(srgb);
+        config.add_colorspace(rec709);
+        config.add_colorspace(linear);
+
+        // Test ColorSpaceTransform expansion
+        let cst = Transform::ColorSpace(ColorSpaceTransform {
+            src: "sRGB".into(),
+            dst: "Rec709".into(),
+            direction: TransformDirection::Forward,
+        });
+
+        let expanded = config.expand_transform(&cst).unwrap();
+
+        // Should be a group with two transforms (to_reference + from_reference)
+        if let Transform::Group(gt) = &expanded {
+            assert_eq!(gt.transforms.len(), 2, "Should have 2 transforms: to_ref + from_ref");
+        } else {
+            panic!("Expected GroupTransform, got {:?}", expanded);
+        }
+
+        // Test processor_from_transform
+        let proc = config.processor_from_transform(&cst, TransformDirection::Forward).unwrap();
+        assert!(!proc.ops().is_empty(), "Processor should have operations");
+
+        // Test inverse direction
+        let cst_inv = Transform::ColorSpace(ColorSpaceTransform {
+            src: "sRGB".into(),
+            dst: "Rec709".into(),
+            direction: TransformDirection::Inverse,
+        });
+
+        let expanded_inv = config.expand_transform(&cst_inv).unwrap();
+        if let Transform::Group(gt) = &expanded_inv {
+            // Inverse: dst.to_ref + src.from_ref (or inverse of to_ref)
+            assert!(!gt.transforms.is_empty(), "Inverse should have transforms");
+        }
     }
 }

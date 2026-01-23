@@ -16,17 +16,18 @@ This section documents the internal implementation details of vfx-rs. Understand
 
 ## Code Organization
 
-Each crate follows a consistent structure:
+Crate structure varies, but typically:
 
 ```
 crates/vfx-xxx/
 ├── Cargo.toml
-├── src/
-│   ├── lib.rs          # Public API, re-exports
-│   ├── error.rs        # Error types
-│   └── [modules]       # Implementation
-└── tests/              # Unit tests
+└── src/
+    ├── lib.rs          # Public API, re-exports
+    ├── error.rs        # Error types (if needed)
+    └── [modules]       # Implementation
 ```
+
+**Note:** Tests are typically inline (`#[cfg(test)]` modules) rather than in a separate `tests/` directory. Integration tests live in `vfx-tests`.
 
 ## Naming Conventions
 
@@ -119,8 +120,11 @@ Used for:
 - Expensive dependencies
 
 ```toml
+# vfx-io features
 [features]
-default = ["exr", "png"]
-gpu = ["wgpu"]
-all-formats = ["exr", "png", "jpeg", "tiff", "dpx", "heif", "webp", "avif"]
+default = ["exr", "png", "jpeg", "tiff", "dpx", "hdr"]
+exr = ["dep:vfx-exr"]
+webp = ["dep:image"]
+avif = ["dep:image"]
+jp2 = ["dep:jpeg2k"]
 ```

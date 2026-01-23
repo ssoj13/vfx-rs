@@ -73,10 +73,13 @@ vfx-cli / vfx-view / vfx-rs-py (Applications)
     │
     ├── vfx-ocio / vfx-icc (External Formats)
     │
-    └── vfx-io (File I/O)
-            │
-            └── vfx-core (Foundation)
-                    └── vfx-math
+    ├── vfx-io (File I/O)
+    │       └── vfx-ocio
+    │
+    ├── vfx-math (Math utilities)
+    │       └── vfx-core
+    │
+    └── vfx-core (Foundation - no deps)
 ```
 
 ## Using Crates Individually

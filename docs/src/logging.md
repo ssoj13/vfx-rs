@@ -25,8 +25,7 @@ vfx convert -v input.exr output.png
 # Debug level - operation details
 vfx resize -vv input.exr -s 0.5 -o out.exr
 # 0.001s DEBUG vfx_io: Reading image path=input.exr format=Exr
-# 0.085s DEBUG vfx_ops::resize: Attempting GPU resize
-# 0.086s DEBUG vfx_ops::resize: Using GPU backend: Vulkan
+# 0.005s INFO resize: Resizing image from_w=1920 from_h=1080 to_w=960 to_h=540 filter=lanczos3
 # 0.102s DEBUG vfx_io: Writing image path=out.exr format=Exr
 
 # Trace level - everything
@@ -43,10 +42,10 @@ Write logs to file with `-l` / `--log`:
 
 ```bash
 # Default log file (vfx.log next to binary)
-vfx batch -vv -l "*.exr" -o out/ --op resize
+vfx batch -vv -l -i "*.exr" -o out/ --op resize
 
 # Custom log path
-vfx batch -vv --log=batch_2024.log "*.exr" -o out/ --op resize
+vfx batch -vv --log=batch_2024.log -i "*.exr" -o out/ --op resize
 
 # Both console and file
 vfx convert -vv --log=debug.log input.exr output.png
@@ -56,11 +55,11 @@ vfx convert -vv --log=debug.log input.exr output.png
 
 ```
 0.001234567s DEBUG vfx_io: Reading image path=input.exr format=Exr
-│            │     │       │
-│            │     │       └─ Structured fields
-│            │     └─ Message
-│            └─ Module path
-└─ Uptime (seconds)
+|            |     |       |
+|            |     |       +- Structured fields
+|            |     +- Message
+|            +- Module path
++- Uptime (seconds)
 ```
 
 ## Environment Variable
@@ -78,6 +77,8 @@ RUST_LOG=trace vfx info image.exr
 ## Debugging Tips
 
 1. **Format detection issues**: Use `-vvv` to see magic byte detection
-2. **GPU fallback**: `-vv` shows if GPU or CPU path is used
+2. **Resize/transform**: Use `-vv` to see filter selection and dimensions
 3. **Color accuracy**: Trace shows transfer function applications
 4. **Performance**: Compare timings in debug output
+
+**Note:** The `maketx` command uses vfx-compute for GPU-accelerated mipmap generation. Use `-vv` to see the compute backend selection.

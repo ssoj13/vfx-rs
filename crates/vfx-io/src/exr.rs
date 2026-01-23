@@ -856,6 +856,119 @@ pub fn probe_dimensions<P: AsRef<Path>>(path: P) -> IoResult<(u32, u32)> {
     }
 }
 
+/// Returns the number of layers (subimages) in an EXR file.
+///
+/// Uses fast metadata-only read without loading pixel data.
+///
+/// # Example
+///
+/// ```ignore
+/// use vfx_io::exr;
+///
+/// let count = exr::num_layers("multipart.exr")?;
+/// println!("EXR has {} layers", count);
+/// ```
+pub fn num_layers<P: AsRef<Path>>(path: P) -> IoResult<usize> {
+    let meta = vfx_exr::meta::MetaData::read_from_file(path.as_ref(), false)
+        .map_err(|e| IoError::DecodeError(format!("EXR metadata read failed: {}", e)))?;
+    Ok(meta.headers.len())
+}
+
+/// Reads a specific layer from an EXR file by index.
+///
+/// Returns the layer as ImageData (first RGBA/RGB channels found).
+/// For full channel access, use `read_layers()` and index into the result.
+///
+/// # Arguments
+///
+/// * `path` - Path to EXR file
+/// * `layer_idx` - Layer index (0-based)
+/// * `_miplevel` - Mip level (currently ignored, reserved for future use)
+///
+/// # Example
+///
+/// ```ignore
+/// use vfx_io::exr;
+///
+/// let layer = exr::read_layer("multipart.exr", 1, 0)?;
+/// println!("Layer 1: {}x{}", layer.width, layer.height);
+/// ```
+pub fn read_layer<P: AsRef<Path>>(path: P, layer_idx: usize, _miplevel: usize) -> IoResult<ImageData> {
+    let layered = read_layers(&path)?;
+    
+    let layer = layered.layers.get(layer_idx)
+        .ok_or_else(|| IoError::DecodeError(
+            format!("Layer index {} out of range (file has {} layers)", layer_idx, layered.layers.len())
+        ))?;
+    
+    // Convert ImageLayer to ImageData (RGBA)
+    let width = layer.width;
+    let height = layer.height;
+    let pixel_count = (width * height) as usize;
+    
+    // Find R, G, B, A channels by name
+    let find_channel = |name: &str| -> Option<&ImageChannel> {
+        layer.channels.iter().find(|ch| ch.name.eq_ignore_ascii_case(name))
+    };
+    
+    let r_ch = find_channel("R").or_else(|| find_channel("Y")); // Y for grayscale
+    let g_ch = find_channel("G");
+    let b_ch = find_channel("B");
+    let a_ch = find_channel("A");
+    
+    // Determine output channels
+    let has_color = r_ch.is_some();
+    let has_alpha = a_ch.is_some();
+    let num_channels = if has_color { if has_alpha { 4 } else { 3 } } else { 1 };
+    
+    let mut pixels = Vec::with_capacity(pixel_count * num_channels);
+    
+    for i in 0..pixel_count {
+        if has_color {
+            // R
+            if let Some(ch) = r_ch {
+                pixels.push(ch.samples.get_f32(i).unwrap_or(0.0));
+            } else {
+                pixels.push(0.0);
+            }
+            // G
+            if let Some(ch) = g_ch {
+                pixels.push(ch.samples.get_f32(i).unwrap_or(0.0));
+            } else if let Some(ch) = r_ch {
+                // Grayscale: copy R to G
+                pixels.push(ch.samples.get_f32(i).unwrap_or(0.0));
+            } else {
+                pixels.push(0.0);
+            }
+            // B
+            if let Some(ch) = b_ch {
+                pixels.push(ch.samples.get_f32(i).unwrap_or(0.0));
+            } else if let Some(ch) = r_ch {
+                // Grayscale: copy R to B
+                pixels.push(ch.samples.get_f32(i).unwrap_or(0.0));
+            } else {
+                pixels.push(0.0);
+            }
+            // A
+            if has_alpha {
+                if let Some(ch) = a_ch {
+                    pixels.push(ch.samples.get_f32(i).unwrap_or(1.0));
+                } else {
+                    pixels.push(1.0);
+                }
+            }
+        } else {
+            // No color channels - shouldn't happen normally
+            pixels.push(0.0);
+        }
+    }
+    
+    let mut result = ImageData::from_f32(width, height, num_channels as u32, pixels);
+    result.metadata.colorspace = Some("linear".to_string());
+    
+    Ok(result)
+}
+
 // ============================================================================
 // Deep EXR Support
 // ============================================================================
@@ -1273,5 +1386,111 @@ mod tests {
             loaded.deep_value_uint(0, id_idx_loaded, 0),
             deep.deep_value_uint(0, id_idx_orig, 0)
         );
+    }
+
+    /// Tests Bug #9: num_layers and read_layer for multipart EXR.
+    #[test]
+    fn test_num_layers_and_read_layer() {
+        // Create 2-layer EXR
+        let layer_a = ImageLayer {
+            name: "beauty".to_string(),
+            width: 4,
+            height: 4,
+            channels: vec![
+                ImageChannel {
+                    name: "R".to_string(),
+                    kind: ChannelKind::Color,
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![0.25; 16]),
+                    sampling: (1, 1),
+                    quantize_linearly: false,
+                },
+                ImageChannel {
+                    name: "G".to_string(),
+                    kind: ChannelKind::Color,
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![0.5; 16]),
+                    sampling: (1, 1),
+                    quantize_linearly: false,
+                },
+                ImageChannel {
+                    name: "B".to_string(),
+                    kind: ChannelKind::Color,
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![0.75; 16]),
+                    sampling: (1, 1),
+                    quantize_linearly: false,
+                },
+                ImageChannel {
+                    name: "A".to_string(),
+                    kind: ChannelKind::Alpha,
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![1.0; 16]),
+                    sampling: (1, 1),
+                    quantize_linearly: false,
+                },
+            ],
+        };
+        let layer_b = ImageLayer {
+            name: "spec".to_string(),
+            width: 4,
+            height: 4,
+            channels: vec![
+                ImageChannel {
+                    name: "R".to_string(),
+                    kind: ChannelKind::Color,
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![0.1; 16]),
+                    sampling: (1, 1),
+                    quantize_linearly: false,
+                },
+                ImageChannel {
+                    name: "G".to_string(),
+                    kind: ChannelKind::Color,
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![0.2; 16]),
+                    sampling: (1, 1),
+                    quantize_linearly: false,
+                },
+                ImageChannel {
+                    name: "B".to_string(),
+                    kind: ChannelKind::Color,
+                    sample_type: ChannelSampleType::F32,
+                    samples: ChannelSamples::F32(vec![0.3; 16]),
+                    sampling: (1, 1),
+                    quantize_linearly: false,
+                },
+            ],
+        };
+
+        let layered = LayeredImage {
+            layers: vec![layer_a, layer_b],
+            metadata: Metadata::default(),
+        };
+
+        let temp_path = std::env::temp_dir().join("vfx_io_exr_multipart_test.exr");
+        write_layers(&temp_path, &layered).expect("Write multipart failed");
+
+        // Test num_layers
+        let count = num_layers(&temp_path).expect("num_layers failed");
+        assert_eq!(count, 2, "Expected 2 layers");
+
+        // Test read_layer for layer 0
+        let img0 = read_layer(&temp_path, 0, 0).expect("read_layer(0) failed");
+        assert_eq!(img0.width, 4);
+        assert_eq!(img0.height, 4);
+        assert_eq!(img0.channels, 4); // RGBA
+
+        // Test read_layer for layer 1
+        let img1 = read_layer(&temp_path, 1, 0).expect("read_layer(1) failed");
+        assert_eq!(img1.width, 4);
+        assert_eq!(img1.height, 4);
+        assert_eq!(img1.channels, 3); // RGB only (no alpha in layer_b)
+
+        // Test out-of-range layer
+        let err = read_layer(&temp_path, 5, 0);
+        assert!(err.is_err(), "Expected error for out-of-range layer");
+
+        let _ = std::fs::remove_file(&temp_path);
     }
 }

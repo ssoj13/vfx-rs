@@ -28,8 +28,12 @@ Complete reference of color spaces supported by vfx-rs.
 | ARRI Wide Gamut 3 | (0.6840, 0.3130) | (0.2210, 0.8480) | (0.0861, -0.1020) | D65 |
 | ARRI Wide Gamut 4 | (0.7347, 0.2653) | (0.1424, 0.8576) | (0.0991, -0.0308) | D65 |
 | Sony S-Gamut3 | (0.7300, 0.2800) | (0.1400, 0.8550) | (0.1000, -0.0500) | D65 |
-| RED Wide Gamut | (0.7800, 0.3040) | (0.1210, 0.8340) | (0.0950, -0.0290) | D65 |
+| Sony S-Gamut3.Cine | (0.7660, 0.2750) | (0.2250, 0.8000) | (0.0890, -0.0870) | D65 |
+| Canon CGamut | (0.7400, 0.2700) | (0.1700, 1.1400) | (0.0800, -0.1000) | D65 |
+| RED Wide Gamut | (0.780308, 0.304253) | (0.121595, 1.493994) | (0.095612, -0.084589) | D65 |
 | Panasonic V-Gamut | (0.7300, 0.2800) | (0.1650, 0.8400) | (0.1000, -0.0300) | D65 |
+| DaVinci Wide Gamut | (0.8000, 0.3130) | (0.1682, 0.9877) | (0.0790, -0.1155) | D65 |
+| DJI D-Gamut | (0.71, 0.31) | (0.21, 0.88) | (0.09, -0.08) | D65 |
 
 ### Photography
 
@@ -76,7 +80,6 @@ Complete reference of color spaces supported by vfx-rs.
 |----------|----------|-------|----------|
 | ACEScct | 0.414 | 0 to 1 | Color grading (with toe) |
 | ACEScc | 0.414 | -∞ to 1.5 | Color grading (pure log) |
-| ACESproxy | 0.426 | 0 to 1 | On-set monitoring |
 
 ## White Points
 
@@ -155,13 +158,17 @@ Complete reference of color spaces supported by vfx-rs.
 ## Usage in vfx-rs
 
 ```rust
-use vfx_primaries::Primaries;
-use vfx_transfer::*;
+use vfx_primaries::{ACES_AP1, SRGB, rgb_to_xyz_matrix};
+use vfx_transfer::{srgb_eotf, srgb_oetf};
 
 // Get primaries
-let acescg = Primaries::ACES_AP1;
+let acescg = ACES_AP1;
+let srgb = SRGB;
 
-// Apply transfer
-let linear = srgb_to_linear(0.5);
-let encoded = linear_to_srgb(0.18);
+// Convert to XYZ matrix
+let m = rgb_to_xyz_matrix(&srgb);
+
+// Apply transfer functions
+let linear = srgb_eotf(0.5);  // Decode sRGB to linear
+let encoded = srgb_oetf(0.18);  // Encode linear to sRGB
 ```

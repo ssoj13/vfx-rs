@@ -91,7 +91,8 @@ Uses `glam` for chromatic adaptation matrices.
 
 ```
 vfx-io
-    └── vfx-core
+    ├── vfx-core
+    └── vfx-ocio
 ```
 
 All format codecs are optional features:
@@ -155,7 +156,8 @@ vfx-ops
     ├── vfx-core
     ├── vfx-io
     ├── vfx-math
-    └── vfx-compute
+    ├── vfx-compute
+    └── vfx-color
 ```
 
 Image processing operations with optional parallel/FFT features.
@@ -184,7 +186,7 @@ Key external crates used across the workspace:
 | `half` | f16 (half-precision) floats |
 | `rayon` | Parallel iterators |
 | `clap` | CLI argument parsing |
-| `exr` | OpenEXR reading/writing |
+| `vfx-exr` | OpenEXR reading/writing |
 | `lcms2` | ICC profile transforms |
 | `wgpu` | Cross-platform GPU compute |
 | `pyo3` | Python bindings |

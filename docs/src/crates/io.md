@@ -193,18 +193,33 @@ for (udim, image) in tiles.iter() {
 
 ## Streaming I/O
 
-For very large images:
+For very large images, use the streaming API which reads/writes in tiles:
 
 ```rust
-use vfx_io::streaming::{StreamReader, StreamWriter};
+use vfx_io::streaming::{open_streaming, StreamingSource};
 
-// Read in tiles
-let reader = StreamReader::open("huge.exr")?;
-for tile in reader.tiles() {
-    let data = tile.read()?;
-    // Process tile...
+// Open with auto-detection (tiled TIFF/EXR use true streaming)
+let mut source = open_streaming("huge_image.tif")?;
+
+println!("Image: {}x{}", source.width(), source.height());
+println!("Channels: {}", source.source_channels());
+
+// Read regions on demand
+let region = source.read_region(0, 0, 512, 512)?;
+// Region is always RGBA f32 for consistency
+
+// Process in tiles
+for ty in (0..source.height()).step_by(512) {
+    for tx in (0..source.width()).step_by(512) {
+        let w = 512.min(source.width() - tx);
+        let h = 512.min(source.height() - ty);
+        let tile = source.read_region(tx, ty, w, h)?;
+        // Process tile...
+    }
 }
 ```
+
+**Note:** True tile-by-tile streaming is supported for tiled TIFF and tiled EXR. Scanline EXR and other formats may cache the full image internally for region access.
 
 ## Channel Classification
 

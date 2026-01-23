@@ -47,13 +47,16 @@ let bicubic = Filter::Bicubic;
 let lanczos = Filter::Lanczos3;
 ```
 
-### Scale Factor
+### Fit/Fill Dimensions
 
 ```rust
-// Calculate dimensions from scale
-let scale = 0.5;
-let dst_w = (src_w as f32 * scale) as usize;
-let dst_h = (src_h as f32 * scale) as usize;
+use vfx_ops::resize::{fit_dimensions, fill_dimensions};
+
+// Calculate dimensions to fit inside target (preserves aspect ratio)
+let (fit_w, fit_h) = fit_dimensions(src_w, src_h, max_w, max_h);
+
+// Calculate dimensions to fill target (may crop)
+let (fill_w, fill_h) = fill_dimensions(src_w, src_h, target_w, target_h);
 ```
 
 ## Filter Operations
@@ -90,14 +93,26 @@ let sharpened = convolve(&data, width, height, channels, &kernel)?;
 ```rust
 use vfx_ops::filter::Kernel;
 
-// Edge detection (Sobel)
-let sobel_x = Kernel::from_data(3, 3, vec![
+// Edge detection (Sobel) - NOTE: Kernel::new(data, width, height)
+let sobel_x = Kernel::new(vec![
     -1.0, 0.0, 1.0,
     -2.0, 0.0, 2.0,
     -1.0, 0.0, 1.0,
-]);
+], 3, 3)?;
 
 let edges = convolve(&data, w, h, c, &sobel_x)?;
+```
+
+### Morphological Operations
+
+```rust
+use vfx_ops::filter::{dilate, erode, morph_open, morph_close, morph_gradient};
+
+let dilated = dilate(&data, w, h, ch, radius)?;
+let eroded = erode(&data, w, h, ch, radius)?;
+let opened = morph_open(&data, w, h, ch, radius)?;
+let closed = morph_close(&data, w, h, ch, radius)?;
+let gradient = morph_gradient(&data, w, h, ch, radius)?;
 ```
 
 ## Composite
@@ -108,10 +123,10 @@ let edges = convolve(&data, w, h, c, &sobel_x)?;
 use vfx_ops::composite::{over, blend, BlendMode};
 
 // A over B (standard compositing)
-let result = over(&foreground, &background)?;
+let result = over(&foreground, &background, fg_w, fg_h)?;
 
 // With blend mode
-let multiplied = blend(&a, &b, BlendMode::Multiply)?;
+let multiplied = blend(&a, &b, width, height, BlendMode::Multiply)?;
 ```
 
 ### Blend Modes
@@ -135,13 +150,15 @@ BlendMode::Exclusion  // Softer difference
 VFX standard is premultiplied alpha:
 
 ```rust
-use vfx_ops::composite::{premultiply, unpremultiply};
+use vfx_ops::composite::{premultiply, unpremultiply, premultiply_inplace};
 
-// Convert straight → premultiplied
-premultiply(&mut rgba_data);
+// Per-pixel (returns new pixel)
+let premul_pixel = premultiply([r, g, b, a]);
+let straight_pixel = unpremultiply([r, g, b, a]);
 
-// Convert premultiplied → straight
-unpremultiply(&mut rgba_data);
+// In-place buffer operations
+premultiply_inplace(&mut rgba_buffer);
+unpremultiply_inplace(&mut rgba_buffer);
 ```
 
 ## Transform
@@ -149,10 +166,31 @@ unpremultiply(&mut rgba_data);
 ### Flip/Rotate
 
 ```rust
-use vfx_ops::transform::{flip_h, flip_v, rotate_90, rotate_180, rotate_270};
+use vfx_ops::transform::{flip_h, flip_v, rotate_90_cw, rotate_90_ccw, rotate_180};
 
-let flipped = flip_h(&data, w, h, c)?;
-let rotated = rotate_90(&data, w, h, c)?;
+// Horizontal flip (mirror)
+let flipped = flip_h(&data, w, h, c);
+
+// Vertical flip
+let flipped = flip_v(&data, w, h, c);
+
+// Rotate 90 degrees clockwise
+let rotated = rotate_90_cw(&data, w, h, c);
+
+// Rotate 90 degrees counter-clockwise
+let rotated = rotate_90_ccw(&data, w, h, c);
+
+// Rotate 180 degrees
+let rotated = rotate_180(&data, w, h, c);
+```
+
+### Arbitrary Rotation
+
+```rust
+use vfx_ops::transform::rotate;
+
+// Rotate by any angle (degrees), with fill color for uncovered areas
+let rotated = rotate(&data, w, h, c, angle_deg, &fill_color)?;
 ```
 
 ### Crop
@@ -172,43 +210,78 @@ use vfx_ops::transform::pad;
 let padded = pad(&data, w, h, c, left, right, top, bottom, &fill_color)?;
 ```
 
+### Tile
+
+```rust
+use vfx_ops::transform::tile;
+
+// Create tiled pattern
+let tiled = tile(&data, src_w, src_h, c, dst_w, dst_h)?;
+```
+
+### Paste
+
+```rust
+use vfx_ops::transform::paste;
+
+// Paste source onto destination at position
+paste(&src, src_w, src_h, &mut dst, dst_w, dst_h, c, dst_x, dst_y)?;
+```
+
 ## Warp
 
 ### Lens Distortion
 
 ```rust
-use vfx_ops::warp::{barrel_distort, pincushion_distort};
+use vfx_ops::warp::{barrel, pincushion, fisheye};
 
-// Barrel (fisheye-like)
-let warped = barrel_distort(&data, w, h, c, k1, k2)?;
+// Barrel distortion (fisheye-like)
+let warped = barrel(&data, w, h, c, k1, k2);
 
-// Pincushion (opposite)
-let warped = pincushion_distort(&data, w, h, c, k1, k2)?;
+// Pincushion distortion (opposite of barrel)
+let warped = pincushion(&data, w, h, c, k1, k2);
+
+// Fisheye effect
+let warped = fisheye(&data, w, h, c, strength);
 ```
 
-### ST Map
-
-Apply UV distortion from ST map:
+### Creative Warps
 
 ```rust
-use vfx_ops::warp::st_map;
+use vfx_ops::warp::{twist, wave, spherize, ripple};
 
-// st_map contains UV coordinates per pixel
-let warped = st_map(&data, w, h, c, &st_data)?;
+// Twist/twirl effect
+let warped = twist(&data, w, h, c, angle_deg, radius);
+
+// Wave distortion
+let warped = wave(&data, w, h, c, amplitude, frequency);
+
+// Spherize (bulge)
+let warped = spherize(&data, w, h, c, strength, radius);
+
+// Ripple effect
+let warped = ripple(&data, w, h, c, amplitude, frequency, decay);
 ```
 
 ## Layer Operations
 
-Process specific layers in multi-layer images:
+Process ImageLayer objects:
 
 ```rust
-use vfx_ops::layer_ops::{apply_to_layer, LayerMask};
+use vfx_ops::layer_ops::{resize_layer, blur_layer, crop_layer, sharpen_layer};
+use vfx_ops::resize::Filter;
 
-// Apply operation to specific layer
-apply_to_layer(&mut layered_image, "diffuse", |data| {
-    // Process layer data
-    Ok(())
-})?;
+// Resize a layer
+let resized = resize_layer(&layer, new_w, new_h, Filter::Lanczos3)?;
+
+// Blur a layer
+let blurred = blur_layer(&layer, radius)?;
+
+// Crop a layer
+let cropped = crop_layer(&layer, x, y, crop_w, crop_h)?;
+
+// Sharpen a layer
+let sharpened = sharpen_layer(&layer, amount)?;
 ```
 
 ## Parallel Processing
@@ -216,11 +289,13 @@ apply_to_layer(&mut layered_image, "diffuse", |data| {
 Operations use Rayon for multi-threading:
 
 ```rust
-// Feature enabled by default
-// Parallel processing is automatic for large images
+use vfx_ops::parallel;
 
-// Disable for debugging
-#[cfg(not(feature = "parallel"))]
+// Parallel versions of common operations
+let blurred = parallel::box_blur(&data, w, h, c, radius)?;
+let resized = parallel::resize(&data, src_w, src_h, dst_w, dst_h, c, filter)?;
+let composited = parallel::over(&fg, &bg, w, h)?;
+let filtered = parallel::convolve(&data, w, h, c, &kernel)?;
 ```
 
 ## FFT Operations
@@ -229,10 +304,19 @@ Frequency-domain processing (optional):
 
 ```rust
 #[cfg(feature = "fft")]
-use vfx_ops::fft::{fft_blur, fft_sharpen};
+use vfx_ops::fft::{fft_blur, fft_sharpen, fft_highpass, fft_convolve};
 
 // FFT-based blur (better for very large radii)
-let blurred = fft_blur(&data, w, h, c, radius)?;
+let blurred = fft_blur(&data, w, h, c, sigma)?;
+
+// FFT-based sharpen
+let sharpened = fft_sharpen(&data, w, h, c, sigma, amount)?;
+
+// FFT highpass filter
+let highpass = fft_highpass(&data, w, h, c, cutoff)?;
+
+// FFT convolution (faster for large kernels)
+let convolved = fft_convolve(&data, w, h, c, &kernel)?;
 ```
 
 ## Guard (Safety Checks)
@@ -240,11 +324,10 @@ let blurred = fft_blur(&data, w, h, c, radius)?;
 Validate operations before executing:
 
 ```rust
-use vfx_ops::guard::ensure_color_processing;
+use vfx_ops::guard::ensure_color_channels;
 
-// Check if image is safe for color operations
-// (e.g., not an ID pass or depth)
-ensure_color_processing(&image, "blur", allow_non_color)?;
+// Check if image has enough channels for color operations
+ensure_color_channels(&spec, "blur", allow_non_color)?;
 ```
 
 ## Error Handling
@@ -255,7 +338,7 @@ use vfx_ops::OpsError;
 match result {
     Err(OpsError::InvalidDimensions(msg)) => println!("Bad size: {}", msg),
     Err(OpsError::UnsupportedChannels(n)) => println!("Need 3+ channels, got {}", n),
-    Err(OpsError::FilterError(msg)) => println!("Filter failed: {}", msg),
+    Err(OpsError::InvalidParameter(msg)) => println!("Bad parameter: {}", msg),
     _ => {}
 }
 ```
@@ -263,16 +346,14 @@ match result {
 ## Performance Tips
 
 1. **Use appropriate filter** - Nearest for speed, Lanczos for quality
-2. **Process in tiles** - For very large images
-3. **Enable parallel feature** - Automatic multi-threading
+2. **Use parallel module** - For automatic multi-threading on large images
+3. **Use FFT blur** - For radius > 50 pixels
 4. **Pre-multiply alpha** - Before compositing operations
-5. **Use FFT blur** - For radius > 50 pixels
 
 ## Dependencies
 
 - `vfx-core` - Core types
 - `vfx-io` - Image data types
 - `vfx-math` - Interpolation
-- `vfx-compute` - GPU acceleration
-- `rayon` - Parallelism (optional)
+- `rayon` - Parallelism
 - `rustfft` - FFT (optional)

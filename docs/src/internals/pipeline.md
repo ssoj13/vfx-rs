@@ -66,23 +66,23 @@ let working = image.to_f32();
 ### Color Transform Chain
 
 ```rust
+use vfx_transfer::srgb;
+use vfx_color::aces;
+
 // Typical ACES workflow:
-let data = image.to_f32();
+let mut data = image.to_f32();
+let channels = image.channels as usize;
 
-// 1. Apply transfer function (decode)
-apply_srgb_eotf(&mut data);
+// 1. Apply transfer function (decode sRGB to linear)
+for pixel in data.chunks_exact_mut(channels) {
+    let rgb = srgb::eotf_rgb([pixel[0], pixel[1], pixel[2]]);
+    pixel[0] = rgb[0];
+    pixel[1] = rgb[1];
+    pixel[2] = rgb[2];
+}
 
-// 2. Apply matrix (color space conversion)
-apply_matrix(&mut data, &srgb_to_acescg);
-
-// 3. Apply tone mapping
-apply_rrt(&mut data);
-
-// 4. Apply inverse matrix
-apply_matrix(&mut data, &acescg_to_srgb);
-
-// 5. Apply transfer function (encode)
-apply_srgb_oetf(&mut data);
+// 2. Apply ACES RRT+ODT (returns new Vec)
+let display = aces::apply_rrt_odt_srgb(&data, channels);
 ```
 
 ### Parallel Processing

@@ -72,7 +72,12 @@ fn bench_color_pipeline(c: &mut Criterion) {
     c.bench_function("srgb_to_linear_1080p", |b| {
         b.iter(|| {
             let mut d = data.clone();
-            apply_srgb_to_linear(&mut d);
+            for pixel in d.chunks_exact_mut(3) {
+                let rgb = vfx_transfer::srgb::eotf_rgb([pixel[0], pixel[1], pixel[2]]);
+                pixel[0] = rgb[0];
+                pixel[1] = rgb[1];
+                pixel[2] = rgb[2];
+            }
         })
     });
 }
@@ -82,17 +87,19 @@ fn bench_color_pipeline(c: &mut Criterion) {
 
 ```rust
 fn bench_lut3d(c: &mut Criterion) {
-    let lut = Lut3D::load("test/luts/film.cube").unwrap();
+    // Load 3D LUT from .cube file
+    let lut = vfx_lut::cube::read_3d("test/luts/film.cube").unwrap();
     let data = vec![0.5f32; 1920 * 1080 * 3];
     
     let mut group = c.benchmark_group("lut3d");
     
-    group.bench_function("trilinear", |b| {
-        b.iter(|| lut.apply_trilinear(&data))
-    });
-    
-    group.bench_function("tetrahedral", |b| {
-        b.iter(|| lut.apply_tetrahedral(&data))
+    // lut.apply() uses the interpolation mode set on the LUT
+    group.bench_function("apply", |b| {
+        b.iter(|| {
+            for pixel in data.chunks_exact(3) {
+                black_box(lut.apply([pixel[0], pixel[1], pixel[2]]));
+            }
+        })
     });
     
     group.finish();

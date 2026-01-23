@@ -36,13 +36,47 @@ maturin build --release
 cargo build --release --all-features
 ```
 
-## Build without Optional Features
+## Build with Specific Format Features
+
+Format features (exr, png, jpeg, etc.) are controlled in `vfx-io`, not `vfx-cli`.
+The CLI includes all default formats via its dependency on vfx-io.
 
 ```bash
-# Minimal build (no HEIF, WebP, JP2)
-cargo build --release -p vfx-cli --no-default-features \
-  --features exr,png,jpeg,tiff,dpx,hdr
+# Build vfx-io with specific formats only
+cargo build -p vfx-io --no-default-features --features exr,png,jpeg
+
+# Build workspace with minimal formats
+cargo build --release --no-default-features -F vfx-io/exr,vfx-io/png
+
+# Build CLI with viewer disabled
+cargo build -p vfx-cli --release --no-default-features
 ```
+
+### Available vfx-io Features
+
+| Feature | Description |
+|---------|-------------|
+| `exr` | OpenEXR format (default) |
+| `png` | PNG format (default) |
+| `jpeg` | JPEG read/write (default) |
+| `tiff` | TIFF format (default) |
+| `dpx` | DPX format (default) |
+| `hdr` | Radiance HDR (default) |
+| `webp` | WebP format |
+| `avif` | AVIF format |
+| `jp2` | JPEG2000 (requires OpenJPEG) |
+| `psd` | Photoshop PSD/PSB |
+| `dds` | DirectDraw Surface |
+| `ktx` | Khronos KTX2 |
+| `heif` | HEIF/HEIC (requires libheif) |
+| `text` | Text rendering |
+| `rayon` | Parallel processing |
+
+### vfx-cli Features
+
+| Feature | Description |
+|---------|-------------|
+| `viewer` | Interactive image viewer (default) |
 
 ## Cross-Compilation
 

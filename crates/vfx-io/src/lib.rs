@@ -874,6 +874,15 @@ impl ChannelSamples {
         }
     }
 
+    /// Get a single f32 sample by index, converting U32 if needed.
+    #[inline]
+    pub fn get_f32(&self, index: usize) -> Option<f32> {
+        match self {
+            Self::F32(data) => data.get(index).copied(),
+            Self::U32(data) => data.get(index).map(|&v| v as f32),
+        }
+    }
+
     /// Convert to F32, casting U32 if needed.
     pub fn to_f32(&self) -> Vec<f32> {
         match self {

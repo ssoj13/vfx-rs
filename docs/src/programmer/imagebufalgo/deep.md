@@ -16,6 +16,15 @@ Regular Image:        Deep Image:
 └─────────────┘       └─────────────┘
 ```
 
+## Reading Deep Data
+
+```rust
+use vfx_io;
+
+// Read deep EXR file
+let deep = vfx_io::read_deep("render_deep.exr")?;
+```
+
 ## Deep Merge
 
 Merge multiple deep images into one:
@@ -23,11 +32,11 @@ Merge multiple deep images into one:
 ```rust
 use vfx_io::imagebufalgo::deep_merge;
 
-let fg_deep = vfx_io::read("fg_deep.exr")?;
-let bg_deep = vfx_io::read("bg_deep.exr")?;
+let fg_deep = vfx_io::read_deep("fg_deep.exr")?;
+let bg_deep = vfx_io::read_deep("bg_deep.exr")?;
 
-// Merge deep images
-let merged = deep_merge(&fg_deep, &bg_deep)?;
+// Merge deep images (returns DeepData)
+let merged = deep_merge(&fg_deep, &bg_deep);
 ```
 
 ## Deep Flatten
@@ -35,12 +44,14 @@ let merged = deep_merge(&fg_deep, &bg_deep)?;
 Convert deep image to regular image:
 
 ```rust
-use vfx_io::imagebufalgo::deep_flatten;
+use vfx_io::imagebufalgo::flatten_deep;
 
-let deep = vfx_io::read("render_deep.exr")?;
+let deep = vfx_io::read_deep("render_deep.exr")?;
 
-// Flatten to single sample per pixel
-let flat = deep_flatten(&deep)?;
+// Flatten to single sample per pixel (needs width and height)
+let width = 1920;
+let height = 1080;
+let flat = flatten_deep(&deep, width, height);
 ```
 
 ## Deep Holdout
@@ -48,13 +59,28 @@ let flat = deep_flatten(&deep)?;
 Apply holdout (depth-based cutout):
 
 ```rust
-use vfx_io::imagebufalgo::deep_holdout;
+use vfx_io::imagebufalgo::{deep_holdout, deep_holdout_matte};
 
-let deep = vfx_io::read("render_deep.exr")?;
-let holdout = vfx_io::read("holdout.exr")?;
+let mut deep = vfx_io::read_deep("render_deep.exr")?;
 
-// Cut out by depth
-let held = deep_holdout(&deep, &holdout)?;
+// Cut out samples beyond a z depth (modifies in place)
+deep_holdout(&deep, 10.0);
+
+// Or use a matte deep image for holdout
+let holdout = vfx_io::read_deep("holdout_deep.exr")?;
+deep_holdout_matte(&deep, &holdout);
+```
+
+## Convert Regular to Deep
+
+```rust
+use vfx_io::imagebufalgo::deepen;
+use vfx_io::ImageBuf;
+
+let image = ImageBuf::from_file("image.exr")?;
+
+// Convert to deep with constant Z value
+let deep = deepen(&image, 5.0);
 ```
 
 ## Deep Compositing
@@ -74,39 +100,47 @@ FG + BG = correct merge at every depth
 ### Example Workflow
 
 ```rust
+use vfx_io::imagebufalgo::{deep_merge, flatten_deep};
+
 // Load deep renders from multiple sources
-let hero_deep = vfx_io::read("hero_deep.exr")?;
-let env_deep = vfx_io::read("environment_deep.exr")?;
-let fx_deep = vfx_io::read("effects_deep.exr")?;
+let hero_deep = vfx_io::read_deep("hero_deep.exr")?;
+let env_deep = vfx_io::read_deep("environment_deep.exr")?;
+let fx_deep = vfx_io::read_deep("effects_deep.exr")?;
 
 // Merge all layers (order doesn't matter for deep)
-let mut merged = deep_merge(&hero_deep, &env_deep)?;
-merged = deep_merge(&merged, &fx_deep)?;
+let merged = deep_merge(&hero_deep, &env_deep);
+let merged = deep_merge(&merged, &fx_deep);
 
 // Flatten for final output
-let final_image = deep_flatten(&merged)?;
+let final_image = flatten_deep(&merged, 1920, 1080);
 
-vfx_io::write("final.exr", &final_image)?;
+final_image.write("final.exr")?;
 ```
 
-## Deep Sample Operations
-
-### Get Sample Count
+## Deep Statistics
 
 ```rust
-use vfx_io::imagebufalgo::deep_sample_count;
+use vfx_io::imagebufalgo::deep_stats;
 
-let counts = deep_sample_count(&deep)?;
-// counts is 2D array of sample counts per pixel
+let deep = vfx_io::read_deep("render_deep.exr")?;
+let stats = deep_stats(&deep);
+
+println!("Total samples: {}", stats.total_samples);
+println!("Max samples per pixel: {}", stats.max_samples);
+println!("Z range: {} - {}", stats.min_z, stats.max_z);
 ```
 
-### Trim Samples
+## Deep Tidy
+
+Clean up deep data (merge overlapping samples):
 
 ```rust
-use vfx_io::imagebufalgo::deep_trim;
+use vfx_io::imagebufalgo::deep_tidy;
 
-// Remove samples outside depth range
-let trimmed = deep_trim(&deep, 0.1, 100.0)?;
+let mut deep = vfx_io::read_deep("noisy_deep.exr")?;
+
+// Clean up overlapping samples
+deep_tidy(&deep);
 ```
 
 ## Use Cases
@@ -115,31 +149,31 @@ let trimmed = deep_trim(&deep, 0.1, 100.0)?;
 
 ```rust
 // Merge volumetric renders
-let smoke_deep = vfx_io::read("smoke_deep.exr")?;
-let fire_deep = vfx_io::read("fire_deep.exr")?;
+let smoke_deep = vfx_io::read_deep("smoke_deep.exr")?;
+let fire_deep = vfx_io::read_deep("fire_deep.exr")?;
 
-let volumes = deep_merge(&smoke_deep, &fire_deep)?;
+let volumes = deep_merge(&smoke_deep, &fire_deep);
 ```
 
 ### Character Compositing
 
 ```rust
 // Characters that intersect in 3D space
-let char_a = vfx_io::read("char_a_deep.exr")?;
-let char_b = vfx_io::read("char_b_deep.exr")?;
+let char_a = vfx_io::read_deep("char_a_deep.exr")?;
+let char_b = vfx_io::read_deep("char_b_deep.exr")?;
 
 // Correct compositing even where they overlap
-let chars = deep_merge(&char_a, &char_b)?;
+let chars = deep_merge(&char_a, &char_b);
 ```
 
 ### Set Extension
 
 ```rust
 // Add CG to plate with correct depth interaction
-let plate_deep = vfx_io::read("plate_deep.exr")?;
-let cg_extension = vfx_io::read("cg_set_deep.exr")?;
+let plate_deep = vfx_io::read_deep("plate_deep.exr")?;
+let cg_extension = vfx_io::read_deep("cg_set_deep.exr")?;
 
-let extended = deep_merge(&plate_deep, &cg_extension)?;
+let extended = deep_merge(&plate_deep, &cg_extension);
 ```
 
 ## Performance Considerations
@@ -153,6 +187,6 @@ Deep images require more memory and processing:
 | Flatten | N/A | O(n × samples) |
 
 Optimization tips:
-- Trim unnecessary depth ranges before merge
+- Use holdout to remove unnecessary depth ranges before merge
 - Use reasonable sample density
 - Flatten intermediate results when deep data no longer needed

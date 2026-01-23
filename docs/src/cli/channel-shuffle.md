@@ -21,12 +21,15 @@ vfx channel-shuffle <INPUT> -o <OUTPUT> -p <PATTERN>
 
 | Character | Meaning |
 |-----------|---------|
-| `R` | Red channel |
-| `G` | Green channel |
-| `B` | Blue channel |
-| `A` | Alpha channel |
+| `R` | Red channel (index 0) |
+| `G` | Green channel (index 1) |
+| `B` | Blue channel (index 2) |
+| `A` | Alpha channel (index 3) |
+| `2-9` | Numeric channel index |
 | `0` | Black (0.0) |
 | `1` | White (1.0) |
+
+**Note:** `0` and `1` are interpreted as constants (black/white), not channel indices. Use `R`, `G`, `B`, `A` for channels 0-3, and digits 2-9 for channels 4+.
 
 Pattern length determines output channels.
 

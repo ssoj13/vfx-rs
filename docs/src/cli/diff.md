@@ -48,10 +48,10 @@ vfx diff original.exr processed.exr
 ### Save Difference Image
 
 ```bash
-# Generate visual difference
+# Generate visual difference (scaled 10x for visibility)
 vfx diff a.exr b.exr -o diff.exr
 
-# The difference image shows absolute per-pixel error
+# Note: difference image is `|A - B| * 10` clamped to 1.0
 ```
 
 ### Set Threshold
@@ -60,7 +60,7 @@ vfx diff a.exr b.exr -o diff.exr
 # Fail if max error exceeds 0.01
 vfx diff expected.exr actual.exr -t 0.01
 
-# Exit code 0 = pass, 1 = fail
+# Exit code 0 = pass, 1 = fail or error
 ```
 
 ### Warning Threshold
@@ -104,7 +104,7 @@ vfx diff comp_v1.exr comp_v2.exr -o changes.exr
 
 The output difference image contains:
 - Per-channel difference scaled by 10x: `min(|A - B| * 10, 1.0)`
-- Same channel count as input (no special alpha handling)
+- Same channel count as input (compares common channels)
 - Already amplified for visibility
 
 ```bash
@@ -118,8 +118,9 @@ vfx diff a.exr b.exr -o diff.exr
 | Code | Meaning |
 |------|---------|
 | 0 | Images match within threshold |
-| 1 | Images differ beyond threshold |
-| 2 | Error (file not found, size mismatch, etc.) |
+| 1 | Images differ beyond threshold, or error occurred |
+
+**Note:** Both failures (threshold exceeded) and errors (file not found, dimension mismatch) return exit code 1.
 
 ## See Also
 

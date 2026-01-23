@@ -33,7 +33,6 @@ Complete list of all features implemented in vfx-rs. Use this page to track what
 | Apple Log | **Done** | OCIO AppleCameras.cpp | iPhone 15 Pro+ |
 | RED REDLogFilm | **Done** | OCIO RedCameras.cpp | Original |
 | RED Log3G10 | **Done** | OCIO RedCameras.cpp | Current standard |
-| RED Log3G12 | **Done** | OCIO RedCameras.cpp | Extended |
 | BMD Film Gen5 | **Done** | Blackmagic spec | Pocket 6K Pro+ |
 | ACEScc | **Done** | AMPAS S-2014-003 | Grading space |
 | ACEScct | **Done** | AMPAS S-2016-001 | Grading with toe |
@@ -60,7 +59,6 @@ Complete list of all features implemented in vfx-rs. Use this page to track what
 | Display P3 | **Done** | D65 | Apple displays |
 | Adobe RGB | **Done** | D65 | Photography |
 | ProPhoto RGB | **Done** | D50 | Wide gamut |
-| CIE RGB | **Done** | E | Reference |
 
 ### ACES
 
@@ -170,8 +168,7 @@ Pre-computed matrices:
 | TIFF | **Done** | **Done** | 8/16/32-bit, tiles |
 | DPX | **Done** | **Done** | 10/12/16-bit, film scanning |
 | HDR (Radiance) | **Done** | **Done** | RGBE encoding |
-| PSD | **Done** | No | Layers read only |
-| TX (tiled) | **Done** | **Done** | Mipmapped textures |
+
 
 ### Optional Formats
 
@@ -179,8 +176,8 @@ Pre-computed matrices:
 |--------|------|-------|--------------|
 | HEIF/HEIC | **Done** | **Done** | `heif` |
 | WebP | **Done** | **Done** | `webp` |
-| AVIF | **Done** | **Done** | `avif` |
-| JPEG 2000 | **Done** | **Done** | `jp2` |
+| AVIF | No | **Done** | `avif` (write-only) |
+| JPEG 2000 | **Done** | No | `jp2` (read-only) |
 
 ### Sequence Formats
 

@@ -16,8 +16,8 @@ let config = Config::from_file("config.ocio")?;
 // Create processor for color conversion
 let processor = config.processor("ACEScg", "sRGB")?;
 
-// Apply to pixels
-let mut pixels = vec![0.5f32, 0.3, 0.2, 1.0]; // RGBA
+// Apply to pixels (array of RGBA tuples)
+let mut pixels: Vec<[f32; 4]> = vec![[0.5, 0.3, 0.2, 1.0]];
 processor.apply_rgba(&mut pixels);
 ```
 
@@ -28,14 +28,11 @@ processor.apply_rgba(&mut pixels);
 ```rust
 use vfx_ocio::Config;
 
-// From OCIO environment variable
-let config = Config::from_env()?;
-
 // From file
 let config = Config::from_file("/path/to/config.ocio")?;
 
 // From YAML string
-let config = Config::from_string(yaml_content, working_dir)?;
+let config = Config::from_yaml_str(yaml_content, working_dir)?;
 
 // Built-in configs
 let aces = builtin::aces_1_3();
@@ -47,7 +44,6 @@ let srgb = builtin::srgb_studio();
 | Config | Description |
 |--------|-------------|
 | `aces_1_3()` | ACES 1.3 CG config |
-| `aces_1_2()` | ACES 1.2 CG config |
 | `srgb_studio()` | Simple sRGB studio config |
 
 ## Color Spaces
@@ -114,17 +110,21 @@ for (role, colorspace) in config.roles().iter() {
 // Color space conversion
 let processor = config.processor("ACEScg", "sRGB")?;
 
-// Apply to RGB data
-let mut rgb = vec![0.5f32, 0.3, 0.2];
+// Apply to RGB data (array of 3-element arrays)
+let mut rgb: Vec<[f32; 3]> = vec![[0.5, 0.3, 0.2]];
 processor.apply_rgb(&mut rgb);
 
-// Apply to RGBA data
-let mut rgba = vec![0.5f32, 0.3, 0.2, 1.0];
+// Apply to RGBA data (array of 4-element arrays)
+let mut rgba: Vec<[f32; 4]> = vec![[0.5, 0.3, 0.2, 1.0]];
 processor.apply_rgba(&mut rgba);
 
-// Batch processing (more efficient)
-let mut pixels: Vec<[f32; 3]> = load_image();
-processor.apply_rgb_batch(&mut pixels);
+// Multiple pixels
+let mut pixels: Vec<[f32; 3]> = vec![
+    [0.5, 0.3, 0.2],
+    [0.8, 0.1, 0.4],
+    [0.2, 0.6, 0.9],
+];
+processor.apply_rgb(&mut pixels);
 ```
 
 ### Display Processing
@@ -168,17 +168,20 @@ let processor = config.processor_with_context("src", "dst", &ctx)?;
 For real-time grading adjustments:
 
 ```rust
-use vfx_ocio::DynamicProcessorBuilder;
+use vfx_ocio::{DynamicProcessor, DynamicProcessorBuilder};
 
 let processor = config.processor("ACEScg", "sRGB")?;
 
-let dynamic = DynamicProcessorBuilder::new()
+// Build dynamic processor
+let dynamic: DynamicProcessor = DynamicProcessorBuilder::new()
     .exposure(1.5)      // +1.5 stops
     .contrast(1.1)      // 10% more contrast
     .gamma(1.0)         // neutral gamma
     .saturation(1.2)    // 20% more saturation
-    .build(&processor)?;
+    .build(processor);  // consumes processor, returns DynamicProcessor
 
+// Apply to pixels
+let mut pixels: Vec<[f32; 4]> = vec![[0.5, 0.3, 0.2, 1.0]];
 dynamic.apply_rgba(&mut pixels);
 
 // Adjust in real-time
@@ -194,15 +197,15 @@ Export color transforms as LUT files:
 use vfx_ocio::Baker;
 
 let processor = config.processor("ACEScg", "sRGB")?;
-
-// 1D LUT
 let baker = Baker::new(&processor);
-let lut1d = baker.bake_1d(1024)?;
-lut1d.write_cube("output.cube")?;
 
-// 3D LUT
-let lut3d = baker.bake_3d(33)?;
-lut3d.write_cube("output_3d.cube")?;
+// Bake 1D LUT
+let lut1d = baker.bake_lut_1d(1024)?;
+baker.write_cube_1d("output_1d.cube", &lut1d)?;
+
+// Bake 3D LUT
+let lut3d = baker.bake_lut_3d(33)?;
+baker.write_cube_3d("output_3d.cube", &lut3d)?;
 ```
 
 ## Processor Cache
@@ -212,11 +215,11 @@ For repeated conversions:
 ```rust
 use vfx_ocio::ProcessorCache;
 
-let cache = ProcessorCache::new(config);
+let cache = ProcessorCache::new();
 
 // First call creates processor, subsequent calls return cached
-let proc = cache.get("ACEScg", "sRGB")?;
-let proc2 = cache.get("ACEScg", "sRGB")?; // Cache hit
+let proc = cache.get_or_create(&config, "ACEScg", "sRGB")?;
+let proc2 = cache.get_or_create(&config, "ACEScg", "sRGB")?; // Cache hit
 
 cache.clear(); // Clear all cached processors
 ```
@@ -243,35 +246,51 @@ cache.clear(); // Clear all cached processors
 | DisplayViewTransform | Yes | Yes | Display output |
 | LookTransform | Yes | Yes | Creative look |
 | ExposureContrastTransform | Yes | Yes | Dynamic exposure/contrast |
-| FixedFunctionTransform | Yes | Partial | ACES gamut mapping, etc. |
+| FixedFunctionTransform | Yes | No | ACES gamut mapping, etc. |
 | GradingPrimaryTransform | Yes | Yes | Primary color grading |
 | GradingToneTransform | Yes | Yes | Tone curve grading |
-| GradingRGBCurveTransform | Yes | Partial | RGB curve grading |
+| GradingRGBCurveTransform | Yes | No | RGB curve grading |
 | AllocationTransform | Yes | Yes | GPU texture allocation |
 | BuiltinTransform | Yes | No | ACES built-in transforms |
 
 ### BuiltinTransform Styles
 
-Supported built-in transform styles:
+Supported built-in transform styles (lowercase, no separators):
 
 ```rust
 // Identity
-"IDENTITY"
+"identity"
 
 // ACES color space conversions
-"ACES-AP0_to_AP1"
-"ACES-AP1_to_AP0"
-"ACES-AP0_to_XYZ-D65"
-"ACES-AP1_to_XYZ-D65"
-"ACEScct_to_ACES2065-1"
-"ACEScc_to_ACES2065-1"
+"acesap0toap1"           // or "aces2065toacescg"
+"acesap1toap0"           // or "acescgtoaces2065"
+"acesap0toxyzd65bfd"     // or "aces20651toxyzd65"
+"acesap1toxyzd65bfd"     // or "acescgtoxyzd65"
+"acesccttoaces20651"
+"acescctoaces20651"
 
 // Camera to ACES
-"ARRI_LOGC3_to_ACES2065-1"
-"ARRI_LOGC4_to_ACES2065-1"
-"SONY_SLOG3_SGAMUT3_to_ACES2065-1"
-"RED_LOG3G10_RWG_to_ACES2065-1"
-"PANASONIC_VLOG_VGAMUT_to_ACES2065-1"
+"arrilogc3toaces20651"   // or "logc3toaces"
+"arrilogc4toaces20651"   // or "logc4toaces"
+"sonyslog3sgamut3toaces20651" // or "slog3toaces"
+"redlog3g10rwgtoaces20651"    // or "log3g10toaces"
+"panasonicvlogvgamuttoaces20651" // or "vlogtoaces"
+"applelogtoaces20651"
+"canonclog2cgamuttoaces20651"
+"canonclog3cgamuttoaces20651"
+
+// Display transforms
+"displayciexyzd65tosrgb"
+"displayciexyzd65todisplayp3"
+"displayciexyzd65torec.1886rec.709"
+"displayciexyzd65torec.2100pq"
+"displayciexyzd65torec.2100hlg1000nit"
+
+// Curves
+"curvest2084tolinear"    // or "curvepqtolinear"
+"curvelineartost2084"    // or "curvelineartopq"
+"curvehlgtolinear"
+"curvelineartohlg"
 ```
 
 ## Validation

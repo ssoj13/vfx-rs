@@ -148,21 +148,20 @@ echo "Shot ${SHOT} complete!"
 Process multiple images in a directory.
 
 ```bash
+# Note: `batch` command supports convert, resize, blur, flip_h, flip_v
+# ACES transforms must be done with a shell loop:
+
 # Convert all JPEG files to ACEScg EXR
-vfx batch -i "input/*.jpg" \
-    -o ./acescg_exr \
-    --op aces \
-    --args transform=idt \
-    -f exr
+for f in input/*.jpg; do
+    vfx aces "$f" -o "acescg_exr/$(basename "$f" .jpg).exr" -t idt
+done
 
 # Apply RRT+ODT to all ACEScg files
-vfx batch -i "acescg_exr/*.exr" \
-    -o ./output_srgb \
-    --op aces \
-    --args transform=rrt-odt \
-    -f png
+for f in acescg_exr/*.exr; do
+    vfx aces "$f" -o "output_srgb/$(basename "$f" .exr).png" -t rrt-odt
+done
 
-# Resize all outputs
+# Resize all outputs (batch supports resize)
 vfx batch -i "output_srgb/*.png" \
     -o ./thumbs \
     --op resize \
@@ -190,14 +189,15 @@ vfx extract-layer vfx_shot.exr \
     -o beauty.exr --layer beauty
 
 # Merge separate passes into layers
+# Note: --names uses repeated flags, not comma-separated
 vfx merge-layers \
     beauty.exr diffuse.exr specular.exr depth.exr \
     -o combined.exr \
-    --names beauty,diffuse,specular,depth
+    --names beauty --names diffuse --names specular --names depth
 
-# Apply ACES to specific layer
-vfx aces vfx_shot.exr \
-    -o preview.jpg -t rrt-odt --layer beauty
+# Apply ACES to beauty layer (extract first, then transform)
+vfx extract-layer vfx_shot.exr -o beauty_only.exr --layer beauty
+vfx aces beauty_only.exr -o preview.jpg -t rrt-odt
 ```
 
 ## Example 8: UDIM Texture Pipeline

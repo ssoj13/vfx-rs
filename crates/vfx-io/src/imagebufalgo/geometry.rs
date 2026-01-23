@@ -840,7 +840,7 @@ mod tests {
     #[test]
     fn test_rotate180() {
         let spec = ImageSpec::gray(4, 4);
-        let mut src = ImageBuf::new(spec, InitializePixels::No);
+        let mut src = ImageBuf::new(spec, InitializePixels::Yes);
 
         // Set top-left corner pixel
         src.setpixel(0, 0, 0, &[1.0]);

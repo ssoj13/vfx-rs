@@ -13,6 +13,7 @@ vfx composite [OPTIONS] <FG> <BG> -o <OUTPUT>
 | Option | Description |
 |--------|-------------|
 | `-m, --mode <MODE>` | Blend mode (default: over) |
+| `--opacity <VAL>` | Opacity 0.0-1.0 (default: 1.0) - **not yet implemented** |
 
 ## Blend Modes
 

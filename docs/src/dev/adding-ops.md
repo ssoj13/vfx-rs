@@ -1,325 +1,292 @@
 # Adding Operations
 
-This guide covers adding new image processing operations to `vfx-ops`.
+Guide for adding new image processing operations to `vfx-ops`.
 
-## Operation Design Principles
+## Architecture Overview
 
-1. **Pure functions** - take input, return output, no side effects
-2. **Float-based** - work on `f32` data for precision
-3. **Channel-agnostic** - handle any channel count
-4. **Error handling** - return `Result` for fallible operations
-5. **Testable** - easy to unit test with synthetic data
+Operations in `vfx-ops` are organized by category:
 
-## Step-by-Step: Adding Sharpen
+```
+vfx-ops/src/
+    filter.rs       <- Convolution, blur, sharpen, morphological ops
+    transform.rs    <- Flip, rotate, crop, pad
+    resize.rs       <- Image scaling with various filters
+    composite.rs    <- Porter-Duff, blend modes
+    warp.rs         <- Lens distortion, creative warps
+    layer_ops.rs    <- Operations on ImageLayer structs
+    parallel.rs     <- Parallelized versions of ops
+    fft.rs          <- Frequency-domain processing
+```
 
-### 1. Create Module
+## Design Principles
 
-Create `vfx-ops/src/sharpen.rs`:
+1. **Pure functions** - Take input, return output, no side effects
+2. **Float-based** - Work on `f32` data for precision  
+3. **Channel-agnostic** - Handle any channel count
+4. **Error handling** - Return `OpsResult<T>` for fallible operations
+5. **Parallel ready** - Use rayon for large images
+
+## Step-by-Step: Adding Edge Detection
+
+### 1. Identify the Right Module
+
+Edge detection uses convolution, so it belongs in `filter.rs`.
+
+### 2. Add Kernel Factory
+
+In `vfx-ops/src/filter.rs`, add a new `Kernel` constructor:
 
 ```rust
-//! Sharpen filter operations.
-//!
-//! Unsharp mask and edge enhancement.
+impl Kernel {
+    // ... existing methods ...
+    
+    /// Creates a Sobel X edge detection kernel.
+    pub fn sobel_x() -> Self {
+        Self {
+            data: vec![
+                -1.0, 0.0, 1.0,
+                -2.0, 0.0, 2.0,
+                -1.0, 0.0, 1.0,
+            ],
+            width: 3,
+            height: 3,
+        }
+    }
+    
+    /// Creates a Sobel Y edge detection kernel.
+    pub fn sobel_y() -> Self {
+        Self {
+            data: vec![
+                -1.0, -2.0, -1.0,
+                 0.0,  0.0,  0.0,
+                 1.0,  2.0,  1.0,
+            ],
+            width: 3,
+            height: 3,
+        }
+    }
+}
+```
 
-use anyhow::Result;
+### 3. Add Operation Function
 
-/// Apply unsharp mask sharpening.
+```rust
+/// Detect edges using Sobel operator.
 ///
-/// # Arguments
-/// * `data` - Pixel data (f32, any channel count)
-/// * `width`, `height` - Image dimensions
-/// * `channels` - Number of channels
-/// * `amount` - Sharpening strength (0.0 = none, 1.0 = normal)
-/// * `radius` - Blur radius for the mask
-/// * `threshold` - Minimum difference to sharpen
-///
-/// # Returns
-/// Sharpened pixel data.
-pub fn unsharp_mask(
+/// Returns gradient magnitude: sqrt(gx^2 + gy^2)
+pub fn sobel_edges(
     data: &[f32],
     width: usize,
     height: usize,
     channels: usize,
-    amount: f32,
-    radius: usize,
-    threshold: f32,
-) -> Result<Vec<f32>> {
-    // Validate input
-    let expected = width * height * channels;
-    if data.len() != expected {
-        anyhow::bail!(
-            "Data length {} doesn't match {}x{}x{}",
-            data.len(), width, height, channels
-        );
-    }
+) -> OpsResult<Vec<f32>> {
+    let gx = convolve(data, width, height, channels, &Kernel::sobel_x())?;
+    let gy = convolve(data, width, height, channels, &Kernel::sobel_y())?;
     
-    // Create blurred version
-    let blurred = crate::filter::box_blur(data, width, height, channels, radius)?;
-    
-    // Apply unsharp mask: result = original + amount * (original - blurred)
-    let mut result = Vec::with_capacity(data.len());
-    
+    let mut result = vec![0.0; data.len()];
     for i in 0..data.len() {
-        let original = data[i];
-        let blur = blurred[i];
-        let diff = original - blur;
-        
-        // Apply threshold
-        let sharpened = if diff.abs() > threshold {
-            original + amount * diff
-        } else {
-            original
-        };
-        
-        result.push(sharpened);
+        result[i] = (gx[i] * gx[i] + gy[i] * gy[i]).sqrt();
     }
     
     Ok(result)
 }
+```
 
-/// Simple laplacian sharpening.
-pub fn laplacian_sharpen(
-    data: &[f32],
-    width: usize,
-    height: usize,
-    channels: usize,
-    strength: f32,
-) -> Result<Vec<f32>> {
-    use crate::filter::{Kernel, convolve};
-    
-    // Laplacian kernel
-    let kernel = Kernel::new(3, 3, vec![
-         0.0, -1.0,  0.0,
-        -1.0,  4.0, -1.0,
-         0.0, -1.0,  0.0,
-    ]);
-    
-    let edges = convolve(data, width, height, channels, &kernel)?;
-    
-    // Add edges to original
-    let result: Vec<f32> = data.iter()
-        .zip(edges.iter())
-        .map(|(&orig, &edge)| orig + strength * edge)
-        .collect();
-    
-    Ok(result)
-}
+### 4. Add Tests
 
+```rust
 #[cfg(test)]
 mod tests {
     use super::*;
     
     #[test]
-    fn test_unsharp_mask_dimensions() {
-        let data = vec![0.5f32; 100 * 100 * 3];
-        let result = unsharp_mask(&data, 100, 100, 3, 1.0, 2, 0.0).unwrap();
-        assert_eq!(result.len(), data.len());
-    }
-    
-    #[test]
-    fn test_unsharp_zero_amount() {
-        let data: Vec<f32> = (0..100).map(|i| i as f32 / 100.0).collect();
-        let result = unsharp_mask(&data, 10, 10, 1, 0.0, 2, 0.0).unwrap();
-        
-        // With amount=0, output should equal input
-        for (a, b) in data.iter().zip(result.iter()) {
-            assert!((a - b).abs() < 1e-6);
+    fn test_sobel_edges() {
+        // Vertical edge: left half = 0, right half = 1
+        let mut data = vec![0.0f32; 8 * 8 * 1];
+        for y in 0..8 {
+            for x in 4..8 {
+                data[y * 8 + x] = 1.0;
+            }
         }
+        
+        let edges = sobel_edges(&data, 8, 8, 1).unwrap();
+        
+        // Edge should be detected at x=4 boundary
+        // Check center row (y=4)
+        let row = &edges[4 * 8..(4 + 1) * 8];
+        
+        // Pixels at edge should have high gradient
+        assert!(row[3] > 0.5 || row[4] > 0.5);
+        
+        // Pixels away from edge should have low gradient
+        assert!(row[0] < 0.1);
+        assert!(row[7] < 0.1);
     }
     
     #[test]
-    fn test_laplacian_flat_image() {
-        // Flat image should have no edges
-        let data = vec![0.5f32; 100 * 100 * 1];
-        let result = laplacian_sharpen(&data, 100, 100, 1, 1.0).unwrap();
+    fn test_flat_image_no_edges() {
+        let data = vec![0.5f32; 16 * 16 * 3];
+        let edges = sobel_edges(&data, 16, 16, 3).unwrap();
         
-        // Center pixels should be unchanged (edge pixels may differ)
-        for y in 2..98 {
-            for x in 2..98 {
-                let idx = y * 100 + x;
-                assert!((result[idx] - 0.5).abs() < 0.01);
+        // Center pixels should have zero gradient
+        for y in 2..14 {
+            for x in 2..14 {
+                for c in 0..3 {
+                    let idx = (y * 16 + x) * 3 + c;
+                    assert!(edges[idx].abs() < 0.01);
+                }
             }
         }
     }
 }
 ```
 
-### 2. Export from Module
+### 5. Export from lib.rs
 
 In `vfx-ops/src/lib.rs`:
 
 ```rust
-pub mod sharpen;
-
-pub use sharpen::{unsharp_mask, laplacian_sharpen};
+pub use filter::sobel_edges;
 ```
 
-### 3. Add CLI Command
+### 6. Add CLI Command (Optional)
 
-In `vfx-cli/src/commands/sharpen.rs`:
-
-```rust
-//! Sharpen command.
-
-use crate::SharpenArgs;
-use anyhow::Result;
-use vfx_io::ImageData;
-use vfx_ops::sharpen::unsharp_mask;
-
-pub fn run(args: SharpenArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
-    let image = super::load_image_layer(&args.input, args.layer.as_deref())?;
-    super::ensure_color_processing(&image, "sharpen", allow_non_color)?;
-    
-    let w = image.width as usize;
-    let h = image.height as usize;
-    let c = image.channels as usize;
-    
-    if verbose > 0 {
-        println!("Sharpening {} (amount={}, radius={})",
-            args.input.display(), args.amount, args.radius);
-    }
-    
-    let src = image.to_f32();
-    let sharpened = unsharp_mask(&src, w, h, c, args.amount, args.radius, args.threshold)?;
-    
-    let output = ImageData::from_f32(image.width, image.height, image.channels, sharpened);
-    super::save_image_layer(&args.output, &output, args.layer.as_deref())?;
-    
-    if verbose > 0 {
-        println!("Done.");
-    }
-    
-    Ok(())
-}
-```
-
-### 4. Define CLI Arguments
+If the operation should be available from CLI, add to `vfx-cli`:
 
 In `vfx-cli/src/main.rs`:
 
 ```rust
-/// Sharpen image using unsharp mask
+/// Detect edges in image
 #[derive(Parser)]
-pub struct SharpenArgs {
+pub struct EdgesArgs {
     /// Input image
-    #[arg(short, long)]
     input: PathBuf,
     
     /// Output image
     #[arg(short, long)]
     output: PathBuf,
-    
-    /// Sharpening amount (0.0-2.0, default 1.0)
-    #[arg(short, long, default_value = "1.0")]
-    amount: f32,
-    
-    /// Blur radius for mask (default 2)
-    #[arg(short, long, default_value = "2")]
-    radius: usize,
-    
-    /// Threshold (default 0.0)
-    #[arg(short, long, default_value = "0.0")]
-    threshold: f32,
-    
-    /// Process specific layer (EXR)
-    #[arg(long)]
-    layer: Option<String>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
     // ... existing commands
     
-    /// Sharpen image
-    Sharpen(SharpenArgs),
+    /// Detect edges using Sobel operator
+    Edges(EdgesArgs),
 }
 ```
 
-### 5. Add Integration Test
-
-In `vfx-tests/tests/ops_tests.rs`:
+In `vfx-cli/src/commands/edges.rs`:
 
 ```rust
-#[test]
-fn test_sharpen_pipeline() {
-    let input = test_image::gradient(256, 256, 3);
+use crate::EdgesArgs;
+use anyhow::Result;
+use vfx_ops::filter::sobel_edges;
+
+pub fn run(args: EdgesArgs, verbose: u8, allow_non_color: bool) -> Result<()> {
+    let image = super::load_image(&args.input)?;
+    super::ensure_color_processing(&image, "edges", allow_non_color)?;
     
-    let sharpened = unsharp_mask(
-        &input.to_f32(),
-        256, 256, 3,
-        1.0, 2, 0.0
-    ).unwrap();
+    let data = image.to_f32();
+    let edges = sobel_edges(
+        &data,
+        image.width as usize,
+        image.height as usize,
+        image.channels as usize,
+    )?;
     
-    // Sharpening should increase contrast at edges
-    // Test that some pixels changed
-    let original = input.to_f32();
-    let mut diff_count = 0;
-    for (a, b) in original.iter().zip(sharpened.iter()) {
-        if (a - b).abs() > 0.01 {
-            diff_count += 1;
-        }
+    let output = vfx_io::ImageData::from_f32(
+        image.width, image.height, image.channels, edges
+    );
+    
+    super::save_image(&args.output, &output)?;
+    
+    if verbose > 0 {
+        println!("Edge detection complete.");
     }
-    assert!(diff_count > 0, "Sharpening should modify pixels");
+    
+    Ok(())
 }
-```
-
-### 6. Document the Operation
-
-In docs:
-
-```markdown
-## Sharpen
-
-Unsharp mask sharpening:
-
-```bash
-vfx sharpen -i input.exr -o output.exr --amount 1.5 --radius 3
-```
-
-Parameters:
-- `--amount`: Strength (0-2, default 1.0)
-- `--radius`: Blur radius (default 2)
-- `--threshold`: Min difference to sharpen (default 0.0)
 ```
 
 ## Operation Patterns
 
-### Simple Per-Pixel
+### Custom Kernel Convolution
 
 ```rust
+use vfx_ops::filter::{Kernel, convolve};
+
+// Create custom kernel: NOTE order is (data, width, height)
+let emboss = Kernel::new(vec![
+    -2.0, -1.0, 0.0,
+    -1.0,  1.0, 1.0,
+     0.0,  1.0, 2.0,
+], 3, 3)?;
+
+let result = convolve(&data, width, height, channels, &emboss)?;
+```
+
+### Using Built-in Kernels
+
+```rust
+use vfx_ops::filter::Kernel;
+
+let blur = Kernel::box_blur(5);        // 5x5 box blur
+let gauss = Kernel::gaussian(5, 1.0);  // 5x5 gaussian, sigma=1.0
+let sharp = Kernel::sharpen(0.5);      // sharpen with amount 0.5
+let edges = Kernel::edge_detect();     // laplacian edge detection
+```
+
+### Per-Pixel Operations
+
+```rust
+/// Invert image colors.
 pub fn invert(data: &[f32]) -> Vec<f32> {
     data.iter().map(|&v| 1.0 - v).collect()
 }
+
+/// Clamp values to range.
+pub fn clamp_range(data: &[f32], min: f32, max: f32) -> Vec<f32> {
+    data.iter().map(|&v| v.clamp(min, max)).collect()
+}
 ```
 
-### With Neighborhood
+### Neighborhood Operations
 
 ```rust
-pub fn median_filter(data: &[f32], w: usize, h: usize, c: usize, radius: usize) -> Vec<f32> {
+use crate::OpsResult;
+
+/// Median filter for noise reduction.
+pub fn median(
+    data: &[f32],
+    w: usize,
+    h: usize,
+    ch: usize,
+    radius: usize,
+) -> OpsResult<Vec<f32>> {
     let mut result = vec![0.0; data.len()];
+    let size = (radius * 2 + 1) * (radius * 2 + 1);
     
     for y in 0..h {
         for x in 0..w {
-            for ch in 0..c {
-                let mut samples = Vec::new();
+            for c in 0..ch {
+                let mut samples = Vec::with_capacity(size);
                 
-                // Gather neighborhood
                 for dy in -(radius as isize)..=(radius as isize) {
                     for dx in -(radius as isize)..=(radius as isize) {
                         let nx = (x as isize + dx).clamp(0, w as isize - 1) as usize;
                         let ny = (y as isize + dy).clamp(0, h as isize - 1) as usize;
-                        samples.push(data[(ny * w + nx) * c + ch]);
+                        samples.push(data[(ny * w + nx) * ch + c]);
                     }
                 }
                 
-                // Median
                 samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                result[(y * w + x) * c + ch] = samples[samples.len() / 2];
+                result[(y * w + x) * ch + c] = samples[samples.len() / 2];
             }
         }
     }
     
-    result
+    Ok(result)
 }
 ```
 
@@ -328,16 +295,23 @@ pub fn median_filter(data: &[f32], w: usize, h: usize, c: usize, radius: usize) 
 ```rust
 use rayon::prelude::*;
 
-pub fn parallel_op(data: &[f32], w: usize, h: usize, c: usize) -> Vec<f32> {
+/// Parallel per-row processing.
+pub fn parallel_brightness(
+    data: &[f32],
+    w: usize,
+    h: usize,
+    ch: usize,
+    factor: f32,
+) -> Vec<f32> {
     let mut result = vec![0.0; data.len()];
+    let row_size = w * ch;
     
-    result.par_chunks_mut(w * c)
+    result.par_chunks_mut(row_size)
         .enumerate()
         .for_each(|(y, row)| {
-            for x in 0..w {
-                for ch in 0..c {
-                    row[x * c + ch] = process_pixel(data, x, y, ch, w, h, c);
-                }
+            let src_row = &data[y * row_size..(y + 1) * row_size];
+            for (dst, &src) in row.iter_mut().zip(src_row.iter()) {
+                *dst = src * factor;
             }
         });
     
@@ -347,20 +321,19 @@ pub fn parallel_op(data: &[f32], w: usize, h: usize, c: usize) -> Vec<f32> {
 
 ## Testing Guidelines
 
-1. **Dimension preservation** - output size matches input
-2. **Identity cases** - zero strength = no change
-3. **Bounds checking** - test edge pixels
-4. **Channel handling** - test 1, 3, 4 channels
-5. **Performance** - add benchmark for costly ops
+1. **Dimension preservation** - Output size matches input
+2. **Identity cases** - Zero strength/amount = no change
+3. **Bounds checking** - Test edge pixels
+4. **Channel handling** - Test 1, 3, 4 channels
+5. **Known values** - Test with synthetic images where result is predictable
 
 ## Checklist
 
-- [ ] Create module in `vfx-ops/src/`
-- [ ] Export from `lib.rs`
+- [ ] Identify correct module (`filter.rs`, `transform.rs`, etc.)
+- [ ] Add function with proper documentation
+- [ ] Use `OpsResult<T>` for error handling
 - [ ] Add unit tests
-- [ ] Create CLI command (if user-facing)
-- [ ] Add CLI args struct
-- [ ] Register in command dispatch
-- [ ] Add integration test
-- [ ] Update documentation
+- [ ] Export from `lib.rs` if public API
+- [ ] Add CLI command (if user-facing)
+- [ ] Update `docs/src/crates/ops.md`
 - [ ] Add benchmark (if performance-critical)

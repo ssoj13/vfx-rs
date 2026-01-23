@@ -18,10 +18,13 @@ Processor (unified API)
 ## Quick Start
 
 ```rust
-use vfx_compute::{Processor, ComputeImage};
+use vfx_compute::{Processor, ComputeImage, Backend};
 
 // Auto-select best backend
 let proc = Processor::auto()?;
+
+// Or explicit backend selection
+let proc = Processor::new(Backend::Cpu)?;
 
 // Load image into compute format
 let mut img = ComputeImage::from_f32(data, 1920, 1080, 3)?;
@@ -139,7 +142,7 @@ proc.apply_matrix(&mut img, &matrix)?;
 ```rust
 use vfx_compute::ResizeFilter;
 
-let resized = proc.resize(&img, 1920, 1080, ResizeFilter::Lanczos3)?;
+let resized = proc.resize(&img, 1920, 1080, ResizeFilter::Lanczos)?;
 ```
 
 ### Blur
@@ -150,49 +153,83 @@ proc.blur(&mut img, 5.0)?;  // Gaussian blur, radius in pixels
 
 ## Pipeline API
 
-Chain operations for efficiency:
+Use `ComputePipeline` for processing workflows:
 
 ```rust
-use vfx_compute::{ComputePipeline, ComputeOp};
+use vfx_compute::{ComputePipeline, ImageInput, ImageOutput};
 
-let pipeline = ComputePipeline::builder()
-    .add(ComputeOp::Exposure(1.0))
-    .add(ComputeOp::Saturation(1.2))
-    .add(ComputeOp::Matrix(my_matrix))
-    .build()?;
+// Create pipeline with auto backend
+let mut pipeline = ComputePipeline::auto()?;
 
-// Apply all at once (GPU batching)
-pipeline.apply(&proc, &mut img)?;
+// Or explicit CPU/GPU
+let mut pipeline = ComputePipeline::cpu()?;
+
+// Process image
+let input = ImageInput::from_path("input.exr")?;
+let output = ImageOutput::path("output.exr");
+pipeline.process(&input, &output)?;
 ```
 
 ## ProcessorBuilder
 
-Fine-grained control:
+Fine-grained control over the processor:
 
 ```rust
-use vfx_compute::ProcessorBuilder;
+use vfx_compute::{ProcessorBuilder, Backend};
 
 let proc = ProcessorBuilder::new()
-    .prefer_gpu(true)
-    .tile_size(512)
-    .ram_percent(75)
+    .backend(Backend::Wgpu)  // Force GPU
+    .tile_size(512)          // Tile size for GPU
+    .ram_limit_mb(8192)      // 8GB RAM limit
+    .ram_percent(75)         // Or use 75% of system RAM
+    .verbose(true)           // Enable debug output
     .build()?;
 ```
 
-## Tile Processing
+## ComputePipelineBuilder
 
-For large images that don't fit in GPU memory:
+Configure pipeline processing strategy:
+
+```rust
+use vfx_compute::{ComputePipeline, ProcessingStrategy};
+
+let pipeline = ComputePipeline::builder()
+    .backend(Backend::Auto)
+    .strategy(ProcessingStrategy::Tiled)
+    .tile_size(1024)
+    .verbose(true)
+    .build()?;
+```
+
+## Processing Strategy
+
+The pipeline can use different strategies:
+
+```rust
+use vfx_compute::ProcessingStrategy;
+
+// Whole image at once (small images)
+ProcessingStrategy::WholeImage
+
+// Process in tiles (large images, GPU)
+ProcessingStrategy::Tiled
+
+// Stream from disk (huge images)
+ProcessingStrategy::Streaming
+```
+
+## TileWorkflow
+
+Hint for tile size optimization based on operation type:
 
 ```rust
 use vfx_compute::TileWorkflow;
 
-let workflow = TileWorkflow::new(proc, 1024);  // 1024x1024 tiles
-
-workflow.process(&mut huge_image, |tile| {
-    // Process each tile
-    proc.apply_exposure(tile, 1.0)?;
-    Ok(())
-})?;
+// Different operation types need different tile sizes
+TileWorkflow::ColorTransform     // Standard tiles
+TileWorkflow::Convolution { kernel_radius: 5 }  // Larger for kernel overlap
+TileWorkflow::Warp               // May need larger for sampling
+TileWorkflow::Composite          // Standard tiles
 ```
 
 ## GPU Limits
@@ -205,26 +242,6 @@ use vfx_compute::GpuLimits;
 let limits = proc.limits()?;
 println!("Max texture: {}x{}", limits.max_texture_dimension, limits.max_texture_dimension);
 println!("Max buffer: {} bytes", limits.max_buffer_size);
-```
-
-## Layer Processing
-
-Process specific EXR layers:
-
-```rust
-use vfx_compute::{LayerProcessor, ChannelGroup};
-
-let layer_proc = LayerProcessor::new(&proc);
-
-// Process only color channels, skip IDs
-layer_proc.process_groups(&mut layered_image, |group, data| {
-    match group {
-        ChannelGroup::Color => proc.apply_exposure(data, 1.0)?,
-        ChannelGroup::Depth => {},  // Skip
-        ChannelGroup::Id => {},     // Skip
-    }
-    Ok(())
-})?;
 ```
 
 ## Feature Flags
@@ -252,7 +269,7 @@ CPU is faster for:
 - Simple operations
 - When upload/download overhead dominates
 
-The `Processor::auto()` heuristic considers image size.
+The `Processor::auto()` selects backend based on availability.
 
 ## Error Handling
 
