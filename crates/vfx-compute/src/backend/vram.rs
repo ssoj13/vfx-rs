@@ -169,10 +169,13 @@ fn detect_dxgi() -> Option<VramInfo> {
 
 #[cfg(target_os = "macos")]
 fn detect_metal() -> Option<VramInfo> {
-    use objc2::rc::Id;
-    use objc2_metal::MTLDevice;
+    use objc2_metal::{MTLCreateSystemDefaultDevice, MTLDevice};
     
-    let device = unsafe { MTLDevice::systemDefaultDevice()? };
+    // Link CoreGraphics (required by MTLCreateSystemDefaultDevice)
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {}
+    
+    let device = MTLCreateSystemDefaultDevice()?;
     
     // recommendedMaxWorkingSetSize is the best estimate on Metal
     let total = device.recommendedMaxWorkingSetSize() as u64;

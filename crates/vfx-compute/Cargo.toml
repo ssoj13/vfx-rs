@@ -39,6 +39,11 @@ windows = { version = "0.58", features = ["Win32_Graphics_Dxgi"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 nvml-wrapper = { version = "0.10", optional = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.3"
+objc2-metal = { version = "0.3.2", features = ["MTLDevice"] }
+objc2-core-graphics = "0.3.2"
+
 # CUDA: Windows/Linux only (not macOS)
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 cudarc = { version = "0.18", default-features = false, features = ["driver", "nvrtc", "cuda-version-from-build-system", "dynamic-loading"], optional = true }

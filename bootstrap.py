@@ -352,31 +352,68 @@ def run_clean(args: argparse.Namespace) -> int:
 # PYTHON BUILD
 # ============================================================
 
+VENV_DIR = ROOT_DIR / ".venv"
+
+
+def get_venv_paths() -> tuple[Path, Path, Path]:
+    """Get paths for venv python, pip, and maturin."""
+    if platform.system() == "Windows":
+        bin_dir = VENV_DIR / "Scripts"
+        python = bin_dir / "python.exe"
+        pip = bin_dir / "pip.exe"
+        maturin = bin_dir / "maturin.exe"
+    else:
+        bin_dir = VENV_DIR / "bin"
+        python = bin_dir / "python"
+        pip = bin_dir / "pip"
+        maturin = bin_dir / "maturin"
+    return python, pip, maturin
+
+
+def ensure_venv() -> tuple[Path, Path, Path]:
+    """Ensure virtualenv exists, create if needed. Returns (python, pip, maturin) paths."""
+    python, pip, maturin = get_venv_paths()
+    
+    if not VENV_DIR.exists():
+        print_step("Creating virtualenv (.venv)...")
+        result = subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR)])
+        if result.returncode != 0:
+            raise RuntimeError("Failed to create virtualenv")
+        print_success("Virtualenv created")
+    
+    return python, pip, maturin
+
+
+def ensure_maturin(pip: Path, maturin: Path) -> None:
+    """Ensure maturin is installed in venv."""
+    if not maturin.exists():
+        print_step("Installing maturin and numpy...")
+        result = subprocess.run([str(pip), "install", "maturin", "numpy"])
+        if result.returncode != 0:
+            raise RuntimeError("Failed to install maturin")
+        print_success("Dependencies installed")
+
+
 def run_python_reqs(args: argparse.Namespace) -> int:
     """Install Python dev dependencies."""
     print_header("PYTHON DEPENDENCIES")
     print()
     
+    try:
+        python, pip, maturin = ensure_venv()
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+    
     packages = ["maturin", "numpy", "pytest"]
     
-    # Try uv first (faster)
-    if which("uv"):
-        print_step("Installing with uv...")
-        result = subprocess.run(["uv", "pip", "install"] + packages)
-        if result.returncode == 0:
-            print()
-            print_success("Done!")
-            print()
-            return 0
-        print_warning("uv failed, trying pip...")
-    
-    # Fallback to pip
-    print_step("Installing with pip...")
-    result = subprocess.run([sys.executable, "-m", "pip", "install"] + packages)
+    print_step("Installing packages...")
+    result = subprocess.run([str(pip), "install"] + packages)
     
     print()
     if result.returncode == 0:
         print_success("Done!")
+        print_step(f"Virtualenv: {VENV_DIR}")
     else:
         print_error("Failed to install dependencies")
         return 1
@@ -389,37 +426,52 @@ def run_python_build(args: argparse.Namespace) -> int:
     print_header("PYTHON BUILD")
     print()
     
-    # Check maturin
-    if not which("maturin"):
-        print_error("maturin not found")
-        print_warning("Run: python bootstrap.py python-reqs")
-        return 1
-    
     py_crate = ROOT_DIR / "crates" / "vfx-rs-py"
     if not py_crate.exists():
         print_error("vfx-rs-py crate not found")
         return 1
     
-    build_type = "release" if args.release else "debug"
+    # Ensure venv exists and has maturin
+    try:
+        python, pip, maturin = ensure_venv()
+        ensure_maturin(pip, maturin)
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+    
+    if not maturin.exists():
+        print_error("maturin not found after install")
+        return 1
+    
+    build_type = "debug" if args.debug else "release"
     print_step(f"Mode: {build_type}")
     print_step(f"Install: {args.install}")
     print()
     
     start = time.perf_counter()
     
+    # Set up environment with VIRTUAL_ENV so maturin finds it
+    env = os.environ.copy()
+    env["VIRTUAL_ENV"] = str(VENV_DIR)
+    # Prepend venv bin to PATH
+    if platform.system() == "Windows":
+        env["PATH"] = str(VENV_DIR / "Scripts") + os.pathsep + env.get("PATH", "")
+    else:
+        env["PATH"] = str(VENV_DIR / "bin") + os.pathsep + env.get("PATH", "")
+    
     if args.install:
-        cmd = ["maturin", "develop"]
-        if args.release:
+        cmd = [str(maturin), "develop"]
+        if not args.debug:
             cmd.append("--release")
         msg = f"Building and installing ({build_type})..."
     else:
-        cmd = ["maturin", "build"]
-        if args.release:
+        cmd = [str(maturin), "build"]
+        if not args.debug:
             cmd.append("--release")
         msg = f"Building wheel ({build_type})..."
     
     print_step(msg)
-    result = subprocess.run(cmd, cwd=py_crate)
+    result = subprocess.run(cmd, cwd=py_crate, env=env)
     
     elapsed_ms = (time.perf_counter() - start) * 1000
     
@@ -427,7 +479,10 @@ def run_python_build(args: argparse.Namespace) -> int:
     if result.returncode == 0:
         print_success(f"Done! ({fmt_time(elapsed_ms)})")
         
-        if not args.install:
+        if args.install:
+            print_step(f"Installed to: {VENV_DIR}")
+            print_step(f"Activate with: source {VENV_DIR}/bin/activate")
+        else:
             wheel_dir = ROOT_DIR / "target" / "wheels"
             if wheel_dir.exists():
                 wheels = sorted(wheel_dir.glob("*.whl"), 
@@ -502,8 +557,8 @@ HELP_TEXT = """
    --release     Test release build
  
  PYTHON OPTIONS
-   --release     Build release wheel
-   --install     Install in current virtualenv
+   --install     Build and install into .venv (creates venv if needed)
+   --debug       Build debug instead of release (default: release)
  
  EXAMPLES
    python bootstrap.py build                    # Debug build
@@ -511,7 +566,8 @@ HELP_TEXT = """
    python bootstrap.py test                     # Run all tests
    python bootstrap.py test --group core        # Test core crates only
    python bootstrap.py check                    # Clippy + fmt
-   python bootstrap.py python --release --install  # Build & install Python
+   python bootstrap.py python --install            # Build & install Python (release)
+   python bootstrap.py python --install --debug    # Build & install Python (debug)
    python bootstrap.py python-test              # Run Python tests
 """
 
@@ -572,7 +628,13 @@ def main() -> int:
     parser.add_argument(
         "--install",
         action="store_true",
-        help="Install in current virtualenv",
+        help="Build and install into .venv (creates venv if needed)",
+    )
+    
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Build debug instead of release (python command only)",
     )
     
     args = parser.parse_args()
