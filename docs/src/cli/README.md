@@ -44,6 +44,9 @@ The `vfx` command provides comprehensive image processing for VFX workflows, com
 | [color](./color.md) | | Color space, exposure, saturation |
 | [aces](./aces.md) | | ACES IDT/RRT/ODT transforms |
 | [lut](./lut.md) | | Apply 1D/3D LUTs |
+| [grade](./grade.md) | | ASC CDL color grading |
+| [clamp](./clamp.md) | | Clamp values to range |
+| [premult](./premult.md) | | Alpha premultiplication |
 
 ### Filters
 

@@ -19,7 +19,8 @@ pub fn run(args: ConvertArgs, verbose: u8) -> Result<()> {
     trace!(input = %args.input.display(), output = %args.output.display(), "convert::run");
     
     let input_format = Format::detect(&args.input).unwrap_or(Format::Unknown);
-    let output_format = Format::detect(&args.output).unwrap_or(Format::Unknown);
+    // Use extension-based detection for output (file doesn't exist yet)
+    let output_format = Format::from_extension(&args.output);
 
     info!(
         input = %args.input.display(),

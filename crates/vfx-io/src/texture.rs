@@ -124,6 +124,14 @@ impl TextureSystem {
     /// Samples a texture at the given UV coordinates.
     ///
     /// Returns RGBA values (channels are filled with `fill` if texture has fewer).
+    ///
+    /// # Note on Filter Modes
+    ///
+    /// Without texture derivatives, this method cannot determine the appropriate
+    /// mip level. Therefore, `FilterMode::Trilinear` and `FilterMode::Anisotropic`
+    /// fall back to bilinear filtering at mip level 0. For proper trilinear or
+    /// anisotropic filtering, use [`sample_d`](Self::sample_d) which accepts
+    /// screen-space derivatives.
     pub fn sample(&self, path: impl AsRef<Path>, s: f32, t: f32, opts: &TextureOptions) -> IoResult<[f32; 4]> {
         let path = path.as_ref();
         let info = self.cache.get_image_info(path)?;

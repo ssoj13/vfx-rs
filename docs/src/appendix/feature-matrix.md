@@ -183,7 +183,7 @@ Pre-computed matrices:
 
 | Format | Read | Write | Notes |
 |--------|------|-------|-------|
-| CinemaDNG | **Done** | No | DNG sequence directories |
+| CinemaDNG | **Partial** | No | Via cinema_dng module only (not in generic API) |
 
 ### Proprietary (Not Planned)
 
@@ -251,8 +251,8 @@ Pre-computed matrices:
 
 | Function | Status | Verified Against |
 |----------|--------|-----------------|
-| RGB <-> HSV | **Done** | - |
-| RGB <-> HSL | **Done** | - |
+| RGB <-> HSV | **Done** | Via vfx-ocio processor |
+| RGB <-> HSL | **Done** | Via vfx-ocio processor |
 | RGB <-> HSY (Log/Vid/Lin) | **Done** | OCIO FixedFunctionOpCPU.cpp |
 | XYZ <-> xyY | **Done** | OCIO FixedFunctionOpCPU.cpp |
 | XYZ <-> uvY | **Done** | OCIO FixedFunctionOpCPU.cpp |
@@ -314,8 +314,8 @@ Pre-computed matrices:
 |---------|--------|-------|
 | Auto tiling | **Done** | VRAM-aware |
 | VRAM detection | **Done** | Cross-platform |
-| Operation fusion | **Done** | Sequential ops merged |
-| Streaming execution | **Done** | Large image support |
+| Operation fusion | **Partial** | Manual via ColorOpBatch, not auto-merged |
+| Streaming execution | **Partial** | EXR loads full file into memory |
 
 ---
 
@@ -343,7 +343,7 @@ Pre-computed matrices:
 | Displays | **Done** | - |
 | Views | **Done** | - |
 | Shared views | **Done** | v2.3+ |
-| Context variables | **Done** | Environment |
+| Context variables | **Partial** | Stored but $VAR not resolved in paths |
 | File rules | **Done** | - |
 
 ### Transforms
@@ -384,7 +384,7 @@ Pre-computed matrices:
 
 | Operation | Status | Notes |
 |-----------|--------|-------|
-| Gaussian blur | **Done** | Separable |
+| Gaussian blur | **Done** | 2D kernel (not separable) |
 | Box blur | **Done** | - |
 | Sharpen | **Done** | Unsharp mask |
 | Median | **Done** | - |
@@ -416,7 +416,7 @@ Pre-computed matrices:
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Image I/O | **Done** | All formats |
-| NumPy arrays | **Done** | Zero-copy |
+| NumPy arrays | **Done** | Copy (not zero-copy) |
 | Color transforms | **Done** | - |
 | LUT application | **Done** | - |
 | Resize/crop | **Done** | - |
@@ -439,16 +439,21 @@ Pre-computed matrices:
 
 | Category | Done | Total | Percentage |
 |----------|------|-------|------------|
-| Transfer Functions | 22 | 22 | 100% |
+| Transfer Functions | 21 | 21 | 100% |
 | Color Primaries | 16 | 16 | 100% |
 | Chromatic Adaptation | 4 | 4 | 100% |
 | LUT Formats | 17 | 17 | 100% |
-| Image I/O | 13 | 13 | 100% |
+| Image I/O | 11 | 13 | ~85% |
 | Grading Ops | 9 | 9 | 100% |
 | ACES | 10 | 10 | 100% |
 | Fixed Functions | 16 | 16 | 100% |
-| GPU Compute | 3 | 3 | 100% |
-| OCIO Transforms | 13 | 13 | 100% |
+| GPU Compute | 2 | 4 | ~50% |
+| OCIO Transforms | 12 | 13 | ~92% |
 | Image Ops | 20+ | 20+ | ~100% |
 
-**Overall OCIO parity: ~100%**
+**Overall OCIO parity: ~95%** (context variable resolution not implemented)
+
+> **Notes:**
+> - Image I/O: AVIF read not working, CinemaDNG not in generic API
+> - GPU Compute: Operation fusion manual only, streaming loads full file
+> - OCIO: $VAR path resolution not implemented

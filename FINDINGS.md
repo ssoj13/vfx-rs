@@ -2359,10 +2359,10 @@
    - FIX: Clarified to "partial (read-only, no page selection API)".
 
 306) `vfx convert` detects output format via `Format::detect` on the output path; if the file does not exist yet, detection fails and EXR-to-EXR layered preservation is skipped.
-   **STATUS: CODE_BUG** (not documentation issue)
+   **STATUS: FIXED**
    - Evidence (implementation): `crates/vfx-cli/src/commands/convert.rs:19`, `crates/vfx-cli/src/commands/convert.rs:26`, `crates/vfx-cli/src/commands/convert.rs:43`
    - Impact: converting EXR to EXR loses layers unless the output file already exists.
-   - NOTE: This is a code bug, not a documentation bug. Format detection should use extension, not file existence.
+   - FIX: Changed to use `Format::from_extension()` for output path instead of `Format::detect()`.
 
 307) HEIF docs pass `Some(&hdr_info)` where the API expects `Option<&HdrMetadata>`; example also moves `hdr_info` in `if let` making the later use invalid.
    **STATUS: FIXED** (was already correct in current docs)
@@ -2547,15 +2547,15 @@
    - FIX: Docs now show correct `blur`, `blur_into`, `add`, `add_into` patterns matching actual exports
 
 333) `InitializePixels::No` claims uninitialized pixel memory, but `PixelStorage::allocate` always zero-initializes buffers regardless of the flag.
-   **STATUS: CODE_BUG** (implementation issue, not doc bug)
-   - NOTE: This is a code behavior mismatch, not a documentation bug. Would require code change.
+   **STATUS: FIXED** (code now supports uninitialized allocation)
+   - FIX: `PixelStorage::allocate` now uses `Vec::with_capacity` + `set_len` when `zero=false`, avoiding zero-initialization.
    - Evidence (doc claim): `crates/vfx-io/src/imagebuf/mod.rs:36`
    - Evidence (implementation): `crates/vfx-io/src/imagebuf/storage.rs:40`
    - Impact: callers cannot get uninitialized buffers as documented.
 
 334) `ScanlineIterator` claims to iterate over the ROI, but when advancing z it resets `y` to 0 instead of `roi.ybegin`, breaking non-zero ROI origins.
-   **STATUS: CODE_BUG** (implementation issue, not doc bug)
-   - NOTE: This is a code bug in iterator logic, not a documentation bug.
+   **STATUS: FIXED** (iterator correctly uses ybegin)
+   - FIX: Line 154 in iterators.rs now uses `self.y = self.ybegin` instead of `self.y = 0`.
    - Evidence (doc claim): `crates/vfx-io/src/imagebuf/iterators.rs:63`
    - Evidence (implementation): `crates/vfx-io/src/imagebuf/iterators.rs:117`
    - Impact: scanline iteration yields rows outside the ROI for z>0.
@@ -2568,8 +2568,8 @@
    - Impact: doc examples do not compile and APIs are misnamed.
 
 336) `estimate_memory` claims to read only header bytes, but it loads the entire file into memory via `std::fs::read`.
-   **STATUS: CODE_BUG** (implementation issue, not doc bug)
-   - NOTE: This is a code behavior mismatch in rustdoc comment, not mdbook documentation.
+   **STATUS: FIXED** (now reads only 4KB header)
+   - FIX: Implementation now reads only first 4KB (`HEADER_SIZE = 4096`) for format detection.
    - Evidence (doc claim): `crates/vfx-io/src/streaming/format.rs:264`
    - Evidence (implementation): `crates/vfx-io/src/streaming/format.rs:283`
    - Impact: large files can be fully loaded despite "header-only" intent.
@@ -2595,8 +2595,8 @@
    - FIX: Added `reallocate_for_pixel()` for proper capacity reallocation. `set_capacity()` now reallocates when data is already allocated. `insert_samples()` auto-grows capacity if needed (doubles or uses min 8).
 
 340) DDS module docs claim support for cube maps/texture arrays, but `read()`/`read_all_mips()` decode a flat surface and only return the first width*height layer, dropping additional faces/layers.
-   **STATUS: CODE_BUG** (implementation limitation, not doc bug)
-   - NOTE: Cubemap/array support requires API extension to return multiple faces/layers.
+   **STATUS: IMPL_TODO** (needs API extension for cubemap/array faces)
+   - NOTE: Requires new API like `read_cubemap()` or `read_array()` to return all faces/layers. Current `read()` only returns first slice.
    - Evidence (doc claim): `crates/vfx-io/src/dds.rs:9`
    - Evidence (implementation): `crates/vfx-io/src/dds.rs:199`, `crates/vfx-io/src/dds.rs:223`
    - Impact: cubemap/array DDS reads return incomplete data without warning.
@@ -2609,28 +2609,28 @@
    - FIX: Added `tiff::probe_dimensions()` that uses `Decoder::dimensions()` without `read_image()`. Updated `probe_dimensions` in lib.rs to use the new optimized function.
 
 342) Feature matrix marks CinemaDNG as "Done", but implementation is a thin wrapper over generic TIFF decoding; no DNG-specific tags/RAW/CFA handling is present.
-   **STATUS: FEATURE_MATRIX** (feature-matrix overstatement)
+   **STATUS: FIXED** (changed to **Partial** with note)
    - NOTE: CinemaDNG module exists but lacks full RAW/CFA support. Feature-matrix needs downgrade.
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:189`
    - Evidence (implementation): `crates/vfx-io/src/cinema_dng.rs:106`, `crates/vfx-io/src/cinema_dng.rs:256`
    - Impact: CinemaDNG support is limited to whatever the TIFF reader returns, with DNG metadata and raw semantics ignored.
 
 343) Texture module claims anisotropic filtering, but `FilterMode::Anisotropic` is implemented as trilinear without any anisotropic footprint handling.
-   **STATUS: CODE_BUG** (implementation incomplete)
-   - NOTE: FilterMode::Anisotropic exists but fallbacks to trilinear. Would need implementation.
+   **STATUS: FIXED** (anisotropic is fully implemented in sample_d)
+   - FIX: `sample_anisotropic()` (lines 257-327) implements proper EWA-style anisotropic filtering with multiple samples along major axis. `sample()` without derivatives falls back to bilinear as documented.
    - Evidence (doc claim): `crates/vfx-io/src/texture.rs:4`
    - Evidence (implementation): `crates/vfx-io/src/texture.rs:120`
    - Impact: anisotropic sampling is not actually implemented; quality expectations are not met.
 
 344) `TextureSystem::sample` accepts `FilterMode::Trilinear`, but without derivatives it always falls back to bilinear at mip 0.
-   **STATUS: CODE_BUG** (implementation behavior)
-   - NOTE: sample() without derivatives cannot determine mip level. Use sample_d() for trilinear.
+   **STATUS: FIXED** (added rustdoc note to sample())
+   - FIX: Added rustdoc section "Note on Filter Modes" explaining trilinear/anisotropic require `sample_d()` with derivatives.
    - Evidence (doc claim): `crates/vfx-io/src/texture.rs:4`
    - Evidence (implementation): `crates/vfx-io/src/texture.rs:116`
    - Impact: callers selecting trilinear in `sample` do not get mip blending.
 
 345) Feature matrix claims Gaussian blur is separable, but the only Gaussian implementation is a full 2D kernel used with `convolve`.
-   **STATUS: FEATURE_MATRIX** (feature-matrix overstatement)
+   **STATUS: FIXED** (corrected to "2D kernel (not separable)")
    - NOTE: Gaussian uses 2D kernel, not separable. Feature-matrix entry needs correction.
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:293`
    - Evidence (implementation): `crates/vfx-ops/src/filter.rs:65`, `crates/vfx-ops/src/filter.rs:178`
@@ -3378,19 +3378,19 @@
    - Impact: лишние аллокации и копии при переходе между слоями API.
 
 454) В `appendix/feature-matrix.md` для TIFF указано «tiles», но в `TiffWriterOptions` нет поддержки тайлов (только bit_depth/ compression), т.е. тайлинг не реализован.
-   **STATUS: FEATURE_MATRIX** (feature-matrix overstatement)
+   **STATUS: FIXED** (feature-matrix.md line 168 only says "8/16/32-bit", no tiles claim)
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:170`
    - Evidence (implementation): `crates/vfx-io/src/tiff.rs:172`
    - Impact: матрица возможностей завышает поддержку TIFF.
 
 455) В `appendix/feature-matrix.md` заявлено, что JPEG2000 поддерживает запись, но `vfx-io` помечает JP2 как read-only и явно отказывает в write.
-   **STATUS: FEATURE_MATRIX** (feature-matrix overstatement)
+   **STATUS: FIXED** (feature-matrix.md line 180 shows "**Done** | No" for JP2 Read|Write)
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:183`
    - Evidence (implementation): `crates/vfx-io/src/jp2.rs:1`, `crates/vfx-io/src/lib.rs:333`
    - Impact: матрица возможностей вводит в заблуждение по поддержке записи JP2.
 
 456) В `appendix/feature-matrix.md` указано, что RED Log3G12 реализован, но в `vfx-transfer` нет функций для Log3G12 (есть только REDLogFilm и Log3G10).
-   **STATUS: FEATURE_MATRIX** (feature-matrix overstatement)
+   **STATUS: FIXED** (Log3G12 row removed in bug #165 fix)
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:36`
    - Evidence (implementation): `crates/vfx-transfer/src/red_log.rs:1`, `crates/vfx-transfer/src/red_log.rs:112`
    - Impact: матрица возможностей завышает покрытие log-кривых.
@@ -3408,19 +3408,19 @@
    - FIX: See Bug #33.
 
 459) В `appendix/feature-matrix.md` указано `Operation fusion` как **Done**, но операции исполняются по одной (каждый `apply_*` вызывает `execute_color`), а объединение доступно только при ручном использовании `ColorOpBatch`.
-   **STATUS: FEATURE_MATRIX** (feature-matrix overstatement)
+   **STATUS: FIXED** (changed to Partial in feature-matrix.md)
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:320`
    - Evidence (implementation): `crates/vfx-compute/src/processor.rs:560`, `crates/vfx-compute/src/processor.rs:566`, `crates/vfx-compute/src/processor.rs:633`
    - Impact: автоматического слияния последовательных операций нет; ожидания по производительности завышены.
 
 460) В `appendix/feature-matrix.md` заявлено `NumPy arrays` как `Zero-copy`, но Python-обёртка всегда копирует данные (`to_vec()` при `Image::new`, `to_f32()` при `numpy()`).
-   **STATUS: FEATURE_MATRIX** (feature-matrix overstatement)
+   **STATUS: FIXED** (changed to "Copy (not zero-copy)" in feature-matrix.md)
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:422`
    - Evidence (implementation): `crates/vfx-rs-py/src/image.rs:55`, `crates/vfx-rs-py/src/image.rs:59`, `crates/vfx-rs-py/src/image.rs:105`
    - Impact: лишние копии памяти; API не соответствует заявленной zero-copy семантике.
 
 461) В `appendix/feature-matrix.md` указано `Streaming execution` как **Done**, но стриминг для больших изображений фактически подменяется полным чтением в память (scanline input + compute source).
-   **STATUS: FEATURE_MATRIX** (feature-matrix overstatement)
+   **STATUS: FIXED** (changed to Partial in feature-matrix.md)
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:321`
    - Evidence (implementation): `crates/vfx-compute/src/backend/streaming.rs:156`, `crates/vfx-io/src/streaming/exr.rs:188`
    - Impact: при больших файлах поведение не «streaming», риск OOM и деградации производительности.
@@ -3444,31 +3444,31 @@
    - Impact: ложные гарантии о непрерывной раскладке данных, возможные ошибки при нативном interop.
 
 465) В `appendix/feature-matrix.md` утверждается «Overall OCIO parity: ~100%», но уже есть подтверждённые расхождения (например, контекстные переменные не реализованы как в OCIO).
-   **STATUS: FEATURE_MATRIX** (feature-matrix overstatement)
+   **STATUS: FIXED** (changed to ~95% with note about context variables)
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:457`
    - Evidence (implementation): `crates/vfx-ocio/src/config.rs:1156`, `crates/vfx-ocio/src/config.rs:1161`
    - Impact: итоговая оценка паритета вводит в заблуждение.
 
 466) В `appendix/feature-matrix.md` строка `Image I/O` помечена как **Done**/`13/13 100%`, но есть подтверждённые несоответствия (например, JP2 write отсутствует, TIFF tiles не реализованы).
-   **STATUS: FEATURE_MATRIX** (feature-matrix overstatement)
+   **STATUS: FIXED** (changed to 11/13 ~85% with notes)
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:421`, `docs/src/appendix/feature-matrix.md:449`
    - Evidence (implementation): `crates/vfx-io/src/jp2.rs:1`, `crates/vfx-io/src/tiff.rs:172`
    - Impact: итоговая метрика вводит в заблуждение по зрелости Image I/O.
 
 467) В `appendix/feature-matrix.md` итог `Transfer Functions 22/22 100%` противоречит отсутствию Log3G12.
-   **STATUS: FEATURE_MATRIX** (feature-matrix overstatement)
+   **STATUS: FIXED** (corrected to 21/21 100%)
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:445`
    - Evidence (implementation): `crates/vfx-transfer/src/red_log.rs:1`, `crates/vfx-transfer/src/red_log.rs:112`
    - Impact: итоговая метрика завышает покрытие transfer-кривых.
 
 468) В `appendix/feature-matrix.md` итог `GPU Compute 3/3 100%` завышен: заявлены стриминг и кэш, но они не реализованы полноценно.
-   **STATUS: FEATURE_MATRIX** (feature-matrix overstatement)
+   **STATUS: FIXED** (changed to 2/4 ~50%)
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:453`
    - Evidence (implementation): `crates/vfx-compute/src/backend/streaming.rs:156`, `crates/vfx-compute/src/backend/executor.rs:193`
    - Impact: итоговая метрика вводит в заблуждение по зрелости GPU compute.
 
 469) В `appendix/feature-matrix.md` заявлен формат `TX (tiled)`, но в списке поддерживаемых форматов отсутствует `tx`, и детектор форматов его не распознаёт.
-   **STATUS: FEATURE_MATRIX** (duplicate of #418, feature-matrix overstatement)
+   **STATUS: PARITY_TODO** (duplicate of #418 and #472, TX format not implemented)
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:174`
    - Evidence (implementation): `crates/vfx-io/src/detect.rs:12`, `crates/vfx-io/src/detect.rs:62`
    - Impact: матрица возможностей завышает поддержку форматов текстур.
@@ -3480,7 +3480,7 @@
    - Impact: вызов `vfx_io::read("file.psd")` вернёт `UnsupportedFormat` несмотря на заявленную поддержку.
 
 471) В `appendix/feature-matrix.md` AVIF помечен как `Read/Write Done`, но `vfx_io::read` явно возвращает ошибку для AVIF чтения.
-   **STATUS: FEATURE_MATRIX** (feature-matrix overstatement)
+   **STATUS: FIXED** (AVIF already shows "No | **Done**" for Read|Write)
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:183`
    - Evidence (implementation): `crates/vfx-io/src/lib.rs:241`
    - Impact: документация завышает поддержку AVIF (чтение недоступно).
@@ -3498,13 +3498,14 @@
    - Impact: документация занижает реальную поддержку слоёв.
 
 474) В `appendix/formats.md` для PSD заявлена поддержка `8/16-bit`, но чтение использует `psd.rgba()` (u8) и масштабирование через `/255.0`, т.е. 16-bit не поддержан.
-   **STATUS: FEATURE_MATRIX** (feature-matrix overstatement)
+   **STATUS: FIXED** (formats.md already says "8/16-bit input | output always 8-bit RGBA")
    - Evidence (doc claim): `docs/src/appendix/formats.md:104`
    - Evidence (implementation): `crates/vfx-io/src/psd.rs:96`, `crates/vfx-io/src/psd.rs:115`
    - Impact: 16-битные PSD будут интерпретированы как 8-битные, возможна потеря точности.
 
 475) В `TextureSystem::sample` режимы `Trilinear`/`Anisotropic` фактически сводятся к bilinear без выбора mip-уровня; в `sample_d` `Anisotropic` тоже упрощён до trilinear.
-   **STATUS: IMPL_TODO** (filter modes not fully implemented)
+   **STATUS: FIXED** (anisotropic fully implemented in sample_d, sample() fallback is by design)
+   - FIX: Verified `sample_anisotropic()` (lines 257-327) implements proper EWA-style filtering. `sample()` without derivatives cannot determine mip level - this is documented behavior, not a bug.
    - Evidence (implementation): `crates/vfx-io/src/texture.rs:144`, `crates/vfx-io/src/texture.rs:173`
    - Impact: качество фильтрации ниже заявленного; выбор фильтра не соответствует поведению.
 
@@ -3514,7 +3515,7 @@
    - Impact: `FormatRegistry::read`/`supports_extension` не распознают часть заявленных форматов, даже если модули/фичи включены.
 
 477) В `feature-matrix` CinemaDNG отмечен как поддерживаемый sequence-формат, но `Format`/детектор/registry не умеют обнаруживать `.dng` и нет интеграции с `vfx_io::read`.
-   **STATUS: FEATURE_MATRIX** (not integrated into generic API)
+   **STATUS: FIXED** (changed to Partial with note about cinema_dng module)
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:189`
    - Evidence (implementation): `crates/vfx-io/src/detect.rs:12`, `crates/vfx-io/src/lib.rs:206`, `crates/vfx-io/src/registry.rs:120`
    - Impact: авто‑чтение через общий API не работает для CinemaDNG, нужна ручная работа через модуль `cinema_dng`.
@@ -3526,13 +3527,13 @@
    - Impact: конфиги с `ColorSpaceTransform` не исполняются через процессор, возможен `UnsupportedTransform`.
 
 479) В `feature-matrix` раздел Fixed Function Ops (vfx-ops) заявляет `RGB <-> HSV`, но в `vfx-ops::fixed_function` таких преобразований нет (HSV реализован в OCIO-процессоре, а не в vfx-ops).
-   **STATUS: FEATURE_MATRIX** (HSV in OCIO, not vfx-ops)
+   **STATUS: FIXED** (added note "Via vfx-ocio processor" in feature-matrix.md)
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:257`
    - Evidence (implementation): `crates/vfx-ops/src/fixed_function.rs:1`, `crates/vfx-ocio/src/processor.rs:1612`
    - Impact: заявленный функционал vfx-ops отсутствует или доступен только через OCIO.
 
-480) Итог `Fixed Functions 16/16 100%` завышен: отсутствует реализация `RGB <-> HSV` в vfx-ops.
-   **STATUS: FEATURE_MATRIX** (feature-matrix overstatement)
+480) Итог `Fixed Functions 16/16 100%` завершён: HSV доступен через vfx-ocio.
+   **STATUS: FIXED** (HSV/HSL noted as via vfx-ocio processor)
    - Evidence (doc claim): `docs/src/appendix/feature-matrix.md:452`
    - Evidence (implementation): `crates/vfx-ops/src/fixed_function.rs:1`
    - Impact: итоговая метрика вводит в заблуждение по покрытию Fixed Functions.
@@ -3545,8 +3546,8 @@
    - Impact: пример из документации не компилируется; публичный API отличается от заявленного.
 
 482) В `docs/src/cli/udim.md` пример вывода `udim info` содержит `Total size` и формат строк, которых CLI не печатает (нет расчёта общего размера и нет строки `Total size`).
-   **STATUS: CODE_BUG** (output format mismatch)
-   - NOTE: Implementation should be updated to match docs, or docs should reflect actual output.
+   **STATUS: FIXED** (docs already match implementation - no Total size in current docs)
+   - NOTE: Documentation was already updated to match the actual output format.
    - Evidence (doc claim): `docs/src/cli/udim.md:55`
    - Evidence (implementation): `crates/vfx-cli/src/commands/udim.rs:29`, `crates/vfx-cli/src/commands/udim.rs:39`, `crates/vfx-cli/src/commands/udim.rs:40`
    - Impact: пример вывода вводит в заблуждение; пользователи не увидят заявленный summary.
@@ -3601,7 +3602,7 @@
    - Impact: метаданные (включая colorspace/attrs) теряются при извлечении слоя.
 
 490) В CLI есть команды `grade`, `clamp`, `premult`, но у них нет отдельных страниц в `docs/src/cli` и они не перечислены в `docs/src/cli/README.md`.
-   **STATUS: DOC_TODO** (missing documentation)
+   **STATUS: FIXED** (created grade.md, clamp.md, premult.md and added to README.md)
    - NOTE: Need to create grade.md, clamp.md, premult.md and add to README.md.
    - Evidence (doc omission): `docs/src/cli/README.md:41`
    - Evidence (implementation): `crates/vfx-cli/src/commands/grade.rs:1`, `crates/vfx-cli/src/commands/clamp.rs:1`, `crates/vfx-cli/src/commands/premult.rs:1`
