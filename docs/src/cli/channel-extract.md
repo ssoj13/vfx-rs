@@ -23,7 +23,7 @@ Channels can be specified by:
 - **Name**: `R`, `G`, `B`, `A`, `Z` (standard names only)
 - **Index**: `0`, `1`, `2`, `3`, ...
 
-Multiple channels separated by commas.
+Use `-c` once per channel (not comma-separated).
 
 **Note:** Custom/arbitrary channel names (like `N.x`, `P.y`, `beauty.R`) are **not yet supported**. Use numeric indices for non-standard channels.
 
@@ -33,7 +33,7 @@ Multiple channels separated by commas.
 
 ```bash
 # Extract RGB channels only
-vfx channel-extract input.exr -o rgb.exr -c R,G,B
+vfx channel-extract input.exr -o rgb.exr -c R -c G -c B
 
 # Extract just alpha
 vfx channel-extract input.exr -o alpha.exr -c A
@@ -43,7 +43,7 @@ vfx channel-extract input.exr -o alpha.exr -c A
 
 ```bash
 # First three channels
-vfx channel-extract input.exr -o output.exr -c 0,1,2
+vfx channel-extract input.exr -o output.exr -c 0 -c 1 -c 2
 
 # Fourth channel (often alpha or Z)
 vfx channel-extract input.exr -o fourth.exr -c 3
@@ -63,7 +63,7 @@ vfx channel-extract render.exr -o ch5.exr -c 5
 
 ```bash
 # Just red and green
-vfx channel-extract input.exr -o rg.exr -c R,G
+vfx channel-extract input.exr -o rg.exr -c R -c G
 ```
 
 ## Supported Channel Names
@@ -94,7 +94,7 @@ vfx channel-extract color.exr -o gray.exr -c R
 
 ```bash
 # Some software expects specific channel configs
-vfx channel-extract input.exr -o output.exr -c R,G,B
+vfx channel-extract input.exr -o output.exr -c R -c G -c B
 ```
 
 ### Debug Channels
@@ -116,7 +116,7 @@ vfx channel-extract input.exr -o ch3.exr -c 3
 
 ```bash
 # Both can extract RGB:
-vfx channel-extract input.exr -o rgb.exr -c R,G,B
+vfx channel-extract input.exr -o rgb.exr -c R -c G -c B
 vfx channel-shuffle input.exr -o rgb.exr -p RGB
 ```
 

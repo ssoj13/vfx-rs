@@ -2,6 +2,11 @@
 
 Interactive image viewer with OCIO color management.
 
+**Feature:** `viewer` - This command requires building with the `viewer` feature flag:
+```bash
+cargo build --release -p vfx-cli --features viewer
+```
+
 ## Usage
 
 ```bash

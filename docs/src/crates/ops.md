@@ -134,7 +134,7 @@ let multiplied = blend(&a, &b, width, height, BlendMode::Multiply)?;
 ```rust
 use vfx_ops::composite::BlendMode;
 
-BlendMode::Over       // Standard alpha composite
+BlendMode::Normal     // Standard alpha composite (over)
 BlendMode::Add        // Additive (lighten)
 BlendMode::Multiply   // Darken
 BlendMode::Screen     // Lighten
@@ -354,6 +354,7 @@ match result {
 
 - `vfx-core` - Core types
 - `vfx-io` - Image data types
+- `vfx-color` - Color operations
 - `vfx-math` - Interpolation
 - `rayon` - Parallelism
 - `rustfft` - FFT (optional)

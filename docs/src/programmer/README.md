@@ -41,15 +41,24 @@ vfx-ops = "0.1"
 ### Basic Example
 
 ```rust
-use vfx_io::{read, write};
-use vfx_ops::resize;
+use vfx_io::{read, write, ImageData};
+use vfx_ops::{resize_f32, Filter};
 
 fn main() -> anyhow::Result<()> {
     // Read image
     let image = read("input.exr")?;
 
-    // Resize to half
-    let resized = resize(&image, 960, 540)?;
+    // Resize to half (resize_f32 operates on pixel buffers)
+    let src_data = image.to_f32();
+    let resized_data = resize_f32(
+        &src_data,
+        image.width as usize,
+        image.height as usize,
+        image.channels as usize,
+        960, 540,
+        Filter::Bilinear
+    )?;
+    let resized = ImageData::from_f32(960, 540, image.channels as usize, resized_data);
 
     // Write output
     write("output.exr", &resized)?;

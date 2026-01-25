@@ -45,7 +45,6 @@ vfx [OPTIONS] <COMMAND>
 Options:
   -v, --verbose...       Increase verbosity (-v, -vv, -vvv)
   -l, --log [PATH]       Write logs to file (default: vfx.log)
-  -j, --threads <NUM>    Number of threads (0 = auto)
   --allow-non-color      Allow processing non-color data (IDs, normals)
   -h, --help             Print help
   -V, --version          Print version
@@ -221,7 +220,7 @@ vfx lut input.exr -o output.exr --lut grade.cube
 vfx lut input.exr -o output.exr --lut gamma.cube
 
 # Invert LUT
-vfx lut input.exr -o output.exr --lut grade.cube --inverse
+vfx lut input.exr -o output.exr --lut grade.cube --invert
 ```
 
 ## batch

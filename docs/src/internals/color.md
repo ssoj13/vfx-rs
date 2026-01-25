@@ -98,13 +98,13 @@ pub fn rgb_to_xyz_matrix(primaries: &Primaries) -> Mat3 {
     let w = xy_to_xyz(primaries.w);
     
     // Build matrix from primaries as columns
-    let m = Mat3::from_cols(r, g, b);
-    
+    let m = Mat3::from_col_vecs(r, g, b);
+
     // Solve for scaling: M * S = W
-    let s = m.inverse() * w;
-    
+    let s = m.inverse().unwrap() * w;
+
     // Apply scaling
-    Mat3::from_cols(r * s.x, g * s.y, b * s.z)
+    Mat3::from_col_vecs(r * s.x, g * s.y, b * s.z)
 }
 
 fn xy_to_xyz(xy: (f32, f32)) -> Vec3 {
@@ -129,22 +129,22 @@ pub const BRADFORD: Mat3 = Mat3::from_rows([
     [0.0389, -0.0685, 1.0296],
 ]);
 
-pub fn adapt_matrix(src_white: Vec3, dst_white: Vec3, cone: &Mat3) -> Mat3 {
-    let cone_inv = cone.inverse();
-    
-    // Source white in cone space
-    let src_cone = *cone * src_white;
-    // Destination white in cone space  
-    let dst_cone = *cone * dst_white;
-    
+// Signature: adapt_matrix(method, src_white, dst_white)
+pub fn adapt_matrix(method: Mat3, src_white: Vec3, dst_white: Vec3) -> Mat3 {
+    let method_inv = method.inverse().unwrap_or(Mat3::IDENTITY);
+
+    // Transform white points to cone/adapted space
+    let src_cone = method * src_white;
+    let dst_cone = method * dst_white;
+
     // Diagonal scaling matrix
-    let scale = Mat3::from_diagonal(Vec3::new(
+    let scale = Mat3::diagonal(Vec3::new(
         dst_cone.x / src_cone.x,
         dst_cone.y / src_cone.y,
         dst_cone.z / src_cone.z,
     ));
-    
-    cone_inv * scale * *cone
+
+    method_inv * scale * method
 }
 ```
 

@@ -123,16 +123,9 @@ ChannelMode::Luminance  // Rec.709 luminance
 
 ## Layer Selection
 
-For multi-layer EXR files:
+For multi-layer EXR files, use the UI dropdown to select layers interactively.
 
-```rust
-let config = ViewerConfig {
-    layer: Some("diffuse".into()),  // Show specific layer
-    ..Default::default()
-};
-```
-
-Or select interactively via UI dropdown.
+**Note:** ViewerConfig does not include a `layer` field; layer selection is done through the UI at runtime.
 
 ## Persistence
 

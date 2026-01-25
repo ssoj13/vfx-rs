@@ -136,11 +136,17 @@ fn large_image_processing() {
 ```toml
 [dependencies]
 vfx-core = { workspace = true }
+vfx-math = { workspace = true }
+vfx-lut = { workspace = true }
+vfx-transfer = { workspace = true }
+vfx-primaries = { workspace = true }
+vfx-color = { workspace = true }
 vfx-io = { workspace = true }
 vfx-ops = { workspace = true }
-vfx-color = { workspace = true }
-vfx-ocio = { workspace = true }
-
-[dev-dependencies]
 tempfile = { workspace = true }
+serde = { workspace = true }
+serde_json = "1.0"
+sha2 = "0.10"
 ```
+
+**Note:** All dependencies are under `[dependencies]`, not `[dev-dependencies]`, as this is a test crate.

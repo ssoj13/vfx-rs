@@ -104,7 +104,7 @@ done
 
 Arbitrary rotation requires resampling every pixel:
 - Uses bilinear interpolation
-- Parallel processing via rayon
+- Sequential processing (single-threaded)
 - Larger angles create larger outputs
 
 For 90° increments, use [transform](./transform.md) (lossless, faster).

@@ -51,27 +51,23 @@ The `vfx-tests` crate contains integration tests:
 
 ```
 crates/vfx-tests/
-├── src/
-│   └── lib.rs        # Test utilities
-└── tests/
-    ├── io_tests.rs   # Image I/O tests
-    ├── color_tests.rs
-    └── ops_tests.rs
+├── Cargo.toml
+└── src/
+    ├── lib.rs        # Integration tests (inline #[cfg(test)] mod)
+    ├── golden.rs     # Golden parity tests (OCIO comparison)
+    └── bin/          # Test binaries
 ```
 
 ### Test Assets
 
-Test images and LUTs live in `test/`:
+Test assets live in `test/` at workspace root:
 
 ```
 test/
-├── images/
-│   ├── reference.exr     # Known-good reference
-│   ├── checkerboard.png
-│   └── gradient.exr
-└── luts/
-    ├── identity.cube
-    └── film_look.cube
+├── assets/
+│   └── OpenColorIO-Config-ACES/   # ACES OCIO config
+├── assets-exr/                     # EXR test files
+└── *.exr, *.jpg                    # Various test images
 ```
 
 ## Writing Tests
@@ -243,7 +239,7 @@ For generating reference images:
 
 ```bash
 # Use CLI to create test data
-vfx convert input.exr --resize 256x256 -o test/images/small.exr
+vfx resize input.exr -w 256 -H 256 -o test/images/small.exr
 vfx color input.exr --exposure 1.0 -o test/images/bright.exr
 ```
 

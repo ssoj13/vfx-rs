@@ -57,6 +57,7 @@ In `vfx-io/Cargo.toml`:
 sgi = { version = "0.1", optional = true }
 
 [features]
+# Current defaults include multiple formats
 default = ["exr", "png", "jpeg", "tiff", "dpx", "hdr"]
 sgi = ["dep:sgi"]
 ```

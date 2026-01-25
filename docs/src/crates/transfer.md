@@ -44,6 +44,8 @@ Transfer functions convert between linear light and encoded values. This crate i
 | `bmd_film` | Blackmagic | ~13 stops | BMD spec |
 | `acescc` | ACES grading | ~25 stops | AMPAS S-2014-003 |
 | `acescct` | ACES grading (toe) | ~25 stops | AMPAS S-2016-001 |
+| `d_log` | DJI cameras | ~13 stops | DJI spec |
+| `davinci_intermediate` | DaVinci Resolve | ~17 stops | BMD spec |
 
 ## Usage
 

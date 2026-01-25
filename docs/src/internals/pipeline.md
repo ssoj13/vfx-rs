@@ -146,10 +146,12 @@ let u16_data: Vec<u16> = working.iter()
 png::write(path, &image)?;
 
 // EXR: Applies chosen compression (ZIP, PIZ, etc.)
-exr::write_with_options(path, &image, &ExrWriteOptions {
+use vfx_io::exr::{ExrWriter, ExrWriterOptions, Compression};
+let writer = ExrWriter::with_options(ExrWriterOptions {
     compression: Compression::Zip,
     ..Default::default()
-})?;
+});
+writer.write(path, &image)?;
 ```
 
 ## Data Layout

@@ -163,26 +163,24 @@ pub fn write<P: AsRef<Path>>(path: P, image: &ImageData) -> IoResult<()> {
 ### Compression
 
 ```rust
-pub fn write_with_options<P: AsRef<Path>>(
-    path: P,
-    image: &ImageData,
-    options: &ExrWriteOptions,
-) -> IoResult<()> {
-    let compression = match options.compression {
-        Compression::None => exr::prelude::Compression::Uncompressed,
-        Compression::Rle => exr::prelude::Compression::RLE,
-        Compression::Zip => exr::prelude::Compression::ZIP16,
-        Compression::Zips => exr::prelude::Compression::ZIP1,
-        Compression::Piz => exr::prelude::Compression::PIZ,
-        Compression::Pxr24 => exr::prelude::Compression::PXR24,
-        Compression::B44 => exr::prelude::Compression::B44,
-        Compression::B44a => exr::prelude::Compression::B44A,
-        Compression::Dwaa => exr::prelude::Compression::DWAA(None),
-        Compression::Dwab => exr::prelude::Compression::DWAB(None),
-    };
-    
-    // Apply compression...
-}
+use vfx_io::exr::{ExrWriter, ExrWriterOptions, Compression};
+
+// Configure compression via ExrWriterOptions
+let writer = ExrWriter::with_options(ExrWriterOptions {
+    compression: Compression::Zip,  // or Piz, Dwaa, etc.
+    ..Default::default()
+});
+writer.write(path, &image)?;
+
+// Available compression methods:
+// - None: Uncompressed (fastest write/read, largest files)
+// - Rle: Run-length encoding
+// - Zip: ZIP compression (scanlines)
+// - Zips: ZIP compression (single scanlines)
+// - Piz: PIZ wavelet compression (good for random access)
+// - Pxr24: Pixar 24-bit lossy
+// - B44/B44a: Lossy for noisy images
+// - Dwaa/Dwab: Lossy DCT-based (best ratio)
 ```
 
 ### Compression Recommendations

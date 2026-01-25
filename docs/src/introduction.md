@@ -57,8 +57,8 @@ vfx batch "renders/*.exr" -o processed/ --op resize --args width=1920
 ```
 vfx-rs/
 ├── crates/
-│   ├── vfx-core      # Primitives: ImageData, PixelFormat
-│   ├── vfx-math      # Linear algebra: Vec3, Mat3, Mat4
+│   ├── vfx-core      # Primitives: PixelFormat, Roi
+│   ├── vfx-math      # Linear algebra: Vec3, Mat3
 │   ├── vfx-io        # Image I/O: EXR, PNG, JPEG, TIFF, DPX
 │   ├── vfx-ops       # Operations: resize, blur, composite
 │   ├── vfx-compute   # GPU backend: wgpu shaders
@@ -95,4 +95,4 @@ All critical and high-priority bugs have been addressed:
 | Deep EXR | ✅ Full read/write |
 | Color grading | ✅ Division-by-zero protection |
 
-See [Bug Hunt Report](../plan3.md) for full details.
+See implementation source for full details.

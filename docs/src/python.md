@@ -53,11 +53,11 @@ img = vfx_rs.Image(arr)
 img.width      # 1920
 img.height     # 1080
 img.channels   # 4
-img.format     # 'f32' | 'f16' | 'u16' | 'u8'
+img.format     # 'f32' | 'f16' | 'u16' | 'u8' | 'u32'
 
-# To numpy
+# To numpy (always copies data)
 arr = img.numpy()           # shape: (height, width, channels)
-arr_copy = img.numpy(copy=True)  # force copy
+arr_copy = img.numpy(copy=True)  # explicit copy flag (data always copied regardless)
 
 # Static constructors
 empty = vfx_rs.Image.empty(1920, 1080, channels=4)
@@ -485,7 +485,7 @@ config.write_to_file("output_config.ocio")
 ### Context Variables
 
 ```python
-from vfx_rs import Context, ColorConfig
+from vfx_rs.ocio import Context, ColorConfig
 
 # Create context with variables
 ctx = Context()
@@ -510,26 +510,25 @@ config.processor_with_context("ACEScg", "sRGB", ctx)
 ### GPU Shader Generation
 
 ```python
-from vfx_rs import ColorConfig, GpuProcessor, GpuLanguage
+from vfx_rs.ocio import ColorConfig
 
+# NOTE: GpuProcessor and GpuLanguage are not yet exposed in Python bindings.
+# GPU shader generation is available only in the Rust API.
+# This section shows the planned API for future implementation.
+
+# Planned API (not yet available):
+# gpu_proc = GpuProcessor.from_config(config, "ACEScg", "sRGB")
+# shader = gpu_proc.generate_shader(GpuLanguage.Glsl330)
+
+# For now, use CPU processing:
 config = ColorConfig.aces_1_3()
-
-# Create GPU processor
-gpu_proc = GpuProcessor.from_config(config, "ACEScg", "sRGB")
-
-# Generate shader code
-shader = gpu_proc.generate_shader(GpuLanguage.Glsl330)
-print(shader.fragment_code)
-print(shader.has_textures())
-
-# Available languages: Glsl120, Glsl330, Glsl400, GlslEs300, Hlsl50, Metal
 ```
 
 ### Color Conversion with ColorConfig
 
 ```python
 import vfx_rs
-from vfx_rs import colorconvert, ociodisplay, ociolook, ociofiletransform
+from vfx_rs.ocio import colorconvert, ociodisplay, ociolook, ociofiletransform
 
 img = vfx_rs.read("render.exr")
 config = vfx_rs.ColorConfig.from_file("/studio/aces/config.ocio")

@@ -38,7 +38,7 @@ use std::path::Path;
 let profile = Profile::from_file(Path::new("monitor.icc"))?;
 
 // From embedded data (e.g., from image file)
-let profile = Profile::from_bytes(&icc_data)?;
+let profile = Profile::from_icc(&icc_data)?;
 ```
 
 ### Built-in Profiles
@@ -58,7 +58,7 @@ let aces_ap0 = Profile::aces_ap0();    // ACES 2065-1 (linear)
 let aces_ap1 = Profile::aces_ap1();    // ACEScg (linear)
 
 // Lab/XYZ
-let lab = Profile::lab_d50();
+let lab = Profile::lab()?;
 let xyz = Profile::xyz();
 ```
 
@@ -67,8 +67,8 @@ let xyz = Profile::xyz();
 ```rust
 use vfx_icc::{Profile, StandardProfile};
 
-// From standard definition
-let profile = Profile::from_standard(StandardProfile::SRgb)?;
+// From standard definition (returns Profile directly, not Result)
+let profile = Profile::from_standard(StandardProfile::Srgb);
 
 // Custom RGB profile (requires primaries + TRC)
 // See lcms2 documentation for advanced usage
@@ -132,7 +132,7 @@ let srgb = Profile::srgb();
 let aces = Profile::aces_ap1();
 
 let mut pixels = vec![[0.5f32, 0.3, 0.2]];
-convert_rgb(&srgb, &aces, Intent::RelativeColorimetric, &mut pixels)?;
+convert_rgb(&mut pixels, &srgb, &aces, Intent::RelativeColorimetric)?;
 ```
 
 ## When to Use ICC vs OCIO
@@ -178,9 +178,10 @@ println!("PCS: {:?}", profile.pcs());  // Profile Connection Space
 use vfx_icc::IccError;
 
 match result {
-    Err(IccError::InvalidProfile) => println!("Corrupt ICC data"),
-    Err(IccError::FileNotFound(path)) => println!("Missing: {}", path),
-    Err(IccError::TransformError(msg)) => println!("Transform failed: {}", msg),
+    Err(IccError::InvalidProfile(msg)) => println!("Invalid ICC data: {}", msg),
+    Err(IccError::LoadFailed(msg)) => println!("Load failed: {}", msg),
+    Err(IccError::TransformFailed(msg)) => println!("Transform failed: {}", msg),
+    Err(IccError::Io(e)) => println!("I/O error: {}", e),
     _ => {}
 }
 ```
@@ -197,7 +198,7 @@ let image = read("photo.jpg")?;
 
 // Check for embedded profile
 if let Some(icc_data) = image.metadata.attrs.get_bytes("icc_profile") {
-    let embedded = Profile::from_bytes(icc_data)?;
+    let embedded = Profile::from_icc(icc_data)?;
     let srgb = Profile::srgb();
     
     let transform = Transform::new(&embedded, &srgb, Intent::Perceptual)?;

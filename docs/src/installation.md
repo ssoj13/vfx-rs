@@ -7,11 +7,11 @@
 
 ### Optional System Dependencies
 
-| Feature | Dependency | Platform |
-|---------|------------|----------|
-| `heif` | libheif >= 1.17 | All |
-| `jp2` | OpenJPEG | All |
-| `icc` | lcms2 | All |
+| Crate/Feature | Dependency | Platform |
+|---------------|------------|----------|
+| `vfx-io` `heif` | libheif >= 1.17 | All |
+| `vfx-io` `jp2` | OpenJPEG | All |
+| `vfx-icc` crate | lcms2 | All |
 
 ## Quick Install
 

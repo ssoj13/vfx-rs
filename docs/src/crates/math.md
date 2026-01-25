@@ -55,7 +55,8 @@ Adapt colors between different white points:
 use vfx_math::{adapt_matrix, BRADFORD, D65, D60};
 
 // Create D65 → D60 adaptation matrix
-let adapt = adapt_matrix(D65, D60, &BRADFORD);
+// Signature: adapt_matrix(method, src_white, dst_white)
+let adapt = adapt_matrix(BRADFORD, D65, D60);
 
 // Apply to XYZ color
 let xyz_d60 = adapt * xyz_d65;
@@ -70,12 +71,12 @@ Standard white points:
 - `D65` - Daylight (~6500K)
 - `D60` - ACES (~6000K)
 - `D50` - Print (~5000K)
-- `DCI` - Cinema projection
+- `DCI_WHITE` - Cinema projection
 
 ## Interpolation
 
 ```rust
-use vfx_math::{lerp, smoothstep, catmull_rom};
+use vfx_math::{lerp, smoothstep, saturate};
 
 // Linear interpolation
 let mid = lerp(0.0, 1.0, 0.5);  // 0.5
@@ -83,8 +84,8 @@ let mid = lerp(0.0, 1.0, 0.5);  // 0.5
 // Smooth step (ease in/out)
 let smooth = smoothstep(0.0, 1.0, 0.5);
 
-// Catmull-Rom spline
-let spline = catmull_rom(p0, p1, p2, p3, t);
+// Clamp to 0-1 (saturate)
+let clamped = saturate(1.5);  // 1.0
 ```
 
 ## SIMD Operations
@@ -92,13 +93,19 @@ let spline = catmull_rom(p0, p1, p2, p3, t);
 SIMD-accelerated operations via the `wide` crate:
 
 ```rust
-use vfx_math::simd::{process_rgba_f32x8, apply_matrix_simd};
+use vfx_math::simd::{batch_mul_add, batch_pow, batch_clamp01, batch_rgb_to_luma};
 
-// Process 8 pixels at once
-process_rgba_f32x8(&mut data, |r, g, b, a| {
-    // Transform operates on f32x8 vectors
-    (r * 1.1, g, b * 0.9, a)
-});
+// Batch multiply-add: out = in * slope + offset
+let result = batch_mul_add(&values, 2.0, 0.1);
+
+// Batch power function
+let result = batch_pow(&values, 2.2);
+
+// Batch clamp to [0, 1]
+let result = batch_clamp01(&values);
+
+// RGB to grayscale (Rec.709)
+let luma = batch_rgb_to_luma(&pixels);
 ```
 
 ## Color Math Functions
@@ -106,14 +113,18 @@ process_rgba_f32x8(&mut data, |r, g, b, a| {
 Optimized implementations for common operations:
 
 ```rust
-use vfx_math::{rgb_to_luminance, saturate, linearize_srgb};
-
-// Rec.709 luminance
-let lum = rgb_to_luminance(r, g, b);
+use vfx_math::{saturate, lerp};
+use vfx_math::simd::batch_rgb_to_luma;
 
 // Clamp to 0-1
 let clamped = saturate(value);
+
+// Rec.709 luminance (via simd module)
+let pixels = vec![[0.5, 0.3, 0.2]];
+let luma = batch_rgb_to_luma(&pixels);
 ```
+
+**Note:** For sRGB linearization, use `vfx-transfer::srgb::eotf()` instead.
 
 ## Dependencies
 

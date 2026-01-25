@@ -685,19 +685,21 @@ vfx premult premult.exr -o straight.exr --unpremultiply
 
 ## Sequences
 
-Supported sequence patterns:
+**Note:** Sequence pattern expansion (`%04d`, `####`) is **NOT supported** at CLI level.
+The CLI operates on single files. Use `vfx batch` or shell globbing instead:
 
 ```bash
-# Printf-style
-image.%04d.exr          # image.0001.exr, image.0002.exr, ...
-render.%d.exr           # render.1.exr, render.2.exr, ...
+# Using batch for multiple files
+vfx batch -i "frames/*.exr" -o output/ --op convert -f png
 
-# Hash notation
-image.####.exr          # image.0001.exr, image.0002.exr, ...
+# Using shell globbing
+for f in frames/*.exr; do vfx convert "$f" "${f%.exr}.png"; done
 ```
 
-**Examples**:
-```bash
-vfx info "sequence.%04d.exr"
-vfx convert "input.####.exr" "output.####.png"
+Sequence patterns are supported in the **library API** via `vfx_io::sequence`::
+
+```rust
+use vfx_io::sequence::{SequenceSpec, detect_sequence};
+let spec = SequenceSpec::parse("image.%04d.exr")?;
+let frames = detect_sequence("image.####.exr")?;
 ```

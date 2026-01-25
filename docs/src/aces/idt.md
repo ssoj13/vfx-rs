@@ -25,13 +25,16 @@ vfx aces input.jpg -o output.exr -t idt
 ### Under the Hood
 
 ```rust
-use vfx_color::aces::{srgb_to_acescg, linearize_srgb};
+use vfx_transfer::srgb::eotf;
+use vfx_color::aces::srgb_to_acescg;
 
-// 1. Linearize sRGB
-let linear = linearize_srgb(pixel);
+// 1. Linearize sRGB (EOTF)
+let linear_r = eotf(pixel_r);
+let linear_g = eotf(pixel_g);
+let linear_b = eotf(pixel_b);
 
-// 2. Matrix transform to ACEScg
-let acescg = srgb_to_acescg(linear);
+// 2. Matrix transform to ACEScg (separate r, g, b arguments)
+let (ar, ag, ab) = srgb_to_acescg(linear_r, linear_g, linear_b);
 ```
 
 ## Common Camera IDTs

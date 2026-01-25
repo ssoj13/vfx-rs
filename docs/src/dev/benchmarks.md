@@ -8,8 +8,9 @@ The `vfx-bench` crate contains performance benchmarks using Criterion.
 # All benchmarks
 cargo bench -p vfx-bench
 
-# Specific benchmark
-cargo bench -p vfx-bench -- resize
+# Specific benchmark group
+cargo bench -p vfx-bench -- transfer
+cargo bench -p vfx-bench -- lut3d
 
 # With baseline comparison
 cargo bench -p vfx-bench -- --baseline main
@@ -20,66 +21,23 @@ cargo bench -p vfx-bench -- --plotting-backend gnuplot
 
 ## Benchmark Categories
 
-### IO Benchmarks
+The `vfx_bench` target includes these groups: `transfer`, `lut1d`, `lut3d`, `cdl`, `simd`, `pixels`.
 
-Image loading/saving performance:
+**Note:** I/O and resize benchmarks are not currently included in vfx-bench.
 
-```rust
-fn bench_exr_load(c: &mut Criterion) {
-    let path = "test/images/4k.exr";
-    
-    c.bench_function("exr_load_4k", |b| {
-        b.iter(|| load_image(black_box(path)))
-    });
-}
-```
-
-Results vary by:
-- Image dimensions
-- Pixel format (half vs float)
-- Compression type
-- Channel count
-
-### Resize Benchmarks
+### Transfer Function Benchmarks
 
 ```rust
-fn bench_resize(c: &mut Criterion) {
-    let data = vec![0.5f32; 1920 * 1080 * 3];
-    
-    let mut group = c.benchmark_group("resize");
-    
-    for filter in [Filter::Nearest, Filter::Bilinear, Filter::Lanczos3] {
-        group.bench_function(format!("{:?}", filter), |b| {
-            b.iter(|| resize_f32(&data, 1920, 1080, 3, 960, 540, filter))
-        });
-    }
-    
-    group.finish();
-}
-```
+fn bench_transfer(c: &mut Criterion) {
+    let mut group = c.benchmark_group("transfer");
+    let values: Vec<f32> = (0..10000).map(|i| i as f32 / 10000.0).collect();
 
-Typical results (1080p → 540p, 3-channel):
-- Nearest: ~2ms
-- Bilinear: ~8ms
-- Lanczos3: ~25ms
-
-### Color Transform Benchmarks
-
-```rust
-fn bench_color_pipeline(c: &mut Criterion) {
-    let data = vec![0.18f32; 1920 * 1080 * 3];
-    
-    c.bench_function("srgb_to_linear_1080p", |b| {
+    group.bench_with_input(BenchmarkId::new("srgb_eotf", 10000), &values, |b, v| {
         b.iter(|| {
-            let mut d = data.clone();
-            for pixel in d.chunks_exact_mut(3) {
-                let rgb = vfx_transfer::srgb::eotf_rgb([pixel[0], pixel[1], pixel[2]]);
-                pixel[0] = rgb[0];
-                pixel[1] = rgb[1];
-                pixel[2] = rgb[2];
-            }
+            v.iter().map(|&x| vfx_transfer::srgb::eotf(black_box(x))).collect::<Vec<_>>()
         })
     });
+    group.finish();
 }
 ```
 
@@ -87,17 +45,16 @@ fn bench_color_pipeline(c: &mut Criterion) {
 
 ```rust
 fn bench_lut3d(c: &mut Criterion) {
-    // Load 3D LUT from .cube file
-    let lut = vfx_lut::cube::read_3d("test/luts/film.cube").unwrap();
-    let data = vec![0.5f32; 1920 * 1080 * 3];
+    let lut_33 = vfx_lut::Lut3D::identity(33);
+    let pixels: Vec<[f32; 3]> = (0..10000)
+        .map(|i| { let t = i as f32 / 10000.0; [t, t * 0.8, t * 0.6] })
+        .collect();
     
     let mut group = c.benchmark_group("lut3d");
     
-    // lut.apply() uses the interpolation mode set on the LUT
-    group.bench_function("apply", |b| {
+    group.bench_function("trilinear_33", |b| {
         b.iter(|| {
-            for pixel in data.chunks_exact(3) {
-                black_box(lut.apply([pixel[0], pixel[1], pixel[2]]));
+            pixels.iter().map(|&p| lut_33.apply(black_box(p))).collect::<Vec<_>>()
             }
         })
     });

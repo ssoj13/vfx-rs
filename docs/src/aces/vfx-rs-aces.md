@@ -39,30 +39,31 @@ Defines ACES color spaces and conversion matrices.
 ### Color Space Definitions
 
 ```rust
-use vfx_primaries::Primaries;
+use vfx_primaries::{ACES_AP0, ACES_AP1, SRGB, REC709, REC2020, DCI_P3};
 
-// ACES Primaries
-let ap0 = Primaries::ACES_AP0;  // Archive space
-let ap1 = Primaries::ACES_AP1;  // Working space (ACEScg)
+// ACES Primaries (module-level constants, not Primaries:: variants)
+let ap0 = ACES_AP0;  // Archive space
+let ap1 = ACES_AP1;  // Working space (ACEScg)
 
 // Common display spaces
-let srgb = Primaries::SRGB;
-let rec709 = Primaries::REC709;
-let rec2020 = Primaries::REC2020;
-let p3 = Primaries::DCI_P3;
+let srgb = SRGB;
+let rec709 = REC709;
+let rec2020 = REC2020;
+let p3 = DCI_P3;
 ```
 
 ### Matrix Generation
 
 ```rust
 use vfx_primaries::{rgb_to_xyz_matrix, xyz_to_rgb_matrix, rgb_to_rgb_matrix};
+use vfx_primaries::{SRGB, ACES_AP1};
 
 // Generate conversion matrices
-let srgb_to_xyz = rgb_to_xyz_matrix(&Primaries::SRGB);
-let xyz_to_ap1 = xyz_to_rgb_matrix(&Primaries::ACES_AP1);
+let srgb_to_xyz = rgb_to_xyz_matrix(&SRGB);
+let xyz_to_ap1 = xyz_to_rgb_matrix(&ACES_AP1);
 
 // Direct RGB-to-RGB conversion
-let srgb_to_acescg = rgb_to_rgb_matrix(&Primaries::SRGB, &Primaries::ACES_AP1);
+let srgb_to_acescg = rgb_to_rgb_matrix(&SRGB, &ACES_AP1);
 ```
 
 ### Available Primaries
@@ -89,51 +90,48 @@ Implements OETF/EOTF transfer functions.
 ### ACES Transfer Functions
 
 ```rust
-use vfx_transfer::{acescct_to_linear, linear_to_acescct};
-use vfx_transfer::{acescc_to_linear, linear_to_acescc};
+use vfx_transfer::{acescct, acescc};
 
 // ACEScct (with toe)
-let linear = acescct_to_linear(0.4135);  // ~0.18 mid-gray
-let cct = linear_to_acescct(0.18);       // ~0.4135
+let linear = acescct::decode(0.4135);  // ~0.18 mid-gray
+let cct = acescct::encode(0.18);       // ~0.4135
 
 // ACEScc (pure log)
-let linear = acescc_to_linear(0.4135);
-let cc = linear_to_acescc(0.18);
+let linear = acescc::decode(0.4135);
+let cc = acescc::encode(0.18);
 ```
 
 ### Camera Log Functions
 
 ```rust
-use vfx_transfer::{logc3_to_linear, slog3_to_linear, vlog_to_linear};
+use vfx_transfer::{log_c, s_log3, v_log};
 
 // ARRI LogC3
-let linear = logc3_to_linear(0.391);  // mid-gray
+let linear = log_c::decode(0.391);  // mid-gray
 
 // Sony S-Log3
-let linear = slog3_to_linear(0.406);  // mid-gray
+let linear = s_log3::decode(0.406);  // mid-gray
 
 // Panasonic V-Log
-let linear = vlog_to_linear(0.423);  // mid-gray
+let linear = v_log::decode(0.423);  // mid-gray
 ```
 
 ### Display Transfer Functions
 
 ```rust
-use vfx_transfer::{srgb_to_linear, linear_to_srgb};
-use vfx_transfer::{pq_to_linear, linear_to_pq};
-use vfx_transfer::{hlg_to_linear, linear_to_hlg};
+use vfx_transfer::{srgb, pq, hlg};
 
 // sRGB
-let linear = srgb_to_linear(0.5);
-let encoded = linear_to_srgb(0.5);
+let linear = srgb::eotf(0.5);
+let encoded = srgb::oetf(0.5);
 
 // PQ (HDR10)
-let linear = pq_to_linear(0.5);  // In nits: ~100
-let encoded = linear_to_pq(100.0);
+let linear = pq::eotf(0.5);  // In nits: ~100
+let encoded = pq::oetf(100.0);
 
 // HLG
-let linear = hlg_to_linear(0.5);
-let encoded = linear_to_hlg(0.5);
+let linear = hlg::eotf(0.5);
+let encoded = hlg::oetf(0.5);
 ```
 
 ## vfx-color Crate
@@ -143,32 +141,27 @@ High-level ACES workflow functions.
 ### ACES Transforms
 
 ```rust
-use vfx_color::aces::{srgb_to_acescg, acescg_to_srgb};
-use vfx_color::aces::{apply_aces_idt, apply_aces_rrt_odt};
+use vfx_color::aces::{srgb_to_acescg, acescg_to_srgb, rrt_odt_srgb};
 
-// sRGB to ACEScg (IDT)
-let acescg = srgb_to_acescg([0.5, 0.3, 0.2]);
+// sRGB to ACEScg (separate r, g, b arguments)
+let (ar, ag, ab) = srgb_to_acescg(0.5, 0.3, 0.2);
 
-// ACEScg to sRGB (RRT+ODT)
-let srgb = acescg_to_srgb([0.18, 0.15, 0.12]);
+// ACEScg to sRGB via RRT+ODT
+let (sr, sg, sb) = rrt_odt_srgb(0.18, 0.15, 0.12);
 ```
 
 ### Processing Images
 
 ```rust
-use vfx_color::aces::{apply_idt, apply_rrt_odt};
-use vfx_io::ImageData;
+use vfx_color::aces::apply_rrt_odt_srgb;
 
-let mut image: ImageData = ...;
-
-// Apply IDT (sRGB → ACEScg)
-apply_idt(&mut image)?;
-
-// ... do compositing work ...
-
-// Apply output transform (RRT + ODT)
-apply_rrt_odt(&mut image)?;
+// Process pixel data buffer (ACEScg → sRGB display)
+let channels = 3;
+let acescg_data: Vec<f32> = /* your ACEScg pixels */;
+let display_data = apply_rrt_odt_srgb(&acescg_data, channels);
 ```
+
+**Note:** vfx-color provides `apply_rrt_odt_srgb` for batch processing. There is no separate `apply_idt` function; use `srgb_to_acescg` per-pixel or matrix multiplication for bulk conversion.
 
 ## vfx-ocio Crate
 
@@ -177,48 +170,48 @@ Full OCIO integration for complex ACES workflows.
 ### Loading ACES Config
 
 ```rust
-use vfx_ocio::{Config, Processor};
+use vfx_ocio::{Config, builtin};
 
-// Load ACES OCIO config
-let config = Config::from_env()?;  // Uses $OCIO
-// Or: Config::from_file("/path/to/config.ocio")?
+// Load ACES OCIO config from file
+let config = Config::from_file("/path/to/config.ocio")?;
+// Or use built-in ACES 1.3 config
+let config = builtin::aces_1_3();
 
 // Get color space names
-for cs in config.color_spaces() {
-    println!("{}", cs);
+for cs in config.colorspaces() {
+    println!("{}", cs.name());
 }
 ```
 
 ### Color Space Conversions
 
 ```rust
-use vfx_ocio::{Config, Processor};
+use vfx_ocio::Config;
 
 let config = Config::from_file("aces_1.2/config.ocio")?;
 
-// Create processor
-let proc = Processor::new(&config, "ACES - ACEScg", "Output - sRGB")?;
+// Create processor (method on Config, not Processor constructor)
+let proc = config.processor("ACES - ACEScg", "Output - sRGB")?;
 
-// Apply to image
-proc.apply(&mut pixels)?;
+// Apply to image (apply_rgb for slices of RGB triplets)
+proc.apply_rgb(&mut pixels);
 ```
 
 ### Display/View Transforms
 
 ```rust
-use vfx_ocio::{Config, DisplayViewProcessor};
+use vfx_ocio::Config;
 
-let config = Config::from_env()?;
+let config = Config::from_file("/path/to/config.ocio")?;
 
-// Get display/view processor
-let proc = DisplayViewProcessor::new(
-    &config,
+// Get display/view processor (method on Config)
+let proc = config.display_processor(
     "ACES - ACEScg",  // Input
     "sRGB",           // Display
     "ACES 1.0 - SDR Video"  // View
 )?;
 
-proc.apply(&mut pixels)?;
+proc.apply_rgb(&mut pixels);
 ```
 
 ## CLI Usage

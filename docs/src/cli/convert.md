@@ -14,6 +14,7 @@ vfx convert [OPTIONS] <INPUT> <OUTPUT>
 |--------|-------------|
 | `-d, --depth <DEPTH>` | Target bit depth: 8, 16, 32, half |
 | `-c, --compression <COMP>` | EXR compression: none, rle, zip, piz, dwaa, dwab |
+| `-q, --quality <QUALITY>` | JPEG quality (0-100, default 95) |
 
 ## Examples
 
@@ -27,7 +28,7 @@ vfx convert input.exr output.exr -c dwaa
 # Convert to half-float
 vfx convert input.exr output.exr -d half
 
-# DPX to EXR (10-bit log to linear)
+# DPX to EXR (preserves log encoding, no color transform)
 vfx convert scan.dpx output.exr
 
 # JPEG to PNG

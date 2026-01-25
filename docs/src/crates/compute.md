@@ -33,8 +33,8 @@ let mut img = ComputeImage::from_f32(data, 1920, 1080, 3)?;
 proc.apply_exposure(&mut img, 1.5)?;
 proc.apply_saturation(&mut img, 1.2)?;
 
-// Get result
-let result = img.to_vec();
+// Get result (consuming) or borrow data
+let result = img.into_vec();   // or img.data() for reference
 ```
 
 ## Backend Selection
@@ -81,16 +81,18 @@ GPU-ready image container:
 use vfx_compute::ComputeImage;
 
 // From raw data
-let img = ComputeImage::from_f32(data, width, height, channels)?;
+let img = ComputeImage::from_f32(data, width, height, channels);
 
-// From vfx-io ImageData
-let img = ComputeImage::from_image_data(&image_data)?;
+// From vfx-io ImageData (via convert module)
+use vfx_compute::convert::{from_image_data, to_image_data};
+let img = from_image_data(&image_data);
 
 // To raw data
-let data: Vec<f32> = img.to_vec();
+let data: Vec<f32> = img.into_vec();  // consuming
+// or borrow: img.data()
 
 // Back to ImageData
-let image_data = img.to_image_data();
+let image_data = to_image_data(&img);
 ```
 
 ## Color Operations
@@ -129,9 +131,14 @@ proc.apply_cdl(&mut img, &cdl)?;
 ### Matrix Transform
 
 ```rust
-use vfx_math::Mat3;
-
-let matrix = Mat3::from_rows([...]);
+// 4x4 matrix (row-major, 16 floats)
+// RGB transform uses top-left 3x3, fourth column for offset
+let matrix: [f32; 16] = [
+    1.1, 0.0, 0.0, 0.0,   // R scale
+    0.0, 1.0, 0.0, 0.0,   // G (unchanged)
+    0.0, 0.0, 0.9, 0.0,   // B scale
+    0.0, 0.0, 0.0, 1.0,   // identity
+];
 proc.apply_matrix(&mut img, &matrix)?;
 ```
 
@@ -239,9 +246,10 @@ Check hardware constraints:
 ```rust
 use vfx_compute::GpuLimits;
 
-let limits = proc.limits()?;
-println!("Max texture: {}x{}", limits.max_texture_dimension, limits.max_texture_dimension);
-println!("Max buffer: {} bytes", limits.max_buffer_size);
+let limits = proc.limits();
+println!("Max tile: {}x{}", limits.max_tile_dim, limits.max_tile_dim);
+println!("Max buffer: {} bytes", limits.max_buffer_bytes);
+println!("Available memory: {} bytes", limits.available_memory);
 ```
 
 ## Feature Flags

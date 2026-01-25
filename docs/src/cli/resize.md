@@ -13,7 +13,7 @@ vfx resize [OPTIONS] <INPUT> -o <OUTPUT>
 | Option | Description |
 |--------|-------------|
 | `-w, --width <W>` | Target width |
-| `-h, --height <H>` | Target height |
+| `-H, --height <H>` | Target height (note: `-H` not `-h`, since `-h` is help) |
 | `-s, --scale <S>` | Scale factor (0.5 = half) |
 | `-f, --filter <F>` | Filter: nearest, bilinear, bicubic, lanczos |
 | `--layer <NAME>` | Process specific EXR layer |

@@ -112,7 +112,7 @@ r' = 2 * arctan(r * k) / (2 * arctan(k))
 ### Twist
 
 ```
-angle = k * (1 - r/radius)²
+angle = k * (1 - r/radius)   # linear falloff, NOT squared
 x' = x*cos(angle) - y*sin(angle)
 y' = x*sin(angle) + y*cos(angle)
 ```
@@ -120,8 +120,10 @@ y' = x*sin(angle) + y*cos(angle)
 ### Wave
 
 ```
-y' = y + amplitude * sin(2π * frequency * x)
+x' = x + amplitude * sin(2π * frequency * y)   # X displaced based on Y
 ```
+
+**Note:** Wave displaces X based on Y position, not Y based on X.
 
 ## Use Cases
 

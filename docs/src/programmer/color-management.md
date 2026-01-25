@@ -16,41 +16,43 @@ Color management in vfx-rs involves:
 ### Available Primaries
 
 ```rust
-use vfx_primaries::Primaries;
+use vfx_primaries::{
+    SRGB, REC709, REC2020, DCI_P3, DISPLAY_P3,
+    ACES_AP0, ACES_AP1,
+    ARRI_WIDE_GAMUT_3, S_GAMUT3, V_GAMUT,
+    Primaries,
+};
 
-// Standard gamuts
-let srgb = Primaries::SRGB;
-let rec709 = Primaries::REC709;
-let rec2020 = Primaries::REC2020;
-let dci_p3 = Primaries::DCI_P3;
-let display_p3 = Primaries::DISPLAY_P3;
+// Standard gamuts (module-level constants)
+let srgb = SRGB;
+let rec709 = REC709;  // Same as SRGB
+let rec2020 = REC2020;
+let dci_p3 = DCI_P3;
+let display_p3 = DISPLAY_P3;
 
 // ACES
-let ap0 = Primaries::ACES_AP0;
-let ap1 = Primaries::ACES_AP1;
+let ap0 = ACES_AP0;
+let ap1 = ACES_AP1;
 
 // Camera specific
-let arri_wg3 = Primaries::ARRI_WIDE_GAMUT_3;
-let s_gamut3 = Primaries::S_GAMUT3;
-let v_gamut = Primaries::V_GAMUT;
+let arri_wg3 = ARRI_WIDE_GAMUT_3;
+let s_gamut3 = S_GAMUT3;
+let v_gamut = V_GAMUT;
 ```
 
 ### Matrix Generation
 
 ```rust
-use vfx_primaries::{rgb_to_xyz_matrix, xyz_to_rgb_matrix, rgb_to_rgb_matrix};
+use vfx_primaries::{rgb_to_xyz_matrix, xyz_to_rgb_matrix, rgb_to_rgb_matrix, SRGB, ACES_AP1};
 
 // RGB to XYZ
-let srgb_to_xyz = rgb_to_xyz_matrix(&Primaries::SRGB);
+let srgb_to_xyz = rgb_to_xyz_matrix(&SRGB);
 
 // XYZ to RGB
-let xyz_to_acescg = xyz_to_rgb_matrix(&Primaries::ACES_AP1);
+let xyz_to_acescg = xyz_to_rgb_matrix(&ACES_AP1);
 
 // Direct RGB to RGB
-let srgb_to_acescg = rgb_to_rgb_matrix(
-    &Primaries::SRGB,
-    &Primaries::ACES_AP1
-);
+let srgb_to_acescg = rgb_to_rgb_matrix(&SRGB, &ACES_AP1);
 ```
 
 ### Apply Matrix
@@ -318,7 +320,7 @@ let lut = iridas_itx::read_itx("transform.itx")?;
 
 ```rust
 use vfx_io;
-use vfx_primaries::{Primaries, rgb_to_rgb_matrix};
+use vfx_primaries::{rgb_to_rgb_matrix, SRGB, ACES_AP1};
 use vfx_transfer::srgb;
 use vfx_color::aces;
 
@@ -337,7 +339,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     // 2. Convert to ACEScg
-    let matrix = rgb_to_rgb_matrix(&Primaries::SRGB, &Primaries::ACES_AP1);
+    let matrix = rgb_to_rgb_matrix(&SRGB, &ACES_AP1);
     for pixel in data.chunks_exact_mut(channels.min(3)) {
         let r = pixel[0] * matrix[0][0] + pixel[1] * matrix[0][1] + pixel[2] * matrix[0][2];
         let g = pixel[0] * matrix[1][0] + pixel[1] * matrix[1][1] + pixel[2] * matrix[1][2];

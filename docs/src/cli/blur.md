@@ -90,7 +90,7 @@ vfx --allow-non-color blur id_pass.exr -o id_smooth.exr -r 2
 - Uses 2D convolution (not separable, O(n²) per pixel)
 - Edge pixels are clamped (no wrap)
 - Output is always float32
-- Parallel processing via rayon
+- Single-threaded processing
 - Works with RGBA (4ch) and grayscale+alpha (2ch) images
 
 ## See Also

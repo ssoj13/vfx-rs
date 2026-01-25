@@ -61,7 +61,7 @@ img = vfx_rs.read("image.exr")
 print(img.width)      # int
 print(img.height)     # int
 print(img.channels)   # int
-print(img.format)     # "f32", "f16", "u8", "u16"
+print(img.format)     # "f32", "f16", "u8", "u16", "u32"
 
 # NumPy conversion
 arr = img.numpy()              # Returns np.ndarray (H, W, C), copies data
@@ -85,33 +85,38 @@ vfx_rs.write("output.exr", img)
 ## Color Transforms
 
 ```python
-import vfx_rs.color as color
+import vfx_rs
+import vfx_rs.ops as ops
 
-# Transfer functions
-linear = color.srgb_eotf(0.5)
-encoded = color.srgb_oetf(linear)
+# Image-level color transforms (returns new Image)
+img = vfx_rs.read("input.exr")
+linear = img.srgb_to_linear()  # sRGB -> linear
+encoded = linear.linear_to_srgb()  # linear -> sRGB
 
-# Batch processing
-data = img.numpy()
-color.apply_srgb_eotf(data)  # In-place
+# Using ops module
+linear = ops.srgb_to_linear(img)
+encoded = ops.linear_to_srgb(linear)
 
-# ACES
-color.apply_rrt_odt_srgb(data)
-color.apply_inverse_odt_srgb(data)
+# OCIO color conversion
+converted = img.colorconvert("ACEScg", "sRGB")
 ```
 
 ## Color Spaces
 
 ```python
-import vfx_rs.color as color
-import numpy as np
+import vfx_rs
+import vfx_rs.ocio as ocio
 
-# Get conversion matrix
-matrix = color.rgb_to_rgb_matrix("sRGB", "ACEScg")
+# Use Image method for color space conversion
+img = vfx_rs.read("input.exr")
+converted = img.colorconvert("ACEScg", "sRGB")
 
-# Apply to pixels
-pixels = img.numpy().reshape(-1, 3)
-result = pixels @ matrix.T
+# Or use the ocio module directly
+converted = ocio.colorconvert(img, "ACEScg", "sRGB")
+
+# With specific config
+config = ocio.ColorConfig.from_file("/path/to/config.ocio")
+converted = ocio.colorconvert(img, "ACEScg", "sRGB", config=config)
 ```
 
 ## LUT Processing
@@ -123,27 +128,38 @@ import vfx_rs.lut as lut
 lut_3d = lut.read_cube_3d("grade.cube")
 lut_1d = lut.read_cube_1d("gamma.cube")
 
-# Apply
+# Apply to single pixel
+rgb_out = lut_3d.apply([0.5, 0.3, 0.2])  # [f32; 3] -> [f32; 3]
+val_out = lut_1d.apply(0.5)  # f32 -> f32
+
+# For bulk processing, iterate over pixels
 data = img.numpy()
-lut.apply_3d(data, lut_3d)
-lut.apply_1d(data, lut_1d)
+for y in range(data.shape[0]):
+    for x in range(data.shape[1]):
+        data[y, x, :3] = lut_3d.apply(data[y, x, :3].tolist())
 ```
 
 ## Image Operations
 
 ```python
 import vfx_rs.ops as ops
+from vfx_rs.ops import ResizeFilter
 
-# Resize
-resized = ops.resize(img, width=1920, height=1080, filter="lanczos")
-resized = ops.resize(img, scale=0.5)
+# Resize (width and height are required, filter is optional enum)
+resized = ops.resize(img, 1920, 1080)  # default: Bilinear
+resized = ops.resize(img, 1920, 1080, ResizeFilter.Lanczos3)
 
-# Blur
-blurred = ops.blur(img, radius=5, type="gaussian")
+# Blur (sigma parameter, not radius)
+blurred = ops.blur(img, sigma=2.0)  # Gaussian blur
 
-# Composite
+# Or use Image methods directly
+blurred = img.blur(sigma=2.0)
+resized = img.resize(1920, 1080)
+
+# Composite (separate functions for each blend mode)
 result = ops.over(foreground, background)
-result = ops.blend(a, b, mode="multiply")
+result = ops.multiply(a, b)
+result = ops.screen(a, b)
 ```
 
 ## OCIO Integration
@@ -151,21 +167,25 @@ result = ops.blend(a, b, mode="multiply")
 ```python
 import vfx_rs.ocio as ocio
 
-# Load config
-config = ocio.Config.from_file("/path/to/config.ocio")
+# Load config (ColorConfig class, not Config)
+config = ocio.ColorConfig.from_file("/path/to/config.ocio")
 
-# Or use built-in
-config = ocio.builtin_aces_1_3()
+# Or use built-in ACES 1.3
+config = ocio.ColorConfig.aces_1_3()
 
-# Create processor
-proc = config.processor("ACEScg", "sRGB")
+# Use module-level functions for transforms (no Processor class)
+# colorconvert: convert between color spaces
+result = ocio.colorconvert(img, "ACEScg", "sRGB")
 
-# Apply
-data = img.numpy()
-proc.apply(data)
+# ociodisplay: apply display/view transform
+result = ocio.ociodisplay(img, display="sRGB", view="ACES 1.0 SDR")
 
-# Display processor
-proc = config.display_processor("ACEScg", "sRGB", "Film")
+# ociolook: apply look
+result = ocio.ociolook(img, look_name="Film", input_space="ACEScg")
+
+# list available color spaces
+colorspaces = ocio.list_colorspaces()  # with default config
+colorspaces = ocio.list_colorspaces(config)  # with specific config
 ```
 
 ## NumPy Integration
@@ -196,16 +216,18 @@ assert data.flags['C_CONTIGUOUS']
 
 ### Copy Behavior
 
-Data is always copied between Python and Rust:
+Data is always copied between Python and Rust. There is no zero-copy mode:
 
 ```python
-# img.numpy() always copies data
+# img.numpy() always copies data (allocates new Vec<f32>)
 data = img.numpy()
 data *= 2.0  # Does NOT modify original image
 
-# To apply changes, create new Image
+# To apply changes, create new Image (also copies)
 modified = vfx_rs.Image(data)
 ```
+
+**Note:** For best performance, minimize Python↔Rust crossings by using Image methods that stay in Rust.
 
 ## Multi-Layer EXR
 
@@ -215,17 +237,21 @@ import vfx_rs
 # Read all layers as LayeredImage
 layered = vfx_rs.read_layered("render.exr")
 
-# Access layers by name
+# Access layers by name or index
 beauty = layered["beauty"]
 depth = layered["depth"]
+first = layered[0]
 
-# List available layers
-for name in layered.layer_names():
+# List available layers (layer_names is a property, not a method)
+for name in layered.layer_names:  # no parentheses!
     layer = layered[name]
     print(f"{name}: {layer.width}x{layer.height}")
+
+# Convert layer to flat Image
+img = beauty.to_image()
 ```
 
-**Note:** `write_layers` and `read_layer` (single layer) are not yet implemented.
+**Note:** Only `read_layered()` is currently available. Writing multi-layer EXR is done through the Rust API.
 
 ## Error Handling
 
@@ -234,11 +260,13 @@ import vfx_rs
 
 try:
     img = vfx_rs.read("missing.exr")
-except vfx_rs.IoError as e:
+except IOError as e:
     print(f"I/O error: {e}")
-except vfx_rs.FormatError as e:
-    print(f"Format error: {e}")
+except ValueError as e:
+    print(f"Value error: {e}")
 ```
+
+**Note:** vfx_rs uses standard Python exceptions (`IOError`, `ValueError`) rather than custom exception types.
 
 ## Performance Tips
 
@@ -248,7 +276,7 @@ except vfx_rs.FormatError as e:
 
 ```python
 # Good: single Rust call for entire image
-vfx_rs.color.apply_srgb_eotf(data)
+linear = img.srgb_to_linear()
 
 # Good: use Image methods (stays in Rust)
 result = img.blur(sigma=2.0)

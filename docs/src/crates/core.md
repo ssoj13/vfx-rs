@@ -15,9 +15,9 @@ Compile-time color space tracking using marker types:
 ```rust
 use vfx_core::prelude::*;
 
-// Type-safe color spaces
-let srgb: Rgb<Srgb> = Rgb::new(0.5, 0.3, 0.2);
-let aces: Rgb<AcesCg> = Rgb::new(0.18, 0.18, 0.18);
+// Type-safe color spaces (Rgb<C, T> requires ColorSpace and PixelFormat)
+let srgb: Rgb<Srgb, f32> = Rgb::new(0.5, 0.3, 0.2);
+let aces: Rgb<AcesCg, f32> = Rgb::new(0.18, 0.18, 0.18);
 
 // Compile error: can't mix color spaces
 // let bad = srgb + aces;
@@ -34,16 +34,17 @@ Available color spaces:
 Zero-copy image buffer with color space awareness:
 
 ```rust
-use vfx_core::{Image, ImageView, ImageViewMut};
+use vfx_core::{Image, ImageView, ImageViewMut, Roi};
 
-// Create 1920x1080 RGB image
-let mut img: Image<Srgb, f32> = Image::new(1920, 1080);
+// Create 1920x1080 RGB image (3 channels)
+let mut img: Image<Srgb, f32, 3> = Image::new(1920, 1080);
 
-// Immutable view
-let view: ImageView<Srgb, f32> = img.view();
+// Immutable view of entire image
+let view: ImageView<Srgb, f32, 3> = img.view(Roi::Full);
 
-// Mutable view
-let mut_view: ImageViewMut<Srgb, f32> = img.view_mut();
+// Mutable view of a region
+let roi = Roi::new(100, 100, 800, 600);
+let mut_view: ImageViewMut<Srgb, f32, 3> = img.view_mut(roi);
 ```
 
 ### Pixel Types
@@ -53,8 +54,8 @@ Generic RGB/RGBA with color space tracking:
 ```rust
 use vfx_core::prelude::*;
 
-let rgb = Rgb::<Srgb>::new(1.0, 0.5, 0.25);
-let rgba = Rgba::<AcesCg>::new(0.18, 0.18, 0.18, 1.0);
+let rgb = Rgb::<Srgb, f32>::new(1.0, 0.5, 0.25);
+let rgba = Rgba::<AcesCg, f32>::new(0.18, 0.18, 0.18, 1.0);
 
 // Access components
 println!("Red: {}", rgb.r);
@@ -93,8 +94,9 @@ fn process() -> Result<()> {
 The key principle is **compile-time color space safety**:
 
 ```rust
-// This compiles - explicit conversion
-let linear = srgb_to_linear(srgb_value);
+// This compiles - explicit conversion via vfx-transfer
+use vfx_transfer::srgb;
+let linear = srgb::eotf(srgb_value);
 
 // This doesn't compile - no implicit mixing
 // let bad = srgb_image.blend(aces_image);

@@ -56,15 +56,22 @@ vfx lut input.exr -o styled.exr -l look_transform.clf
 
 ### Using OCIO Looks
 
-```bash
-export OCIO=/path/to/aces_config.ocio
+For OCIO looks, use the Python API or vfx-ocio crate directly:
 
-# Apply named look from config
-vfx color input.exr -o styled.exr \
-    --from ACEScg \
-    --to ACEScg \
-    --look "Film Emulation"
+```rust
+use vfx_ocio::{Config, processor_with_looks};
+
+let config = Config::from_env()?;
+let proc = processor_with_looks(
+    &config,
+    "ACEScg",          // from
+    "ACEScg",          // to
+    &["Film Emulation"]  // looks
+)?;
+proc.apply(&mut pixels)?;
 ```
+
+**Note:** The CLI `vfx color` command does not support `--look`. Use `vfx lut` with a CLF/Cube file instead.
 
 ### In the Full Pipeline
 

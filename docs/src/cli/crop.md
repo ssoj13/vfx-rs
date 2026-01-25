@@ -63,8 +63,8 @@ vfx crop multilayer.exr -x 0 -y 0 -w 1920 -H 1080 \
 
 - Coordinates are in pixels, origin at top-left
 - Crop region must be within image bounds
-- Preserves pixel format and color space
-- Metadata is preserved in output
+- Output is always float32 (does not preserve original bit depth)
+- Metadata is NOT preserved (uses default metadata)
 
 ## See Also
 

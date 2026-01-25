@@ -26,9 +26,9 @@ y        0.2653      1.0000     -0.0770
 
 ### Example
 ```rust
-use vfx_primaries::Primaries;
+use vfx_primaries::ACES_AP0;
 
-let ap0 = Primaries::ACES_AP0;
+let ap0 = ACES_AP0;  // Module-level constant
 // Primaries encompass the entire visible spectrum
 ```
 
@@ -56,9 +56,9 @@ y        0.293       0.830       0.044
 
 ### Example
 ```rust
-use vfx_primaries::Primaries;
+use vfx_primaries::ACES_AP1;
 
-let acescg = Primaries::ACES_AP1;
+let acescg = ACES_AP1;  // Module-level constant
 // Practical working space for VFX
 ```
 

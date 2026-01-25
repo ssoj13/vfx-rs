@@ -108,7 +108,7 @@ vfx convert beauty.exr -o beauty.png
 
 - Output is standard single-layer EXR or other format
 - Channel names are preserved
-- Metadata from source is preserved
+- Metadata is NOT preserved (uses default metadata)
 - Works with any multi-part EXR
 
 ## See Also

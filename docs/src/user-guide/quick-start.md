@@ -13,7 +13,7 @@ cargo install vfx-cli
 ### From Source
 
 ```bash
-git clone https://github.com/philipc/vfx-rs
+git clone https://github.com/vfx-rs/vfx-rs
 cd vfx-rs
 cargo build --release
 ```
@@ -52,7 +52,7 @@ vfx convert input.png output.jpg -q 90
 
 ```bash
 # Resize to specific dimensions
-vfx resize input.exr -w 1920 -h 1080 -o output.exr
+vfx resize input.exr -w 1920 -H 1080 -o output.exr
 
 # Scale by factor
 vfx resize input.exr --scale 0.5 -o half_size.exr

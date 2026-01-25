@@ -39,21 +39,29 @@ vfx udim info textures/diffuse.1001.exr
 
 ### Output
 
+Basic output:
 ```
-UDIM Set: textures/diffuse.<UDIM>.exr
-Tiles found: 8
+UDIM Texture Set: textures/diffuse.<UDIM>.exr
+Tiles: 8
+Bounds: U[0..3] V[0..1]
 
-  1001: 4096x4096, 4 channels, half float
-  1002: 4096x4096, 4 channels, half float
-  1003: 4096x4096, 4 channels, half float
-  1004: 4096x4096, 4 channels, half float
-  1011: 4096x4096, 4 channels, half float
-  1012: 4096x4096, 4 channels, half float
-  1013: 4096x4096, 4 channels, half float
-  1014: 4096x4096, 4 channels, half float
-
-Total size: 2.1 GB
+  1001 (U=0, V=0)
+  1002 (U=1, V=0)
+  ...
 ```
+
+Verbose output (`-v`):
+```
+UDIM Texture Set: textures/diffuse.<UDIM>.exr
+Tiles: 8
+Bounds: U[0..3] V[0..1]
+
+  1001 (U=0, V=0) - 4096x4096 4ch -> textures/diffuse.1001.exr
+  1002 (U=1, V=0) - 4096x4096 4ch -> textures/diffuse.1002.exr
+  ...
+```
+
+**Note:** Format details (dimensions, channels) require `-v` flag.
 
 ---
 
@@ -69,7 +77,9 @@ vfx udim convert <INPUT> <OUTPUT> [-c <COMPRESSION>]
 
 | Option | Description |
 |--------|-------------|
-| `-c, --compression` | Compression type (for EXR) |
+| `-c, --compression` | Compression type (for EXR) - sets metadata attribute |
+
+**Note:** The `-c` option sets a metadata attribute but may not be honored by all writers. For reliable compression control, use the `vfx convert` command on individual tiles.
 
 ### Examples
 
@@ -83,7 +93,7 @@ vfx udim convert \
 # Convert to different format
 vfx udim convert \
     textures/diffuse.<UDIM>.exr \
-    output/diffuse.<UDIM>.tx
+    output/diffuse.<UDIM>.png
 ```
 
 ---
@@ -185,10 +195,10 @@ V
 # Prepare textures for rendering
 vfx udim info assets/car_diffuse.<UDIM>.exr
 
-# Convert to TX format
+# Convert to PNG format
 vfx udim convert \
     assets/car_diffuse.<UDIM>.exr \
-    textures/car_diffuse.<UDIM>.tx
+    textures/car_diffuse.<UDIM>.png
 
 # Convert to ACES
 for tile in assets/car_diffuse.*.exr; do

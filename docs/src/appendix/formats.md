@@ -48,7 +48,7 @@ vfx extract-layer input.exr -o diffuse.png --layer diffuse
 
 **Notes**:
 - sRGB gamma assumed on read
-- 16-bit output when source is float
+- Defaults to 8-bit output; use `PngWriter::with_options()` with `BitDepth::Sixteen` for 16-bit
 
 ### JPEG (.jpg, .jpeg)
 
@@ -59,8 +59,8 @@ vfx extract-layer input.exr -o diffuse.png --layer diffuse
 | Read | ✓ |
 | Write | ✓ |
 | Quality control | ✓ |
-| Progressive | ✓ |
-| CMYK | ✗ |
+| Progressive | Read only (write uses baseline) |
+| CMYK | ✓ (read, auto-converted to RGB) |
 
 **Write options**:
 ```bash
@@ -77,7 +77,7 @@ vfx convert input.exr -o output.jpg --quality 95
 | Write | ✓ |
 | 8/16/32-bit | ✓ |
 | LZW compression | ✓ |
-| Multi-page | partial |
+| Multi-page | partial (read-only, no page selection API) |
 
 ### HDR (.hdr)
 
@@ -102,8 +102,8 @@ vfx convert input.exr -o output.jpg --quality 95
 |------------|---------|
 | Read | ✓ (flattened) |
 | Write | ✗ |
-| Layers | ✗ |
-| 8/16-bit | ✓ |
+| Layers | ✓ (via `read_layers()`) |
+| 8/16-bit input | ✓ (output always 8-bit RGBA) |
 
 ### DPX (.dpx)
 

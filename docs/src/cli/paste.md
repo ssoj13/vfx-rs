@@ -134,8 +134,7 @@ vfx paste temp3.exr thumb4.exr -o sheet.exr -x 0 -y 110
 ## Notes
 
 - Foreground can extend beyond background bounds (clipped)
-- Preserves background format and color space
-- Works with any pixel format
+- Output is always float32 (does not preserve original bit depth)
 - For complex compositing, use [composite](./composite.md)
 
 ## See Also

@@ -18,7 +18,7 @@ vfx diff <A> <B> [-o <OUTPUT>] [-t <THRESHOLD>] [-w <WARN>]
 | `<B>` | Second image |
 | `-o, --output` | Output difference image |
 | `-t, --threshold` | Fail threshold (max allowed difference), default: 0.0 |
-| `-w, --warn` | Per-pixel warning threshold |
+| `-w, --warn` | Warning threshold for max difference |
 
 ## Output Statistics
 

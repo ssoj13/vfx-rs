@@ -30,9 +30,12 @@ write("output.png", &image)?;
 | DPX | Yes | Yes | 8, 10, 12, 16 | `dpx` (default) |
 | HDR | Yes | Yes | 32f (RGBE) | `hdr` (default) |
 | WebP | Yes | Yes | 8 | `webp` |
-| AVIF | No | Yes | 8, 10 | `avif` |
+| AVIF | No | Yes | 8 | `avif` |
 | HEIF | Yes | Yes | 8, 10 | `heif` |
 | JP2 | Yes | No | 8, 12, 16 | `jp2` |
+| PSD | Yes | No | 8, 16 | `psd` |
+| DDS | Yes | No | various | `dds` |
+| KTX2 | Yes | No | various | `ktx` |
 
 ## ImageData
 
@@ -59,20 +62,23 @@ let u16_data = img.to_u16();   // For 16-bit output
 ### EXR (OpenEXR)
 
 ```rust
-use vfx_io::exr;
+use vfx_io::exr::{self, ExrWriter, ExrWriterOptions, Compression};
 
-// Read with layer info
+// Read single image
 let image = exr::read("render.exr")?;
 
-// Read specific layer
-let layer = exr::read_layer("render.exr", "diffuse")?;
+// Read all layers
+let layered = exr::read_layers("render.exr")?;
 
-// Write with compression
-let opts = exr::WriteOptions {
-    compression: exr::Compression::Zip,
+// Read specific layer by index (0-based)
+let layer = exr::read_layer("render.exr", 0, 0)?;
+
+// Write with compression options
+let writer = ExrWriter::with_options(ExrWriterOptions {
+    compression: Compression::Zip,
     ..Default::default()
-};
-exr::write_with_options("output.exr", &image, &opts)?;
+});
+writer.write("output.exr", &image)?;
 ```
 
 ### DPX
@@ -93,19 +99,19 @@ DpxWriter::with_options(opts).write("output.dpx", &image)?;
 
 ### HEIF/HEIC
 
-Requires system library (`libheif`):
+Requires system library (`libheif`) and feature flag:
 
 ```rust
 use vfx_io::heif;
 
 // Read with HDR info
 let (image, hdr_info) = heif::read_heif("photo.heic")?;
-if let Some(hdr) = hdr_info {
+if let Some(ref hdr) = hdr_info {
     println!("HDR: {:?}", hdr.transfer);
 }
 
-// Write HDR
-heif::write_heif("output.heif", &image, Some(&hdr_info))?;
+// Write with optional HDR metadata
+heif::write_heif("output.heif", &image, hdr_info.as_ref())?;
 ```
 
 ## Multi-Layer Images
@@ -115,8 +121,8 @@ For EXR files with multiple layers:
 ```rust
 use vfx_io::{LayeredImage, ImageLayer, ImageChannel};
 
-// Read as layered
-let layered = exr::read_layered("render.exr")?;
+// Read as layered (returns LayeredImage with all layers)
+let layered = exr::read_layers("render.exr")?;
 
 for layer in &layered.layers {
     println!("Layer: {} ({}x{})", layer.name, layer.width, layer.height);
@@ -159,17 +165,18 @@ if let Some(cs) = &image.metadata.colorspace {
 Process numbered file sequences:
 
 ```rust
-use vfx_io::sequence::{Sequence, find_sequences};
+use vfx_io::sequence::{Sequence, scan_dir, FrameRange};
 
 // Find sequences in directory
-let seqs = find_sequences("./frames/")?;
+let seqs = scan_dir(Path::new("./frames/"))?;
 for seq in seqs {
-    println!("{}: frames {}-{}", seq.pattern, seq.start, seq.end);
+    println!("{}: frames {}-{}", seq.pattern(), seq.start, seq.end);
 }
 
-// Iterate over sequence
-let seq = Sequence::from_pattern("render.####.exr", 1, 100);
-for path in seq.iter() {
+// Create sequence from pattern
+let seq = Sequence::from_pattern("render.%04d.exr")?;
+let range = FrameRange::new(1, 100);
+for path in seq.paths(&range) {
     let image = read(&path)?;
     // process...
 }
@@ -180,13 +187,14 @@ for path in seq.iter() {
 For texture tile sets:
 
 ```rust
-use vfx_io::udim::{UdimSet, udim_pattern};
+use vfx_io::udim::UdimResolver;
 
 // Load UDIM texture set
-let pattern = "texture.<UDIM>.exr";
-let tiles = UdimSet::from_pattern(pattern)?;
+let resolver = UdimResolver::new("texture.<UDIM>.exr")?;
 
-for (udim, image) in tiles.iter() {
+// Get available tiles
+for (udim, path) in resolver.tiles() {
+    let image = read(path)?;
     println!("Tile {}: {}x{}", udim, image.width, image.height);
 }
 ```
@@ -254,7 +262,7 @@ System library requirements:
 ## Dependencies
 
 - `vfx-core` - Core types
-- `exr` - OpenEXR implementation
+- `vfx-exr` - OpenEXR implementation
 - `png`, `jpeg-decoder`, `tiff` - Format codecs
 - `libheif-rs` - HEIF support (optional)
 - `tracing` - Logging
@@ -270,11 +278,11 @@ System library requirements:
 
 ### Format auto-detection
 
-Detection by extension and magic bytes:
+Detection by magic bytes and extension:
 
 ```rust
 use vfx_io::Format;
 
 let format = Format::detect("file.exr")?;
-// Checks extension first, then file header
+// Checks magic bytes first, falls back to extension
 ```

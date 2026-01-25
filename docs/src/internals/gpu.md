@@ -28,42 +28,37 @@ Low-level GPU architecture and compute shader implementation details.
 Core abstraction with **associated types** for zero-cost abstraction:
 
 ```rust
-pub trait GpuPrimitives {
-    /// Handle to image data on this backend
+pub trait GpuPrimitives: Send + Sync {
+    /// Backend-specific image handle type.
     type Handle: ImageHandle;
-    
-    /// Backend name
-    fn name(&self) -> &'static str;
-    
-    /// Memory/compute limits
-    fn limits(&self) -> GpuLimits;
-    
+
     // === Memory Management ===
-    fn upload(&self, data: &[f32], w: u32, h: u32, c: u32) -> Result<Self::Handle>;
-    fn download(&self, handle: &Self::Handle) -> Result<Vec<f32>>;
-    fn allocate(&self, w: u32, h: u32, c: u32) -> Result<Self::Handle>;
-    
-    // === Color Operations ===
-    fn exec_exposure(&self, h: &mut Self::Handle, stops: f32) -> Result<()>;
-    fn exec_matrix(&self, h: &mut Self::Handle, m: &[f32; 16]) -> Result<()>;
-    fn exec_cdl(&self, h: &mut Self::Handle, cdl: &Cdl) -> Result<()>;
-    fn exec_lut1d(&self, h: &mut Self::Handle, lut: &[f32], c: u32) -> Result<()>;
-    fn exec_lut3d(&self, h: &mut Self::Handle, lut: &[f32], size: u32) -> Result<()>;
-    
-    // === Image Operations ===
-    fn exec_resize(&self, src: &Self::Handle, dst: &mut Self::Handle, filter: u32) -> Result<()>;
-    fn exec_blur(&self, src: &Self::Handle, dst: &mut Self::Handle, radius: f32) -> Result<()>;
-    
-    // === Compositing ===
-    fn exec_composite_over(&self, fg: &Self::Handle, bg: &mut Self::Handle) -> Result<()>;
-    fn exec_blend(&self, fg: &Self::Handle, bg: &mut Self::Handle, mode: u32, opacity: f32) -> Result<()>;
-    
-    // === Transforms ===
-    fn exec_flip_h(&self, h: &mut Self::Handle) -> Result<()>;
-    fn exec_flip_v(&self, h: &mut Self::Handle) -> Result<()>;
-    fn exec_rotate_90(&self, h: &Self::Handle, n: u32) -> Result<Self::Handle>;
+    fn upload(&self, data: &[f32], width: u32, height: u32, channels: u32) -> ComputeResult<Self::Handle>;
+    fn download(&self, handle: &Self::Handle) -> ComputeResult<Vec<f32>>;
+    fn allocate(&self, width: u32, height: u32, channels: u32) -> ComputeResult<Self::Handle>;
+
+    // === Color Operations (src/dst pattern) ===
+    fn exec_matrix(&self, src: &Self::Handle, dst: &mut Self::Handle, matrix: &[f32; 16]) -> ComputeResult<()>;
+    fn exec_cdl(&self, src: &Self::Handle, dst: &mut Self::Handle,
+                slope: [f32; 3], offset: [f32; 3], power: [f32; 3], sat: f32) -> ComputeResult<()>;
+    fn exec_lut1d(&self, src: &Self::Handle, dst: &mut Self::Handle,
+                  lut: &[f32], channels: u32) -> ComputeResult<()>;
+    fn exec_lut3d(&self, src: &Self::Handle, dst: &mut Self::Handle,
+                  lut: &[f32], size: u32) -> ComputeResult<()>;
+    fn exec_lut3d_tetrahedral(&self, src: &Self::Handle, dst: &mut Self::Handle,
+                              lut: &[f32], size: u32) -> ComputeResult<()>;
+
+    // === Image Operations (src/dst pattern) ===
+    fn exec_resize(&self, src: &Self::Handle, dst: &mut Self::Handle, filter: u32) -> ComputeResult<()>;
+    fn exec_blur(&self, src: &Self::Handle, dst: &mut Self::Handle, radius: f32) -> ComputeResult<()>;
+
+    // === Info ===
+    fn limits(&self) -> &GpuLimits;  // Returns reference, not owned
+    fn name(&self) -> &'static str;
 }
 ```
+
+**Note:** There is no `exec_exposure()` in GpuPrimitives. Exposure is handled via `exec_matrix()` with an exposure-scaling matrix. Compositing operations (`exec_composite_over`, `exec_blend`) and transform operations (`exec_flip_h`, `exec_flip_v`, `exec_rotate_90`) are also not part of the trait - they're implemented at higher levels.
 
 ## ImageHandle Trait
 
@@ -72,15 +67,17 @@ Metadata for GPU image buffers:
 ```rust
 pub trait ImageHandle {
     fn dimensions(&self) -> (u32, u32, u32);  // width, height, channels
-    fn byte_size(&self) -> usize;
+    fn size_bytes(&self) -> u64;  // Note: size_bytes(), not byte_size()
 }
 ```
 
 ### Backend Implementations
 
+Backend handle types are named `*Image`, not `*Handle`:
+
 ```rust
 // CPU - just Vec<f32> in memory
-pub struct CpuHandle {
+pub struct CpuImage {
     pub data: Vec<f32>,
     pub width: u32,
     pub height: u32,
@@ -88,16 +85,17 @@ pub struct CpuHandle {
 }
 
 // wgpu - GPU buffer with staging
-pub struct WgpuHandle {
+pub struct WgpuImage {
     pub buffer: wgpu::Buffer,
     pub staging: wgpu::Buffer,  // for readback
     pub width: u32,
     pub height: u32,
     pub channels: u32,
+    pub size_bytes: u64,
 }
 
 // CUDA - device memory pointer
-pub struct CudaHandle {
+pub struct CudaImage {
     pub buffer: CudaSlice<f32>,
     pub width: u32,
     pub height: u32,
@@ -107,38 +105,33 @@ pub struct CudaHandle {
 
 ## TiledExecutor
 
-Automatic tiling for large images:
+Automatic tiling for large images. The actual implementation uses configuration, planner, and cache components:
 
 ```rust
+// TiledExecutor uses internal components for tiling decisions
 pub struct TiledExecutor<G: GpuPrimitives> {
     gpu: G,
-    tile_size: u32,
+    config: TilingConfig,
+    planner: TilePlanner,
+    cache: TileCache,
 }
 
 impl<G: GpuPrimitives> TiledExecutor<G> {
-    pub fn new(gpu: G) -> Self {
-        // Calculate optimal tile size from GPU memory limits
-        let limits = gpu.limits();
-        let tile_size = calculate_tile_size(limits.available_memory);
-        Self { gpu, tile_size }
-    }
-    
+    pub fn new(gpu: G) -> Self { /* uses internal config/planner */ }
+
     /// Access underlying GPU primitives
     pub fn gpu(&self) -> &G { &self.gpu }
-    
-    /// Execute operation with automatic tiling
-    pub fn execute_tiled<F>(&self, image: &mut ComputeImage, op: F) -> Result<()>
-    where
-        F: Fn(&G, &mut G::Handle) -> Result<()>
-    {
-        if self.needs_tiling(image) {
-            self.process_in_tiles(image, op)
-        } else {
-            self.process_whole(image, op)
-        }
-    }
+
+    /// Execute color operation with automatic tiling
+    pub fn execute_color(&self, image: &mut ComputeImage, op: &ColorOp) -> ComputeResult<()>;
+
+    /// Execute color operation with streaming I/O for huge files
+    pub fn execute_color_streaming<S, O>(&self, src: &mut S, dst: &mut O, op: &ColorOp) -> ComputeResult<()>
+    where S: StreamingSource, O: StreamingOutput;
 }
 ```
+
+**Note:** There is no `execute_tiled()` method taking a closure. Use `execute_color()` with `ColorOp` enum or `execute_color_streaming()` for streaming workflows.
 
 ### Tile Processing Flow
 
@@ -592,15 +585,17 @@ for op in operations {
 data = gpu.download(&handle)?;
 ```
 
-### Use ColorOpBatch
+### Use ColorOp Sequence
 
 ```rust
-// Optimal: Fused operations
-let batch = ColorOpBatch::new()
-    .exposure(1.0)
-    .matrix(&srgb_to_linear)
-    .cdl(&grade)
-    .lut3d(&lut);
+// Optimal: Fused operations via apply_color_ops
+let ops = vec![
+    ColorOp::Matrix(srgb_to_linear),
+    ColorOp::Cdl { slope, offset, power, sat },
+    ColorOp::Lut3d { lut: &lut_data, size: 33 },
+];
 
-processor.apply_batch(&mut img, &batch)?;  // Single upload/download
+processor.apply_color_ops(&mut img, &ops)?;  // Single upload/download
 ```
+
+**Note:** Use `apply_color_ops()` instead of the non-existent `apply_batch()`. Exposure is applied via a matrix operation.

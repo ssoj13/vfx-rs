@@ -165,7 +165,7 @@ Pre-computed matrices:
 | EXR | **Done** | **Done** | Multi-layer, tiled, deep data header |
 | PNG | **Done** | **Done** | 8/16-bit, alpha |
 | JPEG | **Done** | **Done** | Quality setting |
-| TIFF | **Done** | **Done** | 8/16/32-bit, tiles |
+| TIFF | **Done** | **Done** | 8/16/32-bit |
 | DPX | **Done** | **Done** | 10/12/16-bit, film scanning |
 | HDR (Radiance) | **Done** | **Done** | RGBE encoding |
 

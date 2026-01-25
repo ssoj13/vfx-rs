@@ -151,8 +151,8 @@ vfx lut graded.exr -o look.exr -l film_emulation.cube
 # 4. Output transform (RRT + ODT)
 vfx aces look.exr -o final_srgb.png -t rrt-odt
 
-# For HDR delivery, use different ODT:
-# vfx aces look.exr -o final_hdr.exr -t rrt-odt --odt rec2020_pq
+# Note: Currently only sRGB output is built-in.
+# For HDR delivery (Rec.2020 PQ/HLG), use OCIO via vfx-ocio crate.
 ```
 
 ## Pipeline Diagram with Color Spaces

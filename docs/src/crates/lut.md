@@ -42,7 +42,8 @@ let lut = Lut3D::identity(33);
 let rgb_out = lut.apply([0.5, 0.3, 0.2]);
 
 // Apply with tetrahedral interpolation (more accurate)
-let rgb_out = lut.apply_tetrahedral([0.5, 0.3, 0.2]);
+let lut = lut.with_interpolation(Interpolation::Tetrahedral);
+let rgb_out = lut.apply([0.5, 0.3, 0.2]);
 ```
 
 #### OCIO Parity
@@ -86,9 +87,9 @@ let process_list = read_clf(Path::new("transform.clf"))?;
 // Access nodes
 for node in &process_list.nodes {
     match node {
-        ProcessNode::Matrix(m) => println!("Matrix: {:?}", m),
-        ProcessNode::Lut1D(lut) => println!("1D LUT: {} entries", lut.size),
-        ProcessNode::Lut3D(lut) => println!("3D LUT: {}^3", lut.size),
+        ProcessNode::Matrix { values, .. } => println!("Matrix: {:?}", values),
+        ProcessNode::Lut1D { lut, .. } => println!("1D LUT: {} entries", lut.size()),
+        ProcessNode::Lut3D { lut, .. } => println!("3D LUT: {}^3", lut.size()),
         ProcessNode::Range(r) => println!("Range: {} - {}", r.min, r.max),
         _ => {}
     }
@@ -115,6 +116,21 @@ use vfx_lut::{read_3dl, write_3dl};
 let lut = read_3dl(Path::new("grade.3dl"))?;
 write_3dl(Path::new("out.3dl"), &lut)?;
 ```
+
+### Additional Formats
+
+The crate also supports:
+
+| Format | Extension | Description |
+|--------|-----------|-------------|
+| CSP | `.csp` | Rising Sun Research |
+| HDL | `.hdl` | Houdini LUT |
+| Truelight | `.cub` | FilmLight |
+| Iridas | `.itx`, `.look` | Iridas/Adobe |
+| Pandora | `.mga` | Pandora |
+| Nuke | `.vf` | Foundry Nuke |
+| SPI Matrix | `.spimtx` | SPI matrix |
+| Discreet | `.lut` | Discreet 1D LUT |
 
 ## Interpolation Methods
 
@@ -152,36 +168,44 @@ Slightly slower
 ```rust
 use vfx_lut::Lut1D;
 
-// From function
-let lut = Lut1D::from_fn(1024, |v| v.powf(2.2));
+// Build data array first
+let size = 1024;
+let gamma_data: Vec<f32> = (0..size)
+    .map(|i| (i as f32 / (size - 1) as f32).powf(2.2))
+    .collect();
+
+// Create from data (single-channel, applied to R, G, B)
+let lut = Lut1D::from_data(gamma_data, 0.0, 1.0)?;
+
+// Or use gamma convenience constructor
+let gamma_lut = Lut1D::gamma(1024, 2.2);
 
 // Inverse gamma
-let lut = Lut1D::from_fn(1024, |v| v.powf(1.0/2.2));
-
-// S-curve contrast
-let lut = Lut1D::from_fn(1024, |v| {
-    // Contrast around 0.5
-    0.5 + (v - 0.5) * 1.2
-});
+let inv_gamma_lut = Lut1D::gamma(1024, 1.0 / 2.2);
 ```
 
 ### From Color Transform
 
 ```rust
 use vfx_lut::Lut3D;
-use vfx_color::aces::apply_rrt_odt_srgb;
+use vfx_color::aces::rrt_odt_srgb;
 
 // Bake ACES RRT+ODT into a 3D LUT
-let mut lut = Lut3D::identity(65);
-for r in 0..65 {
-    for g in 0..65 {
-        for b in 0..65 {
+let size = 65;
+let mut data: Vec<[f32; 3]> = Vec::with_capacity(size * size * size);
+
+// LUT3D uses blue-major indexing: B varies fastest
+for r in 0..size {
+    for g in 0..size {
+        for b in 0..size {
             let rgb = [r as f32 / 64.0, g as f32 / 64.0, b as f32 / 64.0];
-            let transformed = apply_pixel(rgb);
-            lut.set(r, g, b, transformed);
+            let (out_r, out_g, out_b) = rrt_odt_srgb(rgb[0], rgb[1], rgb[2]);
+            data.push([out_r, out_g, out_b]);
         }
     }
 }
+
+let lut = Lut3D::from_data(data, size)?;
 ```
 
 ## LUT Resolution

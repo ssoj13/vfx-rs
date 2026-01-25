@@ -7,7 +7,6 @@ The `vfx` command provides comprehensive image processing for VFX workflows, com
 ```
 -v, --verbose        Increase verbosity (-v info, -vv debug, -vvv trace)
 -l, --log [PATH]     Write log to file (default: vfx.log)
--j, --threads N      Number of threads (0 = auto)
 --allow-non-color    Allow operations on non-color data (IDs, normals, masks)
 ```
 

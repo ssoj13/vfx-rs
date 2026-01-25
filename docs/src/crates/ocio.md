@@ -44,8 +44,11 @@ for cs in config.colorspaces() {
 ### From String
 
 ```rust
+use std::path::PathBuf;
+
 let yaml = std::fs::read_to_string("config.ocio")?;
-let config = Config::from_str(&yaml)?;
+let working_dir = PathBuf::from("path/to/config/dir");
+let config = Config::from_yaml_str(&yaml, working_dir)?;
 ```
 
 ### Built-in Configs
@@ -124,7 +127,7 @@ proc.apply_rgb(&mut pixel_buffer);
 
 // With optimization level
 use vfx_ocio::OptimizationLevel;
-let proc = config.processor_opt("ACEScg", "sRGB", OptimizationLevel::Good)?;
+let proc = config.processor_with_opts("ACEScg", "sRGB", OptimizationLevel::Good)?;
 ```
 
 ## Transforms
@@ -195,7 +198,7 @@ for look in config.looks() {
 }
 
 // Apply look
-let proc = config.processor_with_look("ACEScg", "sRGB", "ShowLUT")?;
+let proc = config.processor_with_looks("ACEScg", "sRGB", "ShowLUT")?;
 ```
 
 ## Named Transforms (OCIO v2.0+)
@@ -280,13 +283,22 @@ if vfx_ocio::has_errors(&issues) {
 Automatic color space assignment:
 
 ```rust
-// Match by regex pattern
+use vfx_ocio::FileRuleKind;
+
+// Iterate file rules
 for rule in config.file_rules() {
-    println!("Pattern: {} → {}", rule.pattern, rule.colorspace);
+    println!("Rule: {} → colorspace: {}", rule.name, rule.colorspace);
+    match &rule.kind {
+        FileRuleKind::Basic { pattern, .. } => println!("  Pattern: {}", pattern),
+        FileRuleKind::Regex { regex } => println!("  Regex: {}", regex),
+        FileRuleKind::Default => println!("  (default rule)"),
+    }
 }
 
-// Get space for filename
-let space = config.colorspace_from_filepath("texture_diffuse.exr")?;
+// Get space for filename (returns Option)
+if let Some(space) = config.colorspace_from_filepath("texture_diffuse.exr") {
+    println!("Colorspace: {}", space);
+}
 ```
 
 ## ACES 1.3 Built-in
@@ -339,7 +351,7 @@ Numerical accuracy verified against OpenColorIO 2.5.1:
 - LUT3D uses Blue-major indexing: `idx = B + dim*G + dim²*R`
 - CDL saturation uses OCIO-compatible operation order
 
-See [OCIO Parity Audit](../OCIO_PARITY_AUDIT.md) for full details.
+See implementation source for full parity details.
 
 ### Config Version
 

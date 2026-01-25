@@ -12,8 +12,9 @@ Criterion-based benchmarks measuring performance of critical operations. Used fo
 # Run all benchmarks
 cargo bench -p vfx-bench
 
-# Run specific benchmark
-cargo bench -p vfx-bench -- resize
+# Run specific benchmark group
+cargo bench -p vfx-bench -- transfer
+cargo bench -p vfx-bench -- lut3d
 
 # Generate HTML report
 cargo bench -p vfx-bench -- --save-baseline main
@@ -21,37 +22,56 @@ cargo bench -p vfx-bench -- --save-baseline main
 
 ## Benchmark Categories
 
-### I/O Performance
+The single `vfx_bench` target includes these groups:
+
+### Transfer Functions
 
 ```
-io/exr_read_1080p       time: [12.5 ms 12.8 ms 13.1 ms]
-io/exr_write_1080p      time: [45.2 ms 46.1 ms 47.0 ms]
-io/png_read_1080p       time: [8.3 ms 8.5 ms 8.7 ms]
-io/dpx_read_1080p       time: [5.1 ms 5.2 ms 5.4 ms]
+transfer/srgb_eotf/1000      time: [x.xx µs ...]
+transfer/srgb_oetf/10000     time: [x.xx µs ...]
+transfer/pq_eotf/100000      time: [x.xx ms ...]
+transfer/gamma_2.2/10000     time: [x.xx µs ...]
 ```
 
-### Resize Operations
+### 1D LUT Operations
 
 ```
-resize/lanczos_1080p    time: [18.3 ms 18.7 ms 19.1 ms]
-resize/bilinear_1080p   time: [4.2 ms 4.3 ms 4.4 ms]
-resize/nearest_1080p    time: [1.1 ms 1.2 ms 1.2 ms]
+lut1d/apply_256              time: [x.xx µs ...]
+lut1d/apply_1024             time: [x.xx µs ...]
+lut1d/apply_4096             time: [x.xx µs ...]
 ```
 
-### Color Transforms
+### 3D LUT Operations
 
 ```
-color/srgb_eotf_1mp     time: [2.1 ms 2.2 ms 2.3 ms]
-color/matrix_1mp        time: [1.8 ms 1.9 ms 2.0 ms]
-color/rrt_odt_1080p     time: [8.5 ms 8.7 ms 8.9 ms]
+lut3d/trilinear_17           time: [x.xx ms ...]
+lut3d/trilinear_33           time: [x.xx ms ...]
+lut3d/trilinear_65           time: [x.xx ms ...]
+lut3d/tetrahedral_33         time: [x.xx ms ...]
 ```
 
-### LUT Application
+### CDL Operations
 
 ```
-lut/3d_33_1080p         time: [15.2 ms 15.5 ms 15.8 ms]
-lut/3d_65_1080p         time: [16.1 ms 16.4 ms 16.7 ms]
-lut/1d_1024_1080p       time: [3.2 ms 3.3 ms 3.4 ms]
+cdl/apply                    time: [x.xx µs ...]
+cdl/apply_buffer             time: [x.xx µs ...]
+```
+
+### SIMD Operations
+
+```
+simd/scalar_mul_add          time: [x.xx µs ...]
+simd/simd_batch_mul_add      time: [x.xx µs ...]
+simd/simd_batch_clamp        time: [x.xx µs ...]
+simd/simd_batch_pow_2        time: [x.xx µs ...]
+```
+
+### Pixel Batch Operations
+
+```
+pixels/sum_rgb/65536         time: [x.xx µs ...]
+pixels/transform_rgb/1048576 time: [x.xx ms ...]
+pixels/transform_rgb/2073600 time: [x.xx ms ...] (1920x1080)
 ```
 
 ## Benchmark Structure
@@ -110,35 +130,11 @@ resize/lanczos_1080p    time: [18.1 ms 18.5 ms 18.9 ms]
                         Performance has improved.
 ```
 
-## GPU Benchmarks
+## Notes
 
-When GPU features enabled:
+**GPU benchmarks:** The vfx-bench crate currently does not include GPU benchmarks or a `gpu` feature.
 
-```bash
-cargo bench -p vfx-bench --features gpu
-```
-
-```
-gpu/exposure_4k         time: [2.1 ms 2.2 ms 2.3 ms]
-gpu/lut3d_4k            time: [1.5 ms 1.6 ms 1.7 ms]
-cpu/exposure_4k         time: [12.5 ms 12.8 ms 13.1 ms]
-cpu/lut3d_4k            time: [15.2 ms 15.5 ms 15.8 ms]
-```
-
-## Memory Benchmarks
-
-Peak memory usage (via custom harness):
-
-```rust
-#[bench]
-fn memory_exr_read() {
-    let before = get_memory_usage();
-    let _img = vfx_io::read("large.exr").unwrap();
-    let after = get_memory_usage();
-    
-    println!("Peak memory: {} MB", (after - before) / 1024 / 1024);
-}
-```
+**I/O benchmarks:** I/O performance benchmarks (EXR read/write, PNG, etc.) are not currently included in vfx-bench.
 
 ## Profiling Integration
 
@@ -201,21 +197,20 @@ criterion_main!(benches);
 ```toml
 [dependencies]
 vfx-core = { workspace = true }
-vfx-io = { workspace = true }
-vfx-ops = { workspace = true }
+vfx-math = { workspace = true }
+vfx-lut = { workspace = true }
+vfx-transfer = { workspace = true }
 vfx-color = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
 
 [[bench]]
-name = "io_bench"
-harness = false
-
-[[bench]]
-name = "resize_bench"
+name = "vfx_bench"
 harness = false
 ```
+
+**Note:** Only one benchmark target (`vfx_bench`) is defined, which contains all benchmark groups.
 
 ## CI Integration
 

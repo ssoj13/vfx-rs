@@ -113,18 +113,14 @@ Most 3D renderers output linear RGB:
 
 ```rust
 use vfx_color::aces::srgb_to_acescg;
-use vfx_primaries::{Primaries, rgb_to_rgb_matrix};
+use vfx_primaries::{SRGB, ACES_AP1, rgb_to_rgb_matrix};
 
-// Single pixel
-let acescg = srgb_to_acescg([0.5, 0.3, 0.2]);
+// Single pixel (separate r, g, b arguments)
+let (ar, ag, ab) = srgb_to_acescg(0.5, 0.3, 0.2);
 
-// Using matrix directly
-let matrix = rgb_to_rgb_matrix(&Primaries::SRGB, &Primaries::ACES_AP1);
-let acescg = [
-    pixel[0] * matrix[0][0] + pixel[1] * matrix[0][1] + pixel[2] * matrix[0][2],
-    pixel[0] * matrix[1][0] + pixel[1] * matrix[1][1] + pixel[2] * matrix[1][2],
-    pixel[0] * matrix[2][0] + pixel[1] * matrix[2][1] + pixel[2] * matrix[2][2],
-];
+// Using matrix directly (module-level constants, not Primaries::)
+let matrix = rgb_to_rgb_matrix(&SRGB, &ACES_AP1);
+let acescg = matrix * vfx_math::Vec3::new(pixel_r, pixel_g, pixel_b);
 ```
 
 ### CLI Operations

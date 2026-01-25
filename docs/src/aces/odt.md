@@ -65,32 +65,43 @@ Display Signal
 
 ## Using ODT in vfx-rs
 
-### Default sRGB Output
+**Note:** The vfx-rs library provides sRGB and Rec.709 ODT helpers. HDR ODTs (PQ, HLG, P3, Rec.2020) require OCIO configuration or custom implementation.
+
+### Default sRGB Output (CLI)
 
 ```bash
-# RRT + sRGB ODT combined
+# RRT + sRGB ODT combined (built-in)
 vfx aces input.exr -o output.png -t rrt-odt
 ```
 
-### Broadcast Rec.709
+### Broadcast Rec.709 (via OCIO)
+
+For Rec.709 and other display transforms, use OCIO:
 
 ```bash
-# Via OCIO color space
+# Via OCIO config
 export OCIO=/path/to/aces_config.ocio
-vfx color input.exr -o output.dpx \
-    --from ACEScg \
-    --to "Rec.709 - Display"
+vfx ocio input.exr -o output.dpx \
+    --src ACEScg \
+    --dst "Rec.709 - Display"
 ```
 
-### HDR Output
+### HDR Output (via OCIO)
+
+HDR transforms require OCIO configuration:
 
 ```bash
-# HDR10 (Rec.2020 PQ 1000 nits)
+# HDR10 (Rec.2020 PQ 1000 nits) via OCIO
 export OCIO=/path/to/aces_config.ocio
-vfx color input.exr -o output_hdr.exr \
-    --from ACEScg \
-    --to "Rec.2020 - ST2084 (1000 nits)"
+vfx ocio input.exr -o output_hdr.exr \
+    --src ACEScg \
+    --dst "Rec.2020 - ST2084 (1000 nits)"
 ```
+
+**Current Limitations:**
+- CLI `vfx aces` only provides sRGB output
+- `vfx color --from/--to` does gamut conversion, not full ODT
+- HDR ODTs (PQ, HLG, Rec.2020) require OCIO or Rust API
 
 ## ODT Components
 

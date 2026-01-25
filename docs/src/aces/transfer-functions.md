@@ -60,10 +60,10 @@ ACEScct = 10.5402377 * x + 0.0729055    for x ≤ 0.0078125
 
 **vfx-rs usage:**
 ```rust
-use vfx_transfer::{linear_to_acescct, acescct_to_linear};
+use vfx_transfer::{acescct_encode, acescct_decode};
 
-let cct = linear_to_acescct(0.18);  // ~0.4135
-let linear = acescct_to_linear(0.4135);  // ~0.18
+let cct = acescct_encode(0.18);    // ~0.4135 (linear → ACEScct)
+let linear = acescct_decode(0.4135);  // ~0.18 (ACEScct → linear)
 ```
 
 ### ACEScc
@@ -91,10 +91,10 @@ ACEScc = (log2(x) + 9.72) / 17.52    for x ≥ 2^-15
 
 **vfx-rs usage:**
 ```rust
-use vfx_transfer::{linear_to_acescc, acescc_to_linear};
+use vfx_transfer::{acescc_encode, acescc_decode};
 
-let cc = linear_to_acescc(0.18);  // ~0.4135
-let linear = acescc_to_linear(0.4135);  // ~0.18
+let cc = acescc_encode(0.18);      // ~0.4135 (linear → ACEScc)
+let linear = acescc_decode(0.4135);  // ~0.18 (ACEScc → linear)
 ```
 
 ### ACEScct vs ACEScc
@@ -113,51 +113,52 @@ vfx-rs supports common camera log encodings:
 ### ARRI LogC
 
 ```rust
-use vfx_transfer::{linear_to_logc3, logc3_to_linear};
-use vfx_transfer::{linear_to_logc4, logc4_to_linear};
+use vfx_transfer::{log_c_encode, log_c_decode};
+use vfx_transfer::{log_c4_encode, log_c4_decode};
 
 // LogC3 (legacy Alexa)
-let logc3 = linear_to_logc3(0.18);  // ~0.391
+let logc3 = log_c_encode(0.18);  // ~0.391
+let linear = log_c_decode(0.391);
 
 // LogC4 (Alexa 35)
-let logc4 = linear_to_logc4(0.18);  // ~0.278
+let logc4 = log_c4_encode(0.18);  // ~0.278
 ```
 
 ### Sony S-Log
 
 ```rust
-use vfx_transfer::{linear_to_slog2, slog2_to_linear};
-use vfx_transfer::{linear_to_slog3, slog3_to_linear};
+use vfx_transfer::{s_log2_encode, s_log2_decode};
+use vfx_transfer::{s_log3_encode, s_log3_decode};
 
 // S-Log2
-let slog2 = linear_to_slog2(0.18);  // ~0.339
+let slog2 = s_log2_encode(0.18);  // ~0.339
 
 // S-Log3
-let slog3 = linear_to_slog3(0.18);  // ~0.406
+let slog3 = s_log3_encode(0.18);  // ~0.406
 ```
 
 ### Panasonic V-Log
 
 ```rust
-use vfx_transfer::{linear_to_vlog, vlog_to_linear};
+use vfx_transfer::{v_log_encode, v_log_decode};
 
-let vlog = linear_to_vlog(0.18);  // ~0.423
+let vlog = v_log_encode(0.18);  // ~0.423
 ```
 
 ### RED Log3G10
 
 ```rust
-use vfx_transfer::{linear_to_redlog, redlog_to_linear};
+use vfx_transfer::{log3g10_encode, log3g10_decode};
 
-let redlog = linear_to_redlog(0.18);  // ~0.333
+let redlog = log3g10_encode(0.18);  // ~0.333
 ```
 
 ### Blackmagic Film
 
 ```rust
-use vfx_transfer::{linear_to_bmdfilm, bmdfilm_to_linear};
+use vfx_transfer::{bmd_film_gen5_encode, bmd_film_gen5_decode};
 
-let bmdfilm = linear_to_bmdfilm(0.18);  // ~0.38
+let bmdfilm = bmd_film_gen5_encode(0.18);  // ~0.38
 ```
 
 ## Display Transfer Functions
@@ -167,10 +168,11 @@ let bmdfilm = linear_to_bmdfilm(0.18);  // ~0.38
 The standard for computer monitors:
 
 ```rust
-use vfx_transfer::{linear_to_srgb, srgb_to_linear};
+use vfx_transfer::{srgb_oetf, srgb_eotf};
+// Or via module: use vfx_transfer::srgb::{oetf, eotf};
 
-let srgb = linear_to_srgb(0.18);  // ~0.46
-let linear = srgb_to_linear(0.46);  // ~0.18
+let srgb = srgb_oetf(0.18);    // ~0.46 (linear → sRGB)
+let linear = srgb_eotf(0.46);  // ~0.18 (sRGB → linear)
 ```
 
 **Formula:**
@@ -184,9 +186,10 @@ sRGB = 12.92 * L                    for L ≤ 0.0031308
 Similar to sRGB but different constants:
 
 ```rust
-use vfx_transfer::{linear_to_rec709, rec709_to_linear};
+use vfx_transfer::rec709;
 
-let rec709 = linear_to_rec709(0.18);  // ~0.409
+let encoded = rec709::oetf(0.18);  // ~0.409
+let linear = rec709::eotf(0.409);  // ~0.18
 ```
 
 ### PQ (ST.2084)
@@ -194,11 +197,11 @@ let rec709 = linear_to_rec709(0.18);  // ~0.409
 HDR10 perceptual quantizer:
 
 ```rust
-use vfx_transfer::{linear_to_pq, pq_to_linear};
+use vfx_transfer::pq;
 
 // Input in nits (cd/m²)
-let pq = linear_to_pq(100.0);  // ~0.508 (100 nits)
-let nits = pq_to_linear(0.508);  // ~100 nits
+let pq_val = pq::oetf(100.0);  // ~0.508 (100 nits)
+let nits = pq::eotf(0.508);  // ~100 nits
 ```
 
 **Range:** 0 to 10,000 nits
@@ -208,9 +211,10 @@ let nits = pq_to_linear(0.508);  // ~100 nits
 Hybrid Log-Gamma for broadcast HDR:
 
 ```rust
-use vfx_transfer::{linear_to_hlg, hlg_to_linear};
+use vfx_transfer::hlg;
 
-let hlg = linear_to_hlg(0.18);
+let encoded = hlg::oetf(0.18);
+let linear = hlg::eotf(0.5);
 ```
 
 ## Conversion Chart
