@@ -84,13 +84,16 @@ mod dynamic;
 mod simd;
 mod cache;
 mod builtin_transforms;
+mod grading_hue_curve;
+#[allow(missing_docs)]
+pub mod aces2;
 
 pub mod builtin;
 pub mod validate;
 
 // Re-exports
 pub use error::{OcioError, OcioResult};
-pub use config::{Config, ConfigVersion, FileRule, NamedTransform, SharedView, ViewingRule};
+pub use config::{Config, ConfigVersion, FileRule, NamedTransform, SharedView, ViewingRule, EnvironmentMode, SearchReferenceSpaceType, ColorSpaceVisibility};
 pub use config_builder::ConfigBuilder;
 pub use colorspace::{ColorSpace, Encoding, Family, BitDepth, AllocationInfo, AllocationType, ColorSpaceBuilder};
 pub use transform::{
@@ -106,6 +109,7 @@ pub use transform::{
     AllocationTransform, AllocationType as TransformAllocationType,
     BuiltinTransferTransform,
     GradingPrimaryTransform, GradingRgbCurveTransform, GradingToneTransform,
+    GradingHueCurveTransform, GradingHueCurveStyle,
     Lut1DTransform, Lut3DTransform,
 };
 pub use processor::{Processor, ProcessorOp, OptimizationLevel, BitDepth as ProcessorBitDepth};

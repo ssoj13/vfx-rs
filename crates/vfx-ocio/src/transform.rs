@@ -114,6 +114,9 @@ pub enum Transform {
     /// Grading tone transform (shadows/midtones/highlights).
     GradingTone(GradingToneTransform),
 
+    /// Grading hue curve transform (8 hue-based curves).
+    GradingHueCurve(GradingHueCurveTransform),
+
     /// Inline 1D LUT transform.
     Lut1D(Lut1DTransform),
 
@@ -236,6 +239,10 @@ impl Transform {
             Self::GradingTone(mut t) => {
                 t.direction = t.direction.inverse();
                 Self::GradingTone(t)
+            }
+            Self::GradingHueCurve(mut t) => {
+                t.direction = t.direction.inverse();
+                Self::GradingHueCurve(t)
             }
             Self::Lut1D(mut t) => {
                 t.direction = t.direction.inverse();
@@ -764,16 +771,20 @@ pub struct FixedFunctionTransform {
 /// Fixed function styles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FixedFunctionStyle {
-    /// ACES red modifier.
+    /// ACES red modifier (v0.3/0.7).
     AcesRedMod03,
-    /// ACES red modifier (improved).
+    /// ACES red modifier (v1.0).
     AcesRedMod10,
-    /// ACES glow.
+    /// ACES glow (v0.3/0.7).
     AcesGlow03,
-    /// ACES glow (improved).
+    /// ACES glow (v1.0).
     AcesGlow10,
-    /// ACES gamut compress.
+    /// ACES dark-to-dim surround correction (v1.0). Param: gamma.
+    AcesDarkToDim10,
+    /// ACES gamut compress (v1.3).
     AcesGamutComp13,
+    /// Rec.2100 surround correction. Param: gamma.
+    Rec2100Surround,
     /// RGB to HSV.
     RgbToHsv,
     /// HSV to RGB.
@@ -790,6 +801,40 @@ pub enum FixedFunctionStyle {
     XyzToLuv,
     /// Luv to XYZ.
     LuvToXyz,
+    /// Linear to PQ (ST-2084). 1.0 = 100 nits.
+    LinToPq,
+    /// PQ to Linear.
+    PqToLin,
+    /// Linear to parameterized gamma+log curve. Params: [mirrorPt, breakPt, gamma, logSlope, linSlope, logOffset, linOffset].
+    LinToGammaLog,
+    /// Gamma+log to Linear (inverse).
+    GammaLogToLin,
+    /// Linear to double-log curve. Params: [base, breakPt, logSlope, logOffset, linSlope, linOffset, linearSlope, log2Slope, log2Offset].
+    LinToDoubleLog,
+    /// Double-log to Linear (inverse).
+    DoubleLogToLin,
+    /// ACES 2.0 Output Transform (experimental). Params: peak_lum.
+    AcesOutputTransform20,
+    /// ACES 2.0 RGB to JMh (experimental).
+    AcesRgbToJmh20,
+    /// ACES 2.0 JMh to RGB (experimental).
+    AcesJmhToRgb20,
+    /// ACES 2.0 Tonescale + chroma compress (experimental).
+    AcesTonescaleCompress20,
+    /// ACES 2.0 Gamut compress (experimental).
+    AcesGamutCompress20,
+    /// RGB to HSY (linear variant).
+    RgbToHsyLin,
+    /// HSY (linear) to RGB.
+    HsyLinToRgb,
+    /// RGB to HSY (log variant).
+    RgbToHsyLog,
+    /// HSY (log) to RGB.
+    HsyLogToRgb,
+    /// RGB to HSY (video variant).
+    RgbToHsyVid,
+    /// HSY (video) to RGB.
+    HsyVidToRgb,
 }
 
 /// Exposure/contrast adjustment.
@@ -1368,6 +1413,85 @@ impl Lut3DTransform {
             };
         }
         result
+    }
+}
+
+/// Grading hue curve transform.
+///
+/// Applies 8 curve types for hue-based color adjustments:
+/// - HUE_HUE: shift hue based on input hue
+/// - HUE_SAT: adjust saturation based on hue
+/// - HUE_LUM: adjust luminance based on hue
+/// - LUM_SAT: adjust saturation based on luminance
+/// - SAT_SAT: adjust saturation based on saturation
+/// - LUM_LUM: adjust luminance based on luminance
+/// - SAT_LUM: adjust luminance based on saturation
+/// - HUE_FX: special effects hue shift
+///
+/// Reference: OCIO GradingHueCurveTransform
+#[derive(Debug, Clone)]
+pub struct GradingHueCurveTransform {
+    /// Grading style (Log, Linear, Video).
+    pub style: GradingHueCurveStyle,
+    /// HUE_HUE curve control points [(hue, shift), ...].
+    pub hue_hue: Vec<[f64; 2]>,
+    /// HUE_SAT curve control points [(hue, gain), ...].
+    pub hue_sat: Vec<[f64; 2]>,
+    /// HUE_LUM curve control points [(hue, gain), ...].
+    pub hue_lum: Vec<[f64; 2]>,
+    /// LUM_SAT curve control points [(lum, gain), ...].
+    pub lum_sat: Vec<[f64; 2]>,
+    /// SAT_SAT curve control points [(sat, sat), ...].
+    pub sat_sat: Vec<[f64; 2]>,
+    /// LUM_LUM curve control points [(lum, lum), ...].
+    pub lum_lum: Vec<[f64; 2]>,
+    /// SAT_LUM curve control points [(sat, gain), ...].
+    pub sat_lum: Vec<[f64; 2]>,
+    /// HUE_FX curve control points [(hue, shift), ...].
+    pub hue_fx: Vec<[f64; 2]>,
+    /// Direction.
+    pub direction: TransformDirection,
+}
+
+/// Grading hue curve style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GradingHueCurveStyle {
+    /// Log style (for log-encoded footage).
+    #[default]
+    Log,
+    /// Linear style (for scene-linear footage).
+    Linear,
+    /// Video style (for display-referred footage).
+    Video,
+}
+
+impl Default for GradingHueCurveTransform {
+    fn default() -> Self {
+        // Identity curves
+        let hue_6pts_identity = |v: f64| vec![
+            [0.0, v], [1.0/6.0, v], [2.0/6.0, v],
+            [0.5, v], [4.0/6.0, v], [5.0/6.0, v],
+        ];
+        let hue_hue_identity = vec![
+            [0.0, 0.0], [1.0/6.0, 1.0/6.0], [2.0/6.0, 2.0/6.0],
+            [0.5, 0.5], [4.0/6.0, 4.0/6.0], [5.0/6.0, 5.0/6.0],
+        ];
+        let sat_diag = vec![[0.0, 0.0], [0.5, 0.5], [1.0, 1.0]];
+        let lum_diag = vec![[0.0, 0.0], [0.5, 0.5], [1.0, 1.0]];
+        let horiz_1 = vec![[0.0, 1.0], [0.5, 1.0], [1.0, 1.0]];
+
+        Self {
+            style: GradingHueCurveStyle::Log,
+            hue_hue: hue_hue_identity,
+            hue_sat: hue_6pts_identity(1.0),
+            hue_lum: hue_6pts_identity(1.0),
+            lum_sat: horiz_1.clone(),
+            sat_sat: sat_diag,
+            lum_lum: lum_diag,
+            sat_lum: horiz_1,
+            hue_fx: hue_6pts_identity(0.0),
+            direction: TransformDirection::Forward,
+        }
     }
 }
 

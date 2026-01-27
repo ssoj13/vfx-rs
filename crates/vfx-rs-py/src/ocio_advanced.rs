@@ -456,6 +456,13 @@ pub struct OcioProcessor {
     inner: vfx_ocio::Processor,
 }
 
+impl OcioProcessor {
+    /// Create from a Rust Processor.
+    pub fn from_processor(proc: vfx_ocio::Processor) -> Self {
+        Self { inner: proc }
+    }
+}
+
 #[pymethods]
 impl OcioProcessor {
     /// Apply to RGB pixels. Expects flat array [r,g,b,r,g,b,...].
@@ -483,6 +490,48 @@ impl OcioProcessor {
         }
 
         Ok(())
+    }
+
+    /// Apply to RGBA pixels. Expects flat array [r,g,b,a,r,g,b,a,...].
+    fn apply_rgba<'py>(&self, pixels: &Bound<'py, PyArray1<f32>>) -> PyResult<()> {
+        let mut pixels_rw: PyReadwriteArray1<'_, f32> = pixels.readwrite();
+        let slice = pixels_rw.as_slice_mut()
+            .map_err(|e| PyValueError::new_err(format!("Array error: {}", e)))?;
+
+        if slice.len() % 4 != 0 {
+            return Err(PyValueError::new_err("Pixel array length must be multiple of 4"));
+        }
+
+        let pixel_count = slice.len() / 4;
+        let mut rgba_pixels: Vec<[f32; 4]> = Vec::with_capacity(pixel_count);
+        for i in 0..pixel_count {
+            rgba_pixels.push([slice[i*4], slice[i*4+1], slice[i*4+2], slice[i*4+3]]);
+        }
+
+        self.inner.apply_rgba(&mut rgba_pixels);
+
+        for (i, p) in rgba_pixels.iter().enumerate() {
+            slice[i*4] = p[0];
+            slice[i*4+1] = p[1];
+            slice[i*4+2] = p[2];
+            slice[i*4+3] = p[3];
+        }
+
+        Ok(())
+    }
+
+    /// Apply to flat pixel array (auto-detects RGB or RGBA by num_channels).
+    ///
+    /// Args:
+    ///     pixels: Flat numpy array of float32 pixel data
+    ///     num_channels: 3 for RGB, 4 for RGBA (default: 3)
+    #[pyo3(signature = (pixels, num_channels=3))]
+    fn apply<'py>(&self, pixels: &Bound<'py, PyArray1<f32>>, num_channels: usize) -> PyResult<()> {
+        match num_channels {
+            3 => self.apply_rgb(pixels),
+            4 => self.apply_rgba(pixels),
+            _ => Err(PyValueError::new_err("num_channels must be 3 or 4")),
+        }
     }
 
     fn __repr__(&self) -> String {

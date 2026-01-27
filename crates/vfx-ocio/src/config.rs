@@ -79,6 +79,42 @@ pub struct Config {
     /// Strict parsing mode.
     #[allow(dead_code)]
     strict_parsing: bool,
+    /// Environment mode (predefined vs load all).
+    environment_mode: EnvironmentMode,
+}
+
+/// Controls which environment variables are loaded into the config context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EnvironmentMode {
+    /// Load only variables defined in the config's environment section.
+    #[default]
+    LoadPredefined,
+    /// Load all system environment variables (may reduce performance).
+    LoadAll,
+}
+
+/// Filter for searching color spaces by reference space type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SearchReferenceSpaceType {
+    /// Scene-referred spaces only.
+    #[default]
+    Scene,
+    /// Display-referred spaces only.
+    Display,
+    /// Both scene and display spaces.
+    All,
+}
+
+/// Filter for color space visibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ColorSpaceVisibility {
+    /// Only active (non-inactive) color spaces.
+    #[default]
+    Active,
+    /// Only inactive color spaces.
+    Inactive,
+    /// All color spaces regardless of status.
+    All,
 }
 
 /// Config format version.
@@ -195,6 +231,7 @@ impl Config {
             file_rules: Vec::new(),
             context: Context::new(),
             strict_parsing: false,
+            environment_mode: EnvironmentMode::LoadPredefined,
         }
     }
 
@@ -272,6 +309,10 @@ impl Config {
             file_rules: Vec::new(),
             context: Context::new(),
             strict_parsing,
+            environment_mode: match yaml_str(root, "environment").map(|s| s.to_lowercase()) {
+                Some(ref s) if s == "loadall" => EnvironmentMode::LoadAll,
+                _ => EnvironmentMode::LoadPredefined,
+            },
         };
 
         // Parse roles
@@ -804,6 +845,26 @@ impl Config {
                     master: parse_curve_points(yaml_get(yaml, "master")).unwrap_or(identity),
                     direction: parse_direction(yaml_str(yaml, "direction")),
                 }))
+            }
+
+            "GradingHueCurveTransform" => {
+                let style = match yaml_str(yaml, "style").as_deref() {
+                    Some("linear") => GradingHueCurveStyle::Linear,
+                    Some("video") => GradingHueCurveStyle::Video,
+                    _ => GradingHueCurveStyle::Log,
+                };
+                let mut t = GradingHueCurveTransform::default();
+                t.style = style;
+                t.direction = parse_direction(yaml_str(yaml, "direction"));
+                if let Some(pts) = parse_curve_points(yaml_get(yaml, "hue_hue")) { t.hue_hue = pts; }
+                if let Some(pts) = parse_curve_points(yaml_get(yaml, "hue_sat")) { t.hue_sat = pts; }
+                if let Some(pts) = parse_curve_points(yaml_get(yaml, "hue_lum")) { t.hue_lum = pts; }
+                if let Some(pts) = parse_curve_points(yaml_get(yaml, "lum_sat")) { t.lum_sat = pts; }
+                if let Some(pts) = parse_curve_points(yaml_get(yaml, "sat_sat")) { t.sat_sat = pts; }
+                if let Some(pts) = parse_curve_points(yaml_get(yaml, "lum_lum")) { t.lum_lum = pts; }
+                if let Some(pts) = parse_curve_points(yaml_get(yaml, "sat_lum")) { t.sat_lum = pts; }
+                if let Some(pts) = parse_curve_points(yaml_get(yaml, "hue_fx")) { t.hue_fx = pts; }
+                Ok(Transform::GradingHueCurve(t))
             }
 
             "GradingToneTransform" => {
@@ -2088,6 +2149,25 @@ impl Config {
         self.context.vars().nth(index).map(|(_, v)| v)
     }
 
+    /// Returns the environment mode.
+    pub fn environment_mode(&self) -> EnvironmentMode {
+        self.environment_mode
+    }
+
+    /// Sets the environment mode.
+    pub fn set_environment_mode(&mut self, mode: EnvironmentMode) {
+        self.environment_mode = mode;
+    }
+
+    /// Loads environment variables into the context based on the current mode.
+    pub fn load_environment(&mut self) {
+        if self.environment_mode == EnvironmentMode::LoadAll {
+            for (key, value) in std::env::vars() {
+                self.context.set_var(key, value);
+            }
+        }
+    }
+
     // ========================================================================
     // Color space management extensions
     // ========================================================================
@@ -2616,6 +2696,7 @@ impl Config {
             file_rules,
             context,
             strict_parsing: false,
+            environment_mode: EnvironmentMode::LoadPredefined,
         }
     }
 }
@@ -2765,6 +2846,25 @@ fn parse_fixed_function_style(style: &str) -> FixedFunctionStyle {
         "UVY_TO_XYZ" | "UVYTOXYZ" => FixedFunctionStyle::UvyToXyz,
         "XYZ_TO_LUV" | "XYZTOLUV" => FixedFunctionStyle::XyzToLuv,
         "LUV_TO_XYZ" | "LUVTOXYZ" => FixedFunctionStyle::LuvToXyz,
+        "ACES_DARK_TO_DIM_10" | "ACES_DARKTODIM10" => FixedFunctionStyle::AcesDarkToDim10,
+        "REC2100_SURROUND" => FixedFunctionStyle::Rec2100Surround,
+        "LIN_TO_PQ" => FixedFunctionStyle::LinToPq,
+        "PQ_TO_LIN" => FixedFunctionStyle::PqToLin,
+        "LIN_TO_GAMMA_LOG" => FixedFunctionStyle::LinToGammaLog,
+        "GAMMA_LOG_TO_LIN" => FixedFunctionStyle::GammaLogToLin,
+        "LIN_TO_DOUBLE_LOG" => FixedFunctionStyle::LinToDoubleLog,
+        "DOUBLE_LOG_TO_LIN" => FixedFunctionStyle::DoubleLogToLin,
+        "ACES_OUTPUT_TRANSFORM_20" => FixedFunctionStyle::AcesOutputTransform20,
+        "ACES_RGB_TO_JMH_20" => FixedFunctionStyle::AcesRgbToJmh20,
+        "ACES_JMH_TO_RGB_20" => FixedFunctionStyle::AcesJmhToRgb20,
+        "ACES_TONESCALE_COMPRESS_20" => FixedFunctionStyle::AcesTonescaleCompress20,
+        "ACES_GAMUT_COMPRESS_20" => FixedFunctionStyle::AcesGamutCompress20,
+        "RGB_TO_HSY_LIN" => FixedFunctionStyle::RgbToHsyLin,
+        "HSY_LIN_TO_RGB" => FixedFunctionStyle::HsyLinToRgb,
+        "RGB_TO_HSY_LOG" => FixedFunctionStyle::RgbToHsyLog,
+        "HSY_LOG_TO_RGB" => FixedFunctionStyle::HsyLogToRgb,
+        "RGB_TO_HSY_VID" => FixedFunctionStyle::RgbToHsyVid,
+        "HSY_VID_TO_RGB" => FixedFunctionStyle::HsyVidToRgb,
         _ => FixedFunctionStyle::AcesRedMod03, // default fallback
     }
 }

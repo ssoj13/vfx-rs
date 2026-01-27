@@ -597,11 +597,30 @@ impl ColorConfig {
     ///     >>> ctx = Context()
     ///     >>> ctx.set("SHOT", "sh010")
     ///     >>> proc = config.processor_with_context("ACEScg", "sRGB", ctx)
-    pub fn processor_with_context(&self, from_space: &str, to_space: &str, context: &Context) -> PyResult<()> {
-        self.inner
+    pub fn processor_with_context(&self, from_space: &str, to_space: &str, context: &Context) -> PyResult<crate::ocio_advanced::OcioProcessor> {
+        let processor = self.inner
             .processor_with_context(from_space, to_space, context.inner())
-            .map(|_| ())  // Drop processor for now, just validate it works
-            .map_err(|e| PyIOError::new_err(e.to_string()))
+            .map_err(|e| PyIOError::new_err(e.to_string()))?;
+        Ok(crate::ocio_advanced::OcioProcessor::from_processor(processor))
+    }
+
+    /// Create a processor for converting between color spaces.
+    ///
+    /// Args:
+    ///     from_space: Source color space name
+    ///     to_space: Destination color space name
+    ///
+    /// Returns:
+    ///     OcioProcessor for color conversion
+    ///
+    /// Example:
+    ///     >>> proc = config.processor("ACEScg", "sRGB")
+    ///     >>> proc.apply_rgb(pixels)
+    pub fn processor(&self, from_space: &str, to_space: &str) -> PyResult<crate::ocio_advanced::OcioProcessor> {
+        let processor = self.inner
+            .processor(from_space, to_space)
+            .map_err(|e| PyIOError::new_err(e.to_string()))?;
+        Ok(crate::ocio_advanced::OcioProcessor::from_processor(processor))
     }
 
 }

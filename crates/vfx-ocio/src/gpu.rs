@@ -458,6 +458,11 @@ impl GpuProcessor {
                 pivot: *pivot,
             }),
             ProcessorOp::GradingRgbCurve { .. } => None, // Requires LUT texture
+            ProcessorOp::GradingHueCurve { .. } => None, // Complex HSY curves, no GPU path yet
+            ProcessorOp::Aces2OutputTransform { .. } => None, // ACES 2.0 too complex for inline GPU
+            ProcessorOp::Aces2RgbJmh { .. } => None,
+            ProcessorOp::Aces2TonescaleCompress { .. } => None,
+            ProcessorOp::Aces2GamutCompress { .. } => None,
             ProcessorOp::GradingTone {
                 shadows,
                 midtones,

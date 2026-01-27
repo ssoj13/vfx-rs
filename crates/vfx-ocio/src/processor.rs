@@ -533,6 +533,30 @@ pub enum ProcessorOp {
         params: Vec<f32>,
         forward: bool,
     },
+    /// ACES 2.0 Output Transform (pre-computed state).
+    Aces2OutputTransform {
+        state: Box<crate::aces2::Aces2State>,
+        forward: bool,
+    },
+    /// ACES 2.0 RGB <-> JMh conversion (pre-computed params).
+    Aces2RgbJmh {
+        params: Box<crate::aces2::JMhParams>,
+        forward: bool,
+    },
+    /// ACES 2.0 Tonescale + Chroma compress (pre-computed).
+    Aces2TonescaleCompress {
+        jmh_params: Box<crate::aces2::JMhParams>,
+        ts_params: Box<crate::aces2::ToneScaleParams>,
+        shared: Box<crate::aces2::SharedCompressionParams>,
+        chroma: Box<crate::aces2::ChromaCompressParams>,
+        forward: bool,
+    },
+    /// ACES 2.0 Gamut compress (pre-computed).
+    Aces2GamutCompress {
+        shared: Box<crate::aces2::SharedCompressionParams>,
+        gamut: Box<crate::aces2::GamutCompressParams>,
+        forward: bool,
+    },
     /// Allocation (log/linear).
     Allocation {
         allocation: AllocationType,
@@ -571,6 +595,12 @@ pub enum ProcessorOp {
         highlight_start: f32,
         highlight_pivot: f32,
     },
+    /// Grading hue curve (8 hue-based curves).
+    GradingHueCurve {
+        /// vfx-ops GradingHueCurves struct.
+        curves: crate::grading_hue_curve::GradingHueCurves,
+        forward: bool,
+    },
     /// LogAffine transform (OCIO v2).
     LogAffine {
         base: f32,
@@ -598,6 +628,17 @@ pub enum ProcessorOp {
         negative_style: NegativeStyle,
         forward: bool,
     },
+}
+
+/// Parse ACES 2.0 primaries from params (8 floats: rx,ry,gx,gy,bx,by,wx,wy starting at offset).
+fn parse_aces2_primaries(params: &[f32], offset: usize) -> crate::aces2::Primaries {
+    let g = |i: usize| params.get(offset + i).copied().unwrap_or(0.0);
+    crate::aces2::Primaries {
+        red: crate::aces2::Chromaticity { x: g(0), y: g(1) },
+        green: crate::aces2::Chromaticity { x: g(2), y: g(3) },
+        blue: crate::aces2::Chromaticity { x: g(4), y: g(5) },
+        white: crate::aces2::Chromaticity { x: g(6), y: g(7) },
+    }
 }
 
 impl ProcessorOp {
@@ -1260,11 +1301,63 @@ impl Processor {
                     ff.direction
                 };
 
-                self.ops.push(ProcessorOp::FixedFunction {
-                    style: ff.style,
-                    params: ff.params.iter().map(|&v| v as f32).collect(),
-                    forward: dir == TransformDirection::Forward,
-                });
+                let fwd = dir == TransformDirection::Forward;
+                let fp: Vec<f32> = ff.params.iter().map(|&v| v as f32).collect();
+
+                match ff.style {
+                    FixedFunctionStyle::AcesOutputTransform20 => {
+                        let peak = fp.first().copied().unwrap_or(1000.0);
+                        let lp = parse_aces2_primaries(&fp, 1);
+                        let state = crate::aces2::init_output_transform(peak, &lp);
+                        self.ops.push(ProcessorOp::Aces2OutputTransform {
+                            state: Box::new(state), forward: fwd,
+                        });
+                    }
+                    FixedFunctionStyle::AcesRgbToJmh20 | FixedFunctionStyle::AcesJmhToRgb20 => {
+                        let p = parse_aces2_primaries(&fp, 0);
+                        let params = crate::aces2::init_jmh_params(&p);
+                        let is_rgb_to = ff.style == FixedFunctionStyle::AcesRgbToJmh20;
+                        self.ops.push(ProcessorOp::Aces2RgbJmh {
+                            params: Box::new(params),
+                            forward: if is_rgb_to { fwd } else { !fwd },
+                        });
+                    }
+                    FixedFunctionStyle::AcesTonescaleCompress20 => {
+                        let peak = fp.first().copied().unwrap_or(1000.0);
+                        let jmh_p = crate::aces2::init_jmh_params(&crate::aces2::ACES_AP0);
+                        let ts_p = crate::aces2::init_tonescale_params(peak);
+                        let reach = crate::aces2::init_jmh_params(&crate::aces2::ACES_AP1);
+                        let shared = crate::aces2::init_shared_compression_params(peak, &jmh_p, &reach);
+                        let chroma = crate::aces2::init_chroma_compress_params(peak, &ts_p);
+                        self.ops.push(ProcessorOp::Aces2TonescaleCompress {
+                            jmh_params: Box::new(jmh_p),
+                            ts_params: Box::new(ts_p),
+                            shared: Box::new(shared),
+                            chroma: Box::new(chroma),
+                            forward: fwd,
+                        });
+                    }
+                    FixedFunctionStyle::AcesGamutCompress20 => {
+                        let peak = fp.first().copied().unwrap_or(1000.0);
+                        let lp = parse_aces2_primaries(&fp, 1);
+                        let p_in = crate::aces2::init_jmh_params(&crate::aces2::ACES_AP0);
+                        let p_lim = crate::aces2::init_jmh_params(&lp);
+                        let ts = crate::aces2::init_tonescale_params(peak);
+                        let reach = crate::aces2::init_jmh_params(&crate::aces2::ACES_AP1);
+                        let shared = crate::aces2::init_shared_compression_params(peak, &p_in, &reach);
+                        let gamut = crate::aces2::init_gamut_compress_params(peak, &p_in, &p_lim, &ts, &shared, &reach);
+                        self.ops.push(ProcessorOp::Aces2GamutCompress {
+                            shared: Box::new(shared),
+                            gamut: Box::new(gamut),
+                            forward: fwd,
+                        });
+                    }
+                    _ => {
+                        self.ops.push(ProcessorOp::FixedFunction {
+                            style: ff.style, params: fp, forward: fwd,
+                        });
+                    }
+                }
             }
 
             Transform::Allocation(alloc) => {
@@ -1405,6 +1498,44 @@ impl Processor {
                     shadow_pivot: gt.shadow_pivot as f32,
                     highlight_start: gt.highlight_start as f32,
                     highlight_pivot: gt.highlight_pivot as f32,
+                });
+            }
+
+            Transform::GradingHueCurve(ghc) => {
+                let dir = if direction == TransformDirection::Inverse {
+                    ghc.direction.inverse()
+                } else {
+                    ghc.direction
+                };
+                
+                // Convert to vfx-ops types
+                use crate::grading_hue_curve::{GradingHueCurves, GradingStyle, HueCurve, HueControlPoint};
+                
+                let to_curve = |pts: &[[f64; 2]]| {
+                    HueCurve::new(pts.iter().map(|p| HueControlPoint::new(p[0] as f32, p[1] as f32)).collect())
+                };
+                
+                let style = match ghc.style {
+                    crate::GradingHueCurveStyle::Log => GradingStyle::Log,
+                    crate::GradingHueCurveStyle::Linear => GradingStyle::Linear,
+                    crate::GradingHueCurveStyle::Video => GradingStyle::Video,
+                };
+                
+                let curves = GradingHueCurves {
+                    style,
+                    hue_hue: to_curve(&ghc.hue_hue),
+                    hue_sat: to_curve(&ghc.hue_sat),
+                    hue_lum: to_curve(&ghc.hue_lum),
+                    lum_sat: to_curve(&ghc.lum_sat),
+                    sat_sat: to_curve(&ghc.sat_sat),
+                    lum_lum: to_curve(&ghc.lum_lum),
+                    sat_lum: to_curve(&ghc.sat_lum),
+                    hue_fx: to_curve(&ghc.hue_fx),
+                };
+                
+                self.ops.push(ProcessorOp::GradingHueCurve {
+                    curves,
+                    forward: dir == TransformDirection::Forward,
                 });
             }
 
@@ -2057,83 +2188,404 @@ impl Processor {
                             }
                         }
                         FixedFunctionStyle::AcesRedMod03 | FixedFunctionStyle::AcesRedMod10 => {
-                            // ACES Red Modifier - reduce saturation in red region
+                            // ACES Red Modifier — ported from OCIO FixedFunctionOpCPU.cpp
+                            let (one_minus_scale, pivot, inv_width) = match style {
+                                FixedFunctionStyle::AcesRedMod03 => (1.0 - 0.85_f32, 0.03_f32, 1.4629180792671596_f32),
+                                _ /* RedMod10 */ => (1.0 - 0.82_f32, 0.03_f32, 1.6976527263135504_f32),
+                            };
+                            let sqrt3: f32 = 1.7320508075688772;
+                            let noise_limit: f32 = 1e-2;
                             let [r, g, b] = *pixel;
-                            let lum = REC709_LUMA_R * r + REC709_LUMA_G * g + REC709_LUMA_B * b;
-                            
-                            // Hue detection (simplified)
-                            let max = r.max(g).max(b);
-                            let min = r.min(g).min(b);
-                            let chroma = max - min;
-                            
-                            if chroma > 1e-6 {
-                                // Rough hue angle
-                                let hue = if (r - max).abs() < 1e-6 {
-                                    (g - b) / chroma
-                                } else if (g - max).abs() < 1e-6 {
-                                    2.0 + (b - r) / chroma
-                                } else {
-                                    4.0 + (r - g) / chroma
-                                };
-                                
-                                // Red region weight (hue near 0 or 6)
-                                let hue_norm = if hue < 0.0 { hue + 6.0 } else { hue };
-                                let red_weight = if hue_norm < 1.0 || hue_norm > 5.0 {
-                                    let dist = if hue_norm < 1.0 { hue_norm } else { 6.0 - hue_norm };
-                                    1.0 - dist
-                                } else {
-                                    0.0
-                                };
-                                
-                                // Saturation reduction factor
-                                let sat = if max > 1e-6 { chroma / max } else { 0.0 };
-                                let mod_factor = 1.0 - 0.2 * red_weight * sat;
-                                
-                                if *forward {
-                                    pixel[0] = lum + (r - lum) * mod_factor;
-                                    pixel[1] = lum + (g - lum) * mod_factor;
-                                    pixel[2] = lum + (b - lum) * mod_factor;
-                                } else {
-                                    let inv = 1.0 / mod_factor.max(1e-6);
-                                    pixel[0] = lum + (r - lum) * inv;
-                                    pixel[1] = lum + (g - lum) * inv;
-                                    pixel[2] = lum + (b - lum) * inv;
-                                }
+
+                            // Hue in Yab space
+                            let a = 2.0 * r - (g + b);
+                            let bb = sqrt3 * (g - b);
+                            let hue = bb.atan2(a);
+
+                            // B-spline basis weight for red region
+                            let knot_coord = hue * inv_width + 2.0;
+                            let j = knot_coord.floor() as i32;
+                            // Quadratic B-spline coefficients (M matrix rows)
+                            #[allow(clippy::excessive_precision)]
+                            let basis: [[f32; 4]; 4] = [
+                                [ 0.25, 0.00, 0.00, 0.00],
+                                [-0.75, 0.75, 0.75, 0.25],
+                                [ 0.75,-1.50, 0.00, 1.00],
+                                [-0.25, 0.75,-0.75, 0.25],
+                            ];
+                            let f_h = if j >= 0 && j < 4 {
+                                let t = knot_coord - j as f32;
+                                let c = &basis[j as usize];
+                                c[3] + t * (c[2] + t * (c[1] + t * c[0]))
+                            } else {
+                                0.0
+                            };
+
+                            // Saturation (noise-limited)
+                            let max_v = r.max(g).max(b);
+                            let min_v = r.min(g).min(b);
+                            let sat = (max_v.max(1e-10) - min_v.max(1e-10)) / max_v.max(noise_limit);
+
+                            // Only modify red channel
+                            if *forward {
+                                pixel[0] = r + f_h * sat * (pivot - r) * one_minus_scale;
+                            } else {
+                                // Inverse: r_out = r + f_h*sat*(pivot - r_out)*scale → solve
+                                let denom = 1.0 + f_h * sat * one_minus_scale;
+                                pixel[0] = (r - f_h * sat * pivot * one_minus_scale) / denom.max(1e-10);
                             }
                         }
                         FixedFunctionStyle::AcesGlow03 | FixedFunctionStyle::AcesGlow10 => {
-                            // ACES Glow - add glow to bright saturated regions
+                            // ACES Glow — ported from OCIO FixedFunctionOpCPU.cpp
+                            let (glow_gain, glow_mid) = match style {
+                                FixedFunctionStyle::AcesGlow03 => (0.075_f32, 0.1_f32),
+                                _ /* Glow10 */ => (0.05_f32, 0.08_f32),
+                            };
+                            let yc_radius_weight: f32 = 1.75;
                             let [r, g, b] = *pixel;
-                            let y = REC709_LUMA_R * r + REC709_LUMA_G * g + REC709_LUMA_B * b;
-                            
-                            // Glow parameters
-                            let glow_gain = 0.05;
-                            let glow_mid = 0.08;
-                            
-                            // Sigmoid for glow amount
-                            let x = (y - glow_mid) * 50.0;
-                            let sigmoid = 1.0 / (1.0 + (-x).exp());
-                            
-                            // Saturation estimate
-                            let max = r.max(g).max(b);
-                            let min = r.min(g).min(b);
-                            let sat = if max > 1e-6 { (max - min) / max } else { 0.0 };
-                            
-                            let glow = glow_gain * sigmoid * sat;
-                            
-                            if *forward {
-                                pixel[0] = r + glow;
-                                pixel[1] = g + glow;
-                                pixel[2] = b + glow;
+
+                            // YC luma with chroma weighting
+                            let chroma = (b * (b - g) + g * (g - r) + r * (r - b)).max(0.0).sqrt();
+                            let yc = (r + g + b + yc_radius_weight * chroma) / 3.0;
+
+                            // Saturation (noise-limited)
+                            let max_v = r.max(g).max(b);
+                            let min_v = r.min(g).min(b);
+                            let sat = (max_v.max(1e-10) - min_v.max(1e-10)) / max_v.max(1e-2);
+
+                            // ACES sigmoid shaper for saturation weight
+                            let x = (sat - 0.4) * 5.0;
+                            let sign = x.signum();
+                            let t = (1.0 - 0.5 * sign * x).max(0.0);
+                            let s = (1.0 + sign * (1.0 - t * t)) * 0.5;
+
+                            let glow_amount = glow_gain * s;
+
+                            // Piecewise luminance-dependent glow
+                            let glow_out = if yc >= glow_mid * 2.0 {
+                                0.0
+                            } else if yc <= glow_mid * 2.0 / 3.0 {
+                                glow_amount
                             } else {
-                                pixel[0] = r - glow;
-                                pixel[1] = g - glow;
-                                pixel[2] = b - glow;
+                                glow_amount * (glow_mid / yc - 0.5)
+                            };
+
+                            let added_glow = 1.0 + glow_out;
+                            if *forward {
+                                pixel[0] = r * added_glow;
+                                pixel[1] = g * added_glow;
+                                pixel[2] = b * added_glow;
+                            } else {
+                                let inv = 1.0 / added_glow.max(1e-10);
+                                pixel[0] = r * inv;
+                                pixel[1] = g * inv;
+                                pixel[2] = b * inv;
                             }
                         }
-                        _ => {
-                            // Other fixed functions - XYZ/xyY, XYZ/Luv etc.
+                        FixedFunctionStyle::XyzToXyy => {
+                            let [x, y, z] = *pixel;
+                            let sum = x + y + z;
+                            if sum.abs() > 1e-10 {
+                                pixel[0] = x / sum; // x
+                                pixel[1] = y / sum; // y
+                                pixel[2] = y;       // Y
+                            } else {
+                                pixel[0] = 1.0 / 3.0;
+                                pixel[1] = 1.0 / 3.0;
+                                pixel[2] = 0.0;
+                            }
                         }
+                        FixedFunctionStyle::XyyToXyz => {
+                            let [cx, cy, big_y] = *pixel;
+                            if cy.abs() > 1e-10 {
+                                pixel[0] = cx * big_y / cy;
+                                pixel[1] = big_y;
+                                pixel[2] = (1.0 - cx - cy) * big_y / cy;
+                            } else {
+                                pixel[0] = 0.0;
+                                pixel[1] = 0.0;
+                                pixel[2] = 0.0;
+                            }
+                        }
+                        FixedFunctionStyle::XyzToUvy => {
+                            let [x, y, z] = *pixel;
+                            let d = x + 15.0 * y + 3.0 * z;
+                            if d.abs() > 1e-10 {
+                                pixel[0] = 4.0 * x / d;
+                                pixel[1] = 9.0 * y / d;
+                                pixel[2] = y;
+                            } else {
+                                pixel[0] = 0.0;
+                                pixel[1] = 0.0;
+                                pixel[2] = 0.0;
+                            }
+                        }
+                        FixedFunctionStyle::UvyToXyz => {
+                            let [u, v, y] = *pixel;
+                            if v.abs() > 1e-10 {
+                                pixel[0] = y * 9.0 * u / (4.0 * v);
+                                pixel[1] = y;
+                                pixel[2] = y * (12.0 - 3.0 * u - 20.0 * v) / (4.0 * v);
+                            } else {
+                                pixel[0] = 0.0;
+                                pixel[1] = 0.0;
+                                pixel[2] = 0.0;
+                            }
+                        }
+                        FixedFunctionStyle::XyzToLuv => {
+                            // D65 white point: u_n=0.19784, v_n=0.46835
+                            let [x, y, z] = *pixel;
+                            let d = x + 15.0 * y + 3.0 * z;
+                            let (u_p, v_p) = if d.abs() > 1e-10 {
+                                (4.0 * x / d, 9.0 * y / d)
+                            } else {
+                                (0.0, 0.0)
+                            };
+                            let yr = y / 1.0; // D65 Yn = 1.0
+                            let l = if yr > 0.008856 {
+                                116.0 * yr.cbrt() - 16.0
+                            } else {
+                                903.3 * yr
+                            };
+                            pixel[0] = l;
+                            pixel[1] = 13.0 * l * (u_p - 0.19784);
+                            pixel[2] = 13.0 * l * (v_p - 0.46835);
+                        }
+                        FixedFunctionStyle::LuvToXyz => {
+                            let [l, u, v] = *pixel;
+                            if l.abs() < 1e-10 {
+                                pixel[0] = 0.0;
+                                pixel[1] = 0.0;
+                                pixel[2] = 0.0;
+                            } else {
+                                let u_p = u / (13.0 * l) + 0.19784;
+                                let v_p = v / (13.0 * l) + 0.46835;
+                                let y = if l > 8.0 {
+                                    ((l + 16.0) / 116.0).powi(3)
+                                } else {
+                                    l / 903.3
+                                };
+                                if v_p.abs() > 1e-10 {
+                                    pixel[0] = y * 9.0 * u_p / (4.0 * v_p);
+                                    pixel[1] = y;
+                                    pixel[2] = y * (12.0 - 3.0 * u_p - 20.0 * v_p) / (4.0 * v_p);
+                                } else {
+                                    pixel[0] = 0.0;
+                                    pixel[1] = y;
+                                    pixel[2] = 0.0;
+                                }
+                            }
+                        }
+                        FixedFunctionStyle::AcesDarkToDim10 => {
+                            // AP1 luminance coefficients
+                            const AP1_Y: [f32; 3] = [0.27222871678091454, 0.67408176581114831, 0.053689517407937051];
+                            let gamma = params.first().copied().unwrap_or(0.9811);
+                            let m_gamma = if *forward { gamma - 1.0 } else { (1.0 / gamma) - 1.0 };
+                            let [r, g, b] = *pixel;
+                            let y = (AP1_Y[0] * r + AP1_Y[1] * g + AP1_Y[2] * b).max(1e-10);
+                            let ypow = y.powf(m_gamma);
+                            pixel[0] = r * ypow;
+                            pixel[1] = g * ypow;
+                            pixel[2] = b * ypow;
+                        }
+                        FixedFunctionStyle::Rec2100Surround => {
+                            const REC2100_Y: [f32; 3] = [0.2627, 0.6780, 0.0593];
+                            let gamma_in = params.first().copied().unwrap_or(0.78);
+                            let (gamma, min_lum) = if *forward {
+                                (gamma_in, 1e-4_f32)
+                            } else {
+                                (1.0 / gamma_in, (1e-4_f32).powf(gamma_in))
+                            };
+                            let m_gamma = gamma - 1.0;
+                            let [r, g, b] = *pixel;
+                            let y = (REC2100_Y[0] * r + REC2100_Y[1] * g + REC2100_Y[2] * b).abs().max(min_lum);
+                            let ypow = y.powf(m_gamma);
+                            pixel[0] = r * ypow;
+                            pixel[1] = g * ypow;
+                            pixel[2] = b * ypow;
+                        }
+                        FixedFunctionStyle::LinToPq => {
+                            // ST-2084 PQ OETF. 1.0 = 100 nits.
+                            const M1: f32 = 0.1593017578125;
+                            const M2: f32 = 78.84375;
+                            const C1: f32 = 0.8359375;
+                            const C2: f32 = 18.8515625;
+                            const C3: f32 = 18.6875;
+                            for v in pixel.iter_mut() {
+                                let sign = v.signum();
+                                let l = (*v * 0.01).abs(); // nits/100 -> 0..1 (10000 nits)
+                                let y = l.powf(M1);
+                                let num = C1 + C2 * y;
+                                let den = 1.0 + C3 * y;
+                                *v = sign * (num / den).powf(M2);
+                            }
+                        }
+                        FixedFunctionStyle::PqToLin => {
+                            const M1: f32 = 0.1593017578125;
+                            const M2: f32 = 78.84375;
+                            const C1: f32 = 0.8359375;
+                            const C2: f32 = 18.8515625;
+                            const C3: f32 = 18.6875;
+                            for v in pixel.iter_mut() {
+                                let sign = v.signum();
+                                let vabs = v.abs();
+                                let x = vabs.powf(1.0 / M2);
+                                let nits = ((x - C1).max(0.0) / (C2 - C3 * x)).powf(1.0 / M1);
+                                *v = sign * 100.0 * nits;
+                            }
+                        }
+                        FixedFunctionStyle::LinToGammaLog => {
+                            // Params: [mirror, break, power, gammaSlope, gammaOff, logBase, logSlope, logOff, linSlope, linOff]
+                            let mirror = params.get(0).copied().unwrap_or(0.0);
+                            let brk = params.get(1).copied().unwrap_or(0.0);
+                            let power = params.get(2).copied().unwrap_or(1.0);
+                            let g_slope = params.get(3).copied().unwrap_or(1.0);
+                            let g_off = params.get(4).copied().unwrap_or(0.0);
+                            let log_base = params.get(5).copied().unwrap_or(2.0);
+                            let log_slope = params.get(6).copied().unwrap_or(1.0) / log_base.ln();
+                            let log_off = params.get(7).copied().unwrap_or(0.0);
+                            let lin_slope = params.get(8).copied().unwrap_or(1.0);
+                            let lin_off = params.get(9).copied().unwrap_or(0.0);
+                            for v in pixel.iter_mut() {
+                                let mir = *v - mirror;
+                                let e = mir.abs() + mirror;
+                                let ep = if e < brk {
+                                    g_slope * (e + g_off).powf(power)
+                                } else {
+                                    log_slope * (lin_slope * e + lin_off).ln() + log_off
+                                };
+                                *v = ep * mir.signum();
+                            }
+                        }
+                        FixedFunctionStyle::GammaLogToLin => {
+                            let mirror = params.get(0).copied().unwrap_or(0.0);
+                            let brk = params.get(1).copied().unwrap_or(0.0);
+                            let power = params.get(2).copied().unwrap_or(1.0);
+                            let g_slope = params.get(3).copied().unwrap_or(1.0);
+                            let g_off = params.get(4).copied().unwrap_or(0.0);
+                            let log_base = params.get(5).copied().unwrap_or(2.0);
+                            let log_slope = params.get(6).copied().unwrap_or(1.0) / log_base.ln();
+                            let log_off = params.get(7).copied().unwrap_or(0.0);
+                            let lin_slope = params.get(8).copied().unwrap_or(1.0);
+                            let lin_off = params.get(9).copied().unwrap_or(0.0);
+                            // Precompute break in prime domain
+                            let prime_brk = g_slope * (brk + g_off).powf(power);
+                            let prime_mirror = g_slope * (mirror + g_off).powf(power);
+                            for v in pixel.iter_mut() {
+                                let mir = *v - prime_mirror;
+                                let ep = mir.abs() + prime_mirror;
+                                let e = if ep < prime_brk {
+                                    (ep / g_slope).powf(1.0 / power) - g_off
+                                } else {
+                                    (((ep - log_off) / log_slope).exp() - lin_off) / lin_slope
+                                };
+                                *v = e * mir.signum();
+                            }
+                        }
+                        FixedFunctionStyle::LinToDoubleLog => {
+                            // Params: [base, break1, break2, log1Slope, log1Off, lin1Slope, lin1Off,
+                            //          log2Slope, log2Off, lin2Slope, lin2Off, linSlope, linOff]
+                            let base = params.get(0).copied().unwrap_or(2.0);
+                            let brk1 = params.get(1).copied().unwrap_or(0.0);
+                            let brk2 = params.get(2).copied().unwrap_or(1.0);
+                            let ls1_slope = params.get(3).copied().unwrap_or(1.0) / base.ln();
+                            let ls1_off = params.get(4).copied().unwrap_or(0.0);
+                            let ls1_lin_slope = params.get(5).copied().unwrap_or(1.0);
+                            let ls1_lin_off = params.get(6).copied().unwrap_or(0.0);
+                            let ls2_slope = params.get(7).copied().unwrap_or(1.0) / base.ln();
+                            let ls2_off = params.get(8).copied().unwrap_or(0.0);
+                            let ls2_lin_slope = params.get(9).copied().unwrap_or(1.0);
+                            let ls2_lin_off = params.get(10).copied().unwrap_or(0.0);
+                            let lin_slope = params.get(11).copied().unwrap_or(1.0);
+                            let lin_off = params.get(12).copied().unwrap_or(0.0);
+                            for v in pixel.iter_mut() {
+                                let x = *v;
+                                *v = if x <= brk1 {
+                                    ls1_slope * (ls1_lin_slope * x + ls1_lin_off).ln() + ls1_off
+                                } else if x < brk2 {
+                                    lin_slope * x + lin_off
+                                } else {
+                                    ls2_slope * (ls2_lin_slope * x + ls2_lin_off).ln() + ls2_off
+                                };
+                            }
+                        }
+                        FixedFunctionStyle::DoubleLogToLin => {
+                            let base = params.get(0).copied().unwrap_or(2.0);
+                            let brk1 = params.get(1).copied().unwrap_or(0.0);
+                            let brk2 = params.get(2).copied().unwrap_or(1.0);
+                            let ls1_slope = params.get(3).copied().unwrap_or(1.0) / base.ln();
+                            let ls1_off = params.get(4).copied().unwrap_or(0.0);
+                            let ls1_lin_slope = params.get(5).copied().unwrap_or(1.0);
+                            let ls1_lin_off = params.get(6).copied().unwrap_or(0.0);
+                            let ls2_slope = params.get(7).copied().unwrap_or(1.0) / base.ln();
+                            let ls2_off = params.get(8).copied().unwrap_or(0.0);
+                            let ls2_lin_slope = params.get(9).copied().unwrap_or(1.0);
+                            let ls2_lin_off = params.get(10).copied().unwrap_or(0.0);
+                            let lin_slope = params.get(11).copied().unwrap_or(1.0);
+                            let lin_off = params.get(12).copied().unwrap_or(0.0);
+                            // Break points in log domain
+                            let brk1_log = ls1_slope * (ls1_lin_slope * brk1 + ls1_lin_off).ln() + ls1_off;
+                            let brk2_log = ls2_slope * (ls2_lin_slope * brk2 + ls2_lin_off).ln() + ls2_off;
+                            for v in pixel.iter_mut() {
+                                let y = *v;
+                                *v = if y <= brk1_log {
+                                    (((y - ls1_off) / ls1_slope).exp() - ls1_lin_off) / ls1_lin_slope
+                                } else if y < brk2_log {
+                                    (y - lin_off) / lin_slope
+                                } else {
+                                    (((y - ls2_off) / ls2_slope).exp() - ls2_lin_off) / ls2_lin_slope
+                                };
+                            }
+                        }
+                        FixedFunctionStyle::RgbToHsyLin | FixedFunctionStyle::RgbToHsyLog | FixedFunctionStyle::RgbToHsyVid => {
+                            // Delegate to grading_hue_curve's HSY (same algorithm)
+                            let hsy = crate::grading_hue_curve::rgb_to_hsy(*pixel);
+                            *pixel = hsy;
+                        }
+                        FixedFunctionStyle::HsyLinToRgb | FixedFunctionStyle::HsyLogToRgb | FixedFunctionStyle::HsyVidToRgb => {
+                            let rgb = crate::grading_hue_curve::hsy_to_rgb(*pixel);
+                            *pixel = rgb;
+                        }
+                        // ACES 2.0 styles handled by dedicated ProcessorOp variants
+                        FixedFunctionStyle::AcesOutputTransform20
+                        | FixedFunctionStyle::AcesRgbToJmh20
+                        | FixedFunctionStyle::AcesJmhToRgb20
+                        | FixedFunctionStyle::AcesTonescaleCompress20
+                        | FixedFunctionStyle::AcesGamutCompress20 => {
+                            unreachable!("ACES 2.0 ops use dedicated ProcessorOp variants");
+                        }
+                    }
+                }
+
+                ProcessorOp::Aces2OutputTransform { state, forward } => {
+                    if *forward {
+                        *pixel = crate::aces2::output_transform_fwd(pixel, state);
+                    } else {
+                        *pixel = crate::aces2::output_transform_inv(pixel, state);
+                    }
+                }
+
+                ProcessorOp::Aces2RgbJmh { params, forward } => {
+                    if *forward {
+                        *pixel = crate::aces2::rgb_to_jmh_degrees(pixel, params);
+                    } else {
+                        *pixel = crate::aces2::jmh_degrees_to_rgb(pixel, params);
+                    }
+                }
+
+                ProcessorOp::Aces2TonescaleCompress { jmh_params, ts_params, shared, chroma, forward } => {
+                    if *forward {
+                        *pixel = crate::aces2::tonescale_compress_fwd(pixel, jmh_params, ts_params, shared, chroma);
+                    } else {
+                        *pixel = crate::aces2::tonescale_compress_inv(pixel, jmh_params, ts_params, shared, chroma);
+                    }
+                }
+
+                ProcessorOp::Aces2GamutCompress { shared, gamut, forward } => {
+                    if *forward {
+                        *pixel = crate::aces2::gamut_compress_fwd_deg(pixel, shared, gamut);
+                    } else {
+                        *pixel = crate::aces2::gamut_compress_inv_deg(pixel, shared, gamut);
                     }
                 }
 
@@ -2289,6 +2741,18 @@ impl Processor {
                         // Apply whites (scale)
                         *v *= whites[i] * whites[3];
                     }
+                }
+
+                ProcessorOp::GradingHueCurve { curves, forward } => {
+                    let mut rgb = [pixel[0], pixel[1], pixel[2]];
+                    if *forward {
+                        crate::grading_hue_curve::apply_hue_curves_fwd(curves, &mut rgb);
+                    } else {
+                        crate::grading_hue_curve::apply_hue_curves_rev(curves, &mut rgb);
+                    }
+                    pixel[0] = rgb[0];
+                    pixel[1] = rgb[1];
+                    pixel[2] = rgb[2];
                 }
 
                 ProcessorOp::Transfer { style, forward } => {
