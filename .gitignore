@@ -1,7 +1,6 @@
 /docs/book/
 /test/out/
 /target
-/_ref
 Cargo.lock
 cdx.cmd
 task.md

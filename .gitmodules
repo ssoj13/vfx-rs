@@ -1,0 +1,9 @@
+[submodule "_ref/OpenColorIO"]
+	path = _ref/OpenColorIO
+	url = https://github.com/AcademySoftwareFoundation/OpenColorIO.git
+[submodule "_ref/OpenImageIO"]
+	path = _ref/OpenImageIO
+	url = https://github.com/AcademySoftwareFoundation/OpenImageIO.git
+[submodule "_ref/openexr"]
+	path = _ref/openexr
+	url = git@github.com:AcademySoftwareFoundation/openexr.git
